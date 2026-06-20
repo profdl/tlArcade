@@ -43,8 +43,9 @@ describe('physics: flat floor collision', () => {
 		const r = makeRider({ x: 0, y: 0 })
 		run(r, [floor], 240)
 		const v = velocity(r, DT)
-		// Settled: not still accelerating downward through the floor.
-		expect(v.y).toBeLessThan(50)
+		// Settled: vertical velocity is essentially zero, not still driving down
+		// into the floor. A loose bound here would pass even while falling fast.
+		expect(Math.abs(v.y)).toBeLessThan(1)
 	})
 })
 

@@ -36,14 +36,18 @@ export function Rider({ playing, startPoint, onStats }: RiderProps) {
 		onStatsRef.current = onStats
 	}, [onStats])
 
-	// Reset the sim to the start point whenever the start point moves, or when a
-	// run begins. Resetting on stop is intentionally avoided so the sled holds
-	// its final resting position for inspection.
+	// Snap the sled to the start point whenever the start point moves (so "set
+	// start here" gives immediate feedback even while stopped), and re-seat it at
+	// the start whenever a run begins. Stopping is intentionally NOT a reset, so
+	// the sled holds its final resting position for inspection.
 	useEffect(() => {
 		startRef.current = startPoint
-		if (!playing) return
 		stateRef.current = makeRider(startPoint)
-	}, [playing, startPoint])
+	}, [startPoint])
+
+	useEffect(() => {
+		if (playing) stateRef.current = makeRider(startRef.current)
+	}, [playing])
 
 	useEffect(() => {
 		let raf = 0
@@ -61,6 +65,7 @@ export function Rider({ playing, startPoint, onStats }: RiderProps) {
 				segments = collectSegments(editor)
 				last = now
 				acc = 0
+				frameCount = 0 // restart stats cadence so the first run frame samples predictably
 			}
 			wasPlaying = isPlaying
 

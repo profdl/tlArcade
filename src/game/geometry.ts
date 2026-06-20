@@ -63,6 +63,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		// Use the shape id so the transform/geometry caches resolve against the
 		// live record, not the enumerated snapshot object.
 		const transform = editor.getShapePageTransform(shape.id)
+		if (!transform) continue
 
 		// Draw (pencil) shapes can contain multiple strokes separated by
 		// pen-lifts. Their flattened geometry would bridge the gaps with a
@@ -71,16 +72,26 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		if (shape.type === 'draw') {
 			const draw = shape as TLDrawShape
 			const scale = draw.props.scale
-			for (const seg of draw.props.segments) {
-				const localPts = getPointsFromDrawSegment(seg, scale, scale)
-				pushPolyline(segments, transform.applyToPoints(localPts), kind, false)
+			const strokes = draw.props.segments
+			let firstPt: Vec | undefined
+			let lastPt: Vec | undefined
+			let totalPts = 0
+			for (const stroke of strokes) {
+				const localPts = getPointsFromDrawSegment(stroke, scale, scale)
+				const pts = transform.applyToPoints(localPts)
+				if (pts.length === 0) continue
+				// Push each stroke on its own so we never bridge a pen-lift gap
+				// with a phantom line between strokes.
+				pushPolyline(segments, pts, kind, false)
+				if (!firstPt) firstPt = pts[0]
+				lastPt = pts[pts.length - 1]
+				totalPts += pts.length
 			}
-			// A closed freehand loop: connect the very last point to the first.
-			if (draw.props.isClosed) {
-				const all = transform.applyToPoints(
-					draw.props.segments.flatMap((s) => getPointsFromDrawSegment(s, scale, scale))
-				)
-				if (all.length > 2) segments.push(makeSeg(all[all.length - 1], all[0], kind))
+			// A closed freehand loop connects the overall last point back to the
+			// overall first point. Guard on the total point count (not the final
+			// stroke's) so a closed loop ending in a degenerate tap still closes.
+			if (draw.props.isClosed && firstPt && lastPt && totalPts > 2) {
+				segments.push(makeSeg(lastPt, firstPt, kind))
 			}
 			continue
 		}
