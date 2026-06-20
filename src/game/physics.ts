@@ -30,6 +30,13 @@ export interface Segment {
 	 * accelerate at strength 0.5). Defaults to 1 when omitted.
 	 */
 	strength?: number
+	/**
+	 * Flips which side a 'oneway' line blocks. By default a one-way collides from
+	 * the side its left-hand normal points to (above, for a left->right segment);
+	 * `flip: true` blocks from the opposite side instead. No effect on other
+	 * kinds.
+	 */
+	flip?: boolean
 }
 
 /** Tunable constants. Units are page-pixels and seconds. */
@@ -145,7 +152,9 @@ function resolveCollisions(
 					const sdy = seg.b.y - seg.a.y
 					// Left-hand normal of (sdx,sdy) is (sdy,-sdx) in screen coords
 					// (y points down), which evaluates to (0,-len) pointing up.
-					const alignFront = nx * sdy + ny * -sdx
+					// `flip` blocks from the opposite side instead.
+					let alignFront = nx * sdy + ny * -sdx
+					if (seg.flip) alignFront = -alignFront
 					if (alignFront <= 0) continue
 				}
 

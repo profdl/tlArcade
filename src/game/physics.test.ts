@@ -272,6 +272,29 @@ describe('physics: one-way lines', () => {
 		// must not have pushed it back below where a solid line would trap it.
 		expect(r.pos.y).toBeLessThan(100)
 	})
+
+	it('a flipped one-way blocks from below but lets a fall pass through from above', () => {
+		const flipped: Segment = { ...oneway, flip: true }
+		// Falling onto it from above passes through (opposite of plain oneway).
+		const above = makeRider({ x: 0, y: 0 })
+		run(above, [flipped], 240)
+		expect(above.pos.y).toBeGreaterThan(50) // not trapped at the line; fell past
+
+		// Rising gently from just below is blocked: the line stops the upward
+		// motion so the sled never crosses above it, then gravity drops it back
+		// down through the unblocked side. Track the highest point (min y) reached;
+		// it must stay on the underside (>= the line). Keep the per-step speed
+		// under the tunneling threshold so collision catches the upward motion.
+		const below = makeRider({ x: 0, y: 60 })
+		below.prev = { x: 0, y: 62 } // ~240 px/s upward
+		let minY = below.pos.y
+		for (let i = 0; i < 60; i++) {
+			step(below, [flipped], DT)
+			minY = Math.min(minY, below.pos.y)
+		}
+		// Never punched through to above the line (would settle near 50 - radius).
+		expect(minY).toBeGreaterThanOrEqual(50 - 1)
+	})
 })
 
 describe('physics: multi-point body', () => {

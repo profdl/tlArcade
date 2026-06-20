@@ -34,7 +34,7 @@ tuned constant" approach — so the palette stays learnable and the switch in
 | `green`         | scenery     | **Scenery** — decorative, non-collidable.                    |
 | `light-green`   | scenery     | **Scenery** — non-collidable alias.                          |
 | `blue`          | oneway      | **One-way** — collide from the front only.                   |
-| `light-blue`    | oneway      | **One-way** — same; passes through from behind.              |
+| `light-blue`    | oneway      | **One-way (flipped)** — blocks from below instead of above.  |
 | `violet`        | sticky      | **Sticky** — strong tangential grip/friction.                |
 | `light-violet`  | sticky      | **Sticky (weak)** — half-strength grip.                      |
 | `white`         | ice         | **Ice** — zero surface friction, max glide.                  |
@@ -63,6 +63,12 @@ Per-kind tunables (`brakeDrag`, `bounceRestitution`, `stickyFriction`,
 
 ### Remaining follow-ups
 
-- The light-blue one-way is currently identical to blue. PLANNING originally
-  floated an "opposite-facing" variant; revisit if a second one-way direction is
-  wanted (would need a per-segment facing flag, not just `strength`).
+The color→behavior roadmap is fully shipped. Light-blue is now a flipped
+one-way (blocks from below) via the per-segment `flip` flag, so blue and
+light-blue give both gate directions.
+
+Open ideas, none blocking:
+
+- A visual hint of a one-way line's facing (e.g. an arrow) so players can tell
+  blue from light-blue at a glance without the legend.
+- Reset-on-stop vs. hold-pose is currently hold; consider a separate reset.

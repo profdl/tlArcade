@@ -14,6 +14,8 @@ import type { Checkpoint } from './checkpoints'
 interface KindSpec {
 	kind: LineKind
 	strength: number
+	/** For 'oneway': block from the opposite side. See Segment.flip. */
+	flip?: boolean
 }
 
 const COLOR_TO_KIND: Record<string, KindSpec> = {
@@ -24,7 +26,9 @@ const COLOR_TO_KIND: Record<string, KindSpec> = {
 	orange: { kind: 'brake', strength: 1 },
 	yellow: { kind: 'bounce', strength: 1 },
 	blue: { kind: 'oneway', strength: 1 },
-	'light-blue': { kind: 'oneway', strength: 1 },
+	// light-blue is a one-way facing the opposite way from blue, so the two
+	// shades give you both collide-from-above and collide-from-below gates.
+	'light-blue': { kind: 'oneway', strength: 1, flip: true },
 	violet: { kind: 'sticky', strength: 1 },
 	'light-violet': { kind: 'sticky', strength: 0.5 },
 	white: { kind: 'ice', strength: 1 },
@@ -87,8 +91,8 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		// invisible walls, independent of color.
 		if (!COLLIDABLE_TYPES.has(shape.type)) continue
 
-		const { kind, strength } = specOf(shape)
-		if (kind === 'scenery') continue
+		const spec = specOf(shape)
+		if (spec.kind === 'scenery') continue
 
 		// Use the shape id so the transform/geometry caches resolve against the
 		// live record, not the enumerated snapshot object.
@@ -112,7 +116,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 				if (pts.length === 0) continue
 				// Push each stroke on its own so we never bridge a pen-lift gap
 				// with a phantom line between strokes.
-				pushPolyline(segments, pts, kind, strength, false)
+				pushPolyline(segments, pts, spec, false)
 				if (!firstPt) firstPt = pts[0]
 				lastPt = pts[pts.length - 1]
 				totalPts += pts.length
@@ -121,7 +125,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 			// overall first point. Guard on the total point count (not the final
 			// stroke's) so a closed loop ending in a degenerate tap still closes.
 			if (draw.props.isClosed && firstPt && lastPt && totalPts > 2) {
-				segments.push(makeSeg(lastPt, firstPt, kind, strength))
+				segments.push(makeSeg(lastPt, firstPt, spec))
 			}
 			continue
 		}
@@ -131,24 +135,31 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		const localVerts = geometry.vertices
 		if (!localVerts || localVerts.length < 2) continue
 		const verts = transform.applyToPoints(localVerts)
-		pushPolyline(segments, verts, kind, strength, geometry.isClosed)
+		pushPolyline(segments, verts, spec, geometry.isClosed)
 	}
 
 	return segments
 }
 
 /** Emit segments between consecutive points; optionally close the loop. */
-function pushPolyline(out: TrackSegment[], pts: Vec[], kind: LineKind, strength: number, closed: boolean) {
+function pushPolyline(out: TrackSegment[], pts: Vec[], spec: KindSpec, closed: boolean) {
 	for (let i = 0; i < pts.length - 1; i++) {
-		out.push(makeSeg(pts[i], pts[i + 1], kind, strength))
+		out.push(makeSeg(pts[i], pts[i + 1], spec))
 	}
 	if (closed && pts.length > 2) {
-		out.push(makeSeg(pts[pts.length - 1], pts[0], kind, strength))
+		out.push(makeSeg(pts[pts.length - 1], pts[0], spec))
 	}
 }
 
-function makeSeg(a: Vec2, b: Vec2, kind: LineKind, strength: number): TrackSegment {
-	return { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, kind, strength }
+function makeSeg(a: Vec2, b: Vec2, spec: KindSpec): TrackSegment {
+	const seg: TrackSegment = {
+		a: { x: a.x, y: a.y },
+		b: { x: b.x, y: b.y },
+		kind: spec.kind,
+		strength: spec.strength,
+	}
+	if (spec.flip) seg.flip = true
+	return seg
 }
 
 // Native sticky-note shapes act as scoring flags / checkpoints. Using a distinct

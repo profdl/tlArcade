@@ -20,7 +20,8 @@ const LEGEND: { label: string; desc: string; swatches: string[] }[] = [
 	{ label: 'Bounce', desc: 'Springy', swatches: ['#ffc034'] },
 	{ label: 'Sticky', desc: 'High grip', swatches: ['#ae3ec9', '#e599f7'] },
 	{ label: 'Ice', desc: 'Frictionless', swatches: ['#e8eef2'] },
-	{ label: 'One-way', desc: 'Front side only', swatches: ['#4263eb', '#74c0fc'] },
+	{ label: 'One-way', desc: 'Blocks from above', swatches: ['#4263eb'] },
+	{ label: 'One-way ↑', desc: 'Blocks from below', swatches: ['#74c0fc'] },
 	{ label: 'Scenery', desc: 'Non-collidable', swatches: ['#2f9e44', '#8ce99a'] },
 ]
 

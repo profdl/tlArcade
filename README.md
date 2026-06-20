@@ -61,7 +61,7 @@ at half strength (a weaker version of the same effect).
 - **bounce** — springy, high-restitution rebound (yellow)
 - **sticky** — strong tangential grip/friction (violet; light-violet = weak)
 - **ice** — frictionless surface, maximum glide (white)
-- **oneway** — collidable only from the front; passes through from behind (blue / light-blue)
+- **oneway** — collidable from one side only; blue blocks from above, light-blue blocks from below (flipped)
 - **scenery** — decorative, non-collidable (green / light-green)
 
 ## Where to take it next
