@@ -66,5 +66,6 @@ at half strength (a weaker version of the same effect).
   (constraint-solved) for a body that tumbles, matching classic Line Rider.
 - **Scoring**: `Rider.tsx` already reports distance + speed via `onStats`; add
   flag/checkpoint shapes and award points when the sled passes them.
-- **Camera follow**: in the rAF loop, call `editor.centerOnPoint(riderPos)` (or
-  `setCamera`) to keep the sled in view.
+- **Camera follow** *(done)*: the rAF loop in [Rider.tsx](src/game/Rider.tsx)
+  eases the viewport center toward the sled while playing (toggle with the 🎥
+  button). Lerped, not snapped, and run with `history: 'ignore'`.

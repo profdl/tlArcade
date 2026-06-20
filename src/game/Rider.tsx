@@ -8,8 +8,13 @@ const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
 // Sled is drawn at its physics collision diameter so visuals match collisions.
 const SLED_DIAMETER = PHYSICS.riderRadius * 2
 
+// Fraction of the gap to the sled the camera closes each frame while following.
+// Low enough to glide smoothly, high enough to keep a fast sled on screen.
+const CAMERA_FOLLOW_LERP = 0.12
+
 interface RiderProps {
 	playing: boolean
+	follow: boolean
 	startPoint: Vec2
 	onStats: (distance: number, speed: number) => void
 }
@@ -19,7 +24,7 @@ interface RiderProps {
 // it positions the sled by recomputing editor.pageToScreen() each frame, so the
 // sled stays glued to the canvas under pan / zoom / resize without any
 // per-frame React re-render (we write the DOM transform imperatively).
-export function Rider({ playing, startPoint, onStats }: RiderProps) {
+export function Rider({ playing, follow, startPoint, onStats }: RiderProps) {
 	const editor = useEditor()
 	const elRef = useRef<HTMLDivElement | null>(null)
 	const stateRef = useRef(makeRider(startPoint))
@@ -28,10 +33,14 @@ export function Rider({ playing, startPoint, onStats }: RiderProps) {
 	// Keep the latest props in refs so the long-lived rAF loop never goes stale.
 	// Sync in effects (not during render) so React 19 / StrictMode is happy.
 	const playingRef = useRef(playing)
+	const followRef = useRef(follow)
 	const onStatsRef = useRef(onStats)
 	useEffect(() => {
 		playingRef.current = playing
 	}, [playing])
+	useEffect(() => {
+		followRef.current = follow
+	}, [follow])
 	useEffect(() => {
 		onStatsRef.current = onStats
 	}, [onStats])
@@ -83,6 +92,26 @@ export function Rider({ playing, startPoint, onStats }: RiderProps) {
 					const d = Math.hypot(p.x - startRef.current.x, p.y - startRef.current.y)
 					const v = velocity(stateRef.current, FIXED_DT)
 					onStatsRef.current(d, Math.hypot(v.x, v.y))
+				}
+
+				// Camera follow: ease the viewport center toward the sled so a fast
+				// ride stays on screen. Lerping (not snapping) avoids a jarring lock,
+				// and skipping when already close avoids fighting a settled sled with
+				// sub-pixel camera nudges. history:'ignore' keeps it off the undo
+				// stack; the camera move must not be an undoable edit.
+				if (followRef.current) {
+					const center = editor.getViewportPageBounds().center
+					const p = stateRef.current.pos
+					const dx = p.x - center.x
+					const dy = p.y - center.y
+					if (Math.hypot(dx, dy) > 1) {
+						// Ease the viewport center a fraction of the way to the sled.
+						const target = {
+							x: center.x + dx * CAMERA_FOLLOW_LERP,
+							y: center.y + dy * CAMERA_FOLLOW_LERP,
+						}
+						editor.run(() => editor.centerOnPoint(target), { history: 'ignore' })
+					}
 				}
 			} else {
 				last = now // keep timebase fresh while paused

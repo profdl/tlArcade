@@ -12,6 +12,7 @@ const START_DROP_ABOVE_CENTER = 150
 function App() {
 	const [editor, setEditor] = useState<Editor | null>(null)
 	const [playing, setPlaying] = useState(false)
+	const [follow, setFollow] = useState(true)
 	const [startPoint, setStartPoint] = useState<Vec2>({ x: 200, y: 100 })
 	const [stats, setStats] = useState({ distance: 0, speed: 0 })
 
@@ -44,10 +45,10 @@ function App() {
 	const components: TLComponents = useMemo(
 		() => ({
 			InFrontOfTheCanvas: () => (
-				<Rider playing={playing} startPoint={startPoint} onStats={onStats} />
+				<Rider playing={playing} follow={follow} startPoint={startPoint} onStats={onStats} />
 			),
 		}),
-		[playing, startPoint, onStats]
+		[playing, follow, startPoint, onStats]
 	)
 
 	return (
@@ -73,6 +74,14 @@ function App() {
 					}}
 				>
 					⌖
+				</button>
+				<button
+					className={follow ? 'lr-btn lr-icon lr-active' : 'lr-btn lr-icon'}
+					title={follow ? 'Camera follow: on' : 'Camera follow: off'}
+					aria-pressed={follow}
+					onClick={() => setFollow((f) => !f)}
+				>
+					🎥
 				</button>
 				<span className="lr-stat">
 					<b>{Math.round(stats.distance)}</b>

@@ -64,6 +64,10 @@
 	color: #fff;
 	border-color: #e03131;
 }
+.lr-active {
+	background: #e7f5ff;
+	border-color: #4263eb;
+}
 
 .lr-stat {
 	display: flex;
