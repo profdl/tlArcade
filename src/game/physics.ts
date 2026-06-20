@@ -8,7 +8,15 @@ export interface Vec2 {
 }
 
 /** The gameplay behavior of a track line. */
-export type LineKind = 'solid' | 'accelerate' | 'oneway' | 'scenery'
+export type LineKind =
+	| 'solid'
+	| 'accelerate'
+	| 'brake'
+	| 'bounce'
+	| 'sticky'
+	| 'ice'
+	| 'oneway'
+	| 'scenery'
 
 /** A line segment in world (page) space that the sled can ride on. */
 export interface Segment {
@@ -16,6 +24,12 @@ export interface Segment {
 	b: Vec2
 	/** Gameplay behavior. Defaults to 'solid' when omitted. */
 	kind?: LineKind
+	/**
+	 * Scales the strength of the kind's effect, 0..1. Lets "light-" color
+	 * variants reuse the same kind with a weaker magnitude (e.g. light-red is
+	 * accelerate at strength 0.5). Defaults to 1 when omitted.
+	 */
+	strength?: number
 }
 
 /** Tunable constants. Units are page-pixels and seconds. */
@@ -32,6 +46,10 @@ export const PHYSICS = {
 	// threshold (~2*riderRadius / FIXED_DT) so boosted sleds don't shoot through
 	// thin lines in a single step.
 	accelerateMaxSpeed: 1000,
+	brakeDrag: 0.08, // fraction of tangential speed removed per step on 'brake' lines
+	bounceRestitution: 0.85, // restitution for 'bounce' lines (springy; 0=none, 1=elastic)
+	stickyFriction: 0.25, // tangential drag fraction on 'sticky' lines (strong grip)
+	iceFriction: 0.0, // tangential drag on 'ice' lines (perfectly frictionless glide)
 }
 
 // Below this we treat a displacement as zero (avoid divide-by-zero / NaN).
@@ -128,20 +146,34 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 				state.pos.x += nx * penetration
 				state.pos.y += ny * penetration
 
+				// Per-kind surface tuning. `strength` (0..1) scales a kind's effect
+				// so "light-" color variants reuse the same kind at a weaker value.
+				const strength = seg.strength ?? 1
+				// Bounce lines are springy; everything else keeps the classic
+				// near-zero restitution.
+				const restitution =
+					seg.kind === 'bounce' ? PHYSICS.bounceRestitution * strength : PHYSICS.restitution
+				// Tangential drag varies by surface: ice glides, sticky grips,
+				// everything else uses the default near-frictionless value.
+				let tangentFriction: number
+				if (seg.kind === 'ice') tangentFriction = PHYSICS.iceFriction
+				else if (seg.kind === 'sticky') tangentFriction = PHYSICS.stickyFriction * strength
+				else tangentFriction = PHYSICS.surfaceFriction
+
 				// Remove the velocity component into the surface (+ optional bounce),
 				// and apply tangential friction so the sled "rides" the line.
 				let vX = state.pos.x - state.prev.x
 				let vY = state.pos.y - state.prev.y
 				const vn = vX * nx + vY * ny // velocity along normal
 				if (vn < 0) {
-					vX -= (1 + PHYSICS.restitution) * vn * nx
-					vY -= (1 + PHYSICS.restitution) * vn * ny
+					vX -= (1 + restitution) * vn * nx
+					vY -= (1 + restitution) * vn * ny
 				}
 				// Tangential component damping (surface friction).
 				const tX = vX - (vX * nx + vY * ny) * nx
 				const tY = vY - (vX * nx + vY * ny) * ny
-				vX -= tX * PHYSICS.surfaceFriction
-				vY -= tY * PHYSICS.surfaceFriction
+				vX -= tX * tangentFriction
+				vY -= tY * tangentFriction
 
 				// Accelerate lines push the sled along the surface tangent, in
 				// whichever tangential direction it's already moving — but stop
@@ -150,10 +182,19 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 					const tLen = Math.hypot(tX, tY)
 					const speed = Math.hypot(vX, vY) / dt
 					if (tLen > EPSILON && speed < PHYSICS.accelerateMaxSpeed) {
-						const impulse = PHYSICS.accelerateBoost * dt * dt
+						const impulse = PHYSICS.accelerateBoost * strength * dt * dt
 						vX += (tX / tLen) * impulse
 						vY += (tY / tLen) * impulse
 					}
+				}
+
+				// Brake lines remove a fraction of the sled's tangential speed each
+				// step, slowing it as it rides (the opposite of accelerate). Applied
+				// once per step (final iteration) like the boost.
+				if (seg.kind === 'brake' && lastIter) {
+					const drag = Math.min(1, PHYSICS.brakeDrag * strength)
+					vX -= tX * drag
+					vY -= tY * drag
 				}
 
 				state.prev.x = state.pos.x - vX

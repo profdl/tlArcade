@@ -6,28 +6,43 @@ import type { LineKind, Segment, Vec2 } from './physics'
 // tools and pick a color; we interpret the color as gameplay behavior.
 // `LineKind` is defined in physics.ts (the consumer); we map colors onto it.
 
-// Map native tldraw colors -> gameplay line kinds.
-const COLOR_TO_KIND: Record<string, LineKind> = {
-	black: 'solid',
-	grey: 'solid',
-	red: 'accelerate',
-	'light-red': 'accelerate',
-	blue: 'oneway',
-	'light-blue': 'oneway',
-	green: 'scenery',
-	'light-green': 'scenery',
+// Map native tldraw colors -> gameplay line kinds. Each entry carries a
+// `strength` (0..1) so a "light-" color can reuse its base kind at a weaker
+// magnitude (per PLANNING.md's "same kind, tuned constant" decision). Strength
+// is a no-op for kinds that don't read it (solid/oneway/scenery).
+interface KindSpec {
+	kind: LineKind
+	strength: number
 }
+
+const COLOR_TO_KIND: Record<string, KindSpec> = {
+	black: { kind: 'solid', strength: 1 },
+	grey: { kind: 'solid', strength: 1 },
+	red: { kind: 'accelerate', strength: 1 },
+	'light-red': { kind: 'accelerate', strength: 0.5 },
+	orange: { kind: 'brake', strength: 1 },
+	yellow: { kind: 'bounce', strength: 1 },
+	blue: { kind: 'oneway', strength: 1 },
+	'light-blue': { kind: 'oneway', strength: 1 },
+	violet: { kind: 'sticky', strength: 1 },
+	'light-violet': { kind: 'sticky', strength: 0.5 },
+	white: { kind: 'ice', strength: 1 },
+	green: { kind: 'scenery', strength: 1 },
+	'light-green': { kind: 'scenery', strength: 1 },
+}
+
+const DEFAULT_SPEC: KindSpec = { kind: 'solid', strength: 1 }
 
 /** A page-space collision segment with a definite gameplay kind. */
 export interface TrackSegment extends Segment {
 	kind: LineKind
 }
 
-function kindOf(shape: TLShape): LineKind {
+function specOf(shape: TLShape): KindSpec {
 	// Most drawable shapes carry a `color` prop; default to solid otherwise.
 	const color = (shape.props as { color?: string }).color
 	if (color && color in COLOR_TO_KIND) return COLOR_TO_KIND[color]
-	return 'solid'
+	return DEFAULT_SPEC
 }
 
 /**
@@ -57,7 +72,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 	const segments: TrackSegment[] = []
 
 	for (const shape of editor.getCurrentPageShapes()) {
-		const kind = kindOf(shape)
+		const { kind, strength } = specOf(shape)
 		if (kind === 'scenery') continue
 
 		// Use the shape id so the transform/geometry caches resolve against the
@@ -82,7 +97,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 				if (pts.length === 0) continue
 				// Push each stroke on its own so we never bridge a pen-lift gap
 				// with a phantom line between strokes.
-				pushPolyline(segments, pts, kind, false)
+				pushPolyline(segments, pts, kind, strength, false)
 				if (!firstPt) firstPt = pts[0]
 				lastPt = pts[pts.length - 1]
 				totalPts += pts.length
@@ -91,7 +106,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 			// overall first point. Guard on the total point count (not the final
 			// stroke's) so a closed loop ending in a degenerate tap still closes.
 			if (draw.props.isClosed && firstPt && lastPt && totalPts > 2) {
-				segments.push(makeSeg(lastPt, firstPt, kind))
+				segments.push(makeSeg(lastPt, firstPt, kind, strength))
 			}
 			continue
 		}
@@ -101,22 +116,22 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		const localVerts = geometry.vertices
 		if (!localVerts || localVerts.length < 2) continue
 		const verts = transform.applyToPoints(localVerts)
-		pushPolyline(segments, verts, kind, geometry.isClosed)
+		pushPolyline(segments, verts, kind, strength, geometry.isClosed)
 	}
 
 	return segments
 }
 
 /** Emit segments between consecutive points; optionally close the loop. */
-function pushPolyline(out: TrackSegment[], pts: Vec[], kind: LineKind, closed: boolean) {
+function pushPolyline(out: TrackSegment[], pts: Vec[], kind: LineKind, strength: number, closed: boolean) {
 	for (let i = 0; i < pts.length - 1; i++) {
-		out.push(makeSeg(pts[i], pts[i + 1], kind))
+		out.push(makeSeg(pts[i], pts[i + 1], kind, strength))
 	}
 	if (closed && pts.length > 2) {
-		out.push(makeSeg(pts[pts.length - 1], pts[0], kind))
+		out.push(makeSeg(pts[pts.length - 1], pts[0], kind, strength))
 	}
 }
 
-function makeSeg(a: Vec2, b: Vec2, kind: LineKind): TrackSegment {
-	return { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, kind }
+function makeSeg(a: Vec2, b: Vec2, kind: LineKind, strength: number): TrackSegment {
+	return { a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, kind, strength }
 }

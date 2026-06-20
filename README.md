@@ -10,6 +10,9 @@ A [Line Rider](https://en.wikipedia.org/wiki/Line_Rider) clone built on top of
 - **tldraw v5** as the canvas / editor engine
 - A hand-rolled **Verlet physics** sim (no physics-engine dependency)
 
+> Working on the code? See [CLAUDE.md](CLAUDE.md) for architecture notes and
+> gotchas, and [docs/tldraw/](docs/tldraw/) for offline tldraw v5 SDK docs.
+
 ## Run it
 
 ```bash
@@ -45,10 +48,17 @@ src/
 
 ### Line types (by shape color)
 
+Each color maps to a gameplay `LineKind`. "Light-" variants reuse the same kind
+at half strength (a weaker version of the same effect).
+
 - **solid** — collidable track (black / grey)
-- **accelerate** — collidable; adds a tangential boost along the line (red)
-- **oneway** — collidable only from the front; passes through from behind (blue)
-- **scenery** — decorative, non-collidable (green)
+- **accelerate** — adds a tangential boost along the line (red; light-red = weak)
+- **brake** — tangential drag that slows the sled as it rides (orange)
+- **bounce** — springy, high-restitution rebound (yellow)
+- **sticky** — strong tangential grip/friction (violet; light-violet = weak)
+- **ice** — frictionless surface, maximum glide (white)
+- **oneway** — collidable only from the front; passes through from behind (blue / light-blue)
+- **scenery** — decorative, non-collidable (green / light-green)
 
 ## Where to take it next
 

@@ -12,36 +12,37 @@ whose color isn't in `COLOR_TO_KIND` to `'solid'`, and `collectSegments` pulls
 in every non-scenery shape on the page. Consequence: text, images, frames, etc.
 act as solid collision geometry (invisible walls).
 
-**Decision (for now):** leave it. Unmapped colors — and shapes with no color —
-behave as basic solid track, same as black lines. This keeps the native-first
-contract simple: "anything not opted out (scenery-green) is track."
-
-**Planned:** assign a distinct gameplay behavior to *every* tldraw color so the
+**Decision:** leave it. With every color now mapped (see below), the
 default-to-solid fallback only ever applies to truly color-less shapes
-(text/image/frame). See below.
+(text/image/frame), which behave as basic solid track. This keeps the
+native-first contract simple: "anything not opted out (scenery-green) is track."
 
-## Roadmap: behavior for all 13 tldraw colors
+## Color → behavior: all 13 tldraw colors (shipped)
 
-tldraw v5's default palette (`TLDefaultColorStyle`) has 13 colors. Today
-`COLOR_TO_KIND` maps 8 of them to 4 kinds. The plan is to give each color a role.
-Lighter shades pair with their base color as a "weaker/variant" version so the
-palette stays learnable.
+tldraw v5's default palette (`TLDefaultColorStyle`) has 13 colors. Every one now
+maps to a gameplay role in `COLOR_TO_KIND` ([geometry.ts](src/game/geometry.ts)).
+Lighter shades reuse their base color's kind at `strength: 0.5` — the "same kind,
+tuned constant" approach — so the palette stays learnable and the switch in
+`step()` stays small.
 
-| Color           | Current kind | Planned behavior                                              |
-|-----------------|--------------|--------------------------------------------------------------|
-| `black`         | solid        | **Solid** — basic collidable track (the default line).       |
-| `grey`          | solid        | **Solid** — same as black; a neutral alias.                  |
-| `red`           | accelerate   | **Accelerate** — tangential boost in the direction of travel.|
-| `light-red`     | accelerate   | **Accelerate (weak)** — smaller boost than red.              |
-| `orange`        | —            | **Decelerate / brake** — tangential drag, slows the sled.    |
-| `yellow`        | —            | **Bounce / trampoline** — high restitution (springy).        |
-| `green`         | scenery      | **Scenery** — decorative, non-collidable (unchanged).        |
-| `light-green`   | scenery      | **Scenery** — non-collidable alias (unchanged).              |
-| `blue`          | oneway       | **One-way (up)** — collide from the front only.              |
-| `light-blue`    | oneway       | **One-way (weak/down)** — one-way, opposite-facing variant.  |
-| `violet`        | —            | **Sticky / high-friction** — strong tangential drag, "grip". |
-| `light-violet`  | —            | **Sticky (weak)** — mild high-friction variant.              |
-| `white`         | —            | **Ice / frictionless** — zero surface friction, max glide.   |
+| Color           | Kind        | Behavior                                                     |
+|-----------------|-------------|--------------------------------------------------------------|
+| `black`         | solid       | **Solid** — basic collidable track (the default line).       |
+| `grey`          | solid       | **Solid** — same as black; a neutral alias.                  |
+| `red`           | accelerate  | **Accelerate** — tangential boost in the direction of travel.|
+| `light-red`     | accelerate  | **Accelerate (weak)** — half-strength boost.                 |
+| `orange`        | brake       | **Brake** — tangential drag, slows the sled.                 |
+| `yellow`        | bounce      | **Bounce** — high restitution (springy trampoline).          |
+| `green`         | scenery     | **Scenery** — decorative, non-collidable.                    |
+| `light-green`   | scenery     | **Scenery** — non-collidable alias.                          |
+| `blue`          | oneway      | **One-way** — collide from the front only.                   |
+| `light-blue`    | oneway      | **One-way** — same; passes through from behind.              |
+| `violet`        | sticky      | **Sticky** — strong tangential grip/friction.                |
+| `light-violet`  | sticky      | **Sticky (weak)** — half-strength grip.                      |
+| `white`         | ice         | **Ice** — zero surface friction, max glide.                  |
+
+Per-kind tunables (`brakeDrag`, `bounceRestitution`, `stickyFriction`,
+`iceFriction`) live in the `PHYSICS` object; `strength` scales them per segment.
 
 ### Implementation notes
 
@@ -62,8 +63,11 @@ palette stays learnable.
   *or* distinct kinds — decide per behavior when implementing; prefer one kind +
   a magnitude field only if the math is otherwise identical.
 
-### Still TODO before any of this ships
+### Remaining follow-ups
 
 - Decide whether non-track shape *types* (text/image/frame) should be excluded
   from collision entirely, independent of color (see "Open decisions" above).
 - A legend/UI hint so players know which color does what.
+- The light-blue one-way is currently identical to blue. PLANNING originally
+  floated an "opposite-facing" variant; revisit if a second one-way direction is
+  wanted (would need a per-segment facing flag, not just `strength`).

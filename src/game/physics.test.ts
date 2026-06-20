@@ -131,6 +131,118 @@ describe('physics: accelerate lines', () => {
 	})
 })
 
+describe('physics: brake lines', () => {
+	const flat = (kind?: Segment['kind']): Segment => ({
+		a: { x: -1e7, y: 50 },
+		b: { x: 1e7, y: 50 },
+		kind,
+	})
+
+	it('a brake line slows the sled vs a plain solid line', () => {
+		// Both start with the same rightward motion, pressed onto the floor.
+		const solid = makeRider({ x: 0, y: 44 })
+		solid.prev = { x: -6, y: 44 } // ~720 px/s rightward
+		run(solid, [flat('solid')], 120)
+
+		const brake = makeRider({ x: 0, y: 44 })
+		brake.prev = { x: -6, y: 44 }
+		run(brake, [flat('brake')], 120)
+
+		// The braked sled covers less ground because tangential drag bleeds speed.
+		expect(brake.pos.x).toBeLessThan(solid.pos.x)
+	})
+})
+
+describe('physics: bounce lines', () => {
+	const flat = (kind?: Segment['kind']): Segment => ({
+		a: { x: -1000, y: 50 },
+		b: { x: 1000, y: 50 },
+		kind,
+	})
+
+	it('a sled rebounds higher off a bounce line than off a solid line', () => {
+		// Drop from the same height; measure the rebound apex reached strictly
+		// AFTER the sled first makes contact with the floor (y near 50). Tracking
+		// the apex only post-contact avoids counting the shared drop start.
+		const apexAfterContact = (kind: Segment['kind']): number => {
+			const r = makeRider({ x: 0, y: -50 })
+			let contacted = false
+			let apex = Infinity // smallest (highest) y seen after contact
+			for (let i = 0; i < 120; i++) {
+				step(r, [flat(kind)], DT)
+				if (!contacted && r.pos.y > 50 - PHYSICS.riderRadius - 2) contacted = true
+				if (contacted) apex = Math.min(apex, r.pos.y)
+			}
+			return apex
+		}
+		// Higher rebound = smaller (more negative) apex y after the bounce.
+		expect(apexAfterContact('bounce')).toBeLessThan(apexAfterContact('solid'))
+	})
+})
+
+describe('physics: sticky lines', () => {
+	const flat = (kind?: Segment['kind']): Segment => ({
+		a: { x: -1e7, y: 50 },
+		b: { x: 1e7, y: 50 },
+		kind,
+	})
+
+	it('a sticky line drags the sled to a near-stop faster than solid', () => {
+		const solid = makeRider({ x: 0, y: 44 })
+		solid.prev = { x: -6, y: 44 }
+		run(solid, [flat('solid')], 120)
+
+		const sticky = makeRider({ x: 0, y: 44 })
+		sticky.prev = { x: -6, y: 44 }
+		run(sticky, [flat('sticky')], 120)
+
+		expect(sticky.pos.x).toBeLessThan(solid.pos.x)
+	})
+})
+
+describe('physics: ice lines', () => {
+	const flat = (kind?: Segment['kind']): Segment => ({
+		a: { x: -1e7, y: 50 },
+		b: { x: 1e7, y: 50 },
+		kind,
+	})
+
+	it('an ice line preserves more glide than a solid line', () => {
+		const solid = makeRider({ x: 0, y: 44 })
+		solid.prev = { x: -6, y: 44 }
+		run(solid, [flat('solid')], 200)
+
+		const ice = makeRider({ x: 0, y: 44 })
+		ice.prev = { x: -6, y: 44 }
+		run(ice, [flat('ice')], 200)
+
+		// Frictionless ice lets the sled travel at least as far as the (already
+		// near-frictionless) solid line.
+		expect(ice.pos.x).toBeGreaterThanOrEqual(solid.pos.x)
+	})
+})
+
+describe('physics: light variants are weaker', () => {
+	const flat = (kind: Segment['kind'], strength?: number): Segment => ({
+		a: { x: -1e7, y: 50 },
+		b: { x: 1e7, y: 50 },
+		kind,
+		strength,
+	})
+
+	it('a half-strength accelerate line boosts less than full strength', () => {
+		const full = makeRider({ x: 0, y: 40 })
+		full.prev = { x: -2, y: 40 }
+		run(full, [flat('accelerate', 1)], 240)
+
+		const half = makeRider({ x: 0, y: 40 })
+		half.prev = { x: -2, y: 40 }
+		run(half, [flat('accelerate', 0.5)], 240)
+
+		expect(half.pos.x).toBeLessThan(full.pos.x)
+	})
+})
+
 describe('physics: one-way lines', () => {
 	// Left-hand normal of a left->right segment points up (-y), so "front" is above.
 	const oneway: Segment = { a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 }, kind: 'oneway' }
