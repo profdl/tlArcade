@@ -20,37 +20,41 @@ npm run build    # type-check + production build
 
 ## How it's wired
 
+This is a **native-first** design: there is no custom shape or tool. Users draw
+with tldraw's built-in pencil/geo/line tools and pick a color; we read every
+shape's geometry and interpret its color as gameplay behavior.
+
 ```
 src/
-  App.tsx              Mounts <Tldraw>, registers the custom shape + tool,
-                       renders the game UI panel and the rider overlay.
-  App.css              Styling for the control panel.
+  App.tsx              Mounts <Tldraw>, renders the control panel and the rider
+                       overlay (via components.InFrontOfTheCanvas). Toggles the
+                       editor read-only while playing.
+  App.css              Styling for the control panel and the sled.
   game/
+    geometry.ts        Turns every native shape on the current page into
+                       page-space collision segments via getShapeGeometry /
+                       getPointsFromDrawSegment. Maps shape color -> LineKind.
     physics.ts         The sim: a point-mass sled under gravity, colliding
-                       against line segments (Verlet integration).
-    LineShape.tsx      Custom 'line-track' tldraw shape (one segment per shape).
-                       Registered into tldraw's TLGlobalShapePropsMap so the
-                       editor's generic APIs recognize the type.
-    LineTool.ts        Custom StateNode: drag-to-draw a track line.
-    Rider.tsx          Reads all 'line-track' shapes as physics segments, runs
-                       a fixed-timestep rAF loop, and draws the sled as an
-                       overlay (InFrontOfTheCanvas) positioned via pageToScreen.
+                       against line segments (Verlet integration). Honors each
+                       segment's kind (accelerate / oneway).
+    physics.test.ts    Vitest unit tests for the sim.
+    Rider.tsx          Snapshots segments on play, runs a fixed-timestep rAF
+                       loop, and draws the sled as an overlay positioned via
+                       pageToScreen.
 ```
 
-### Line types
+### Line types (by shape color)
 
-- **solid** — collidable track (black)
-- **accelerate** — currently collidable like solid (red); hook for a boost line
+- **solid** — collidable track (black / grey)
+- **accelerate** — collidable; adds a tangential boost along the line (red)
+- **oneway** — collidable only from the front; passes through from behind (blue)
 - **scenery** — decorative, non-collidable (green)
 
 ## Where to take it next
 
-- **Accelerate lines**: in `physics.ts`, tag segments with their `kind` and add
-  a tangential impulse along `accelerate` segments during collision resolution.
 - **A real sled**: replace the single point mass with 2–4 linked points
   (constraint-solved) for a body that tumbles, matching classic Line Rider.
 - **Scoring**: `Rider.tsx` already reports distance + speed via `onStats`; add
   flag/checkpoint shapes and award points when the sled passes them.
 - **Camera follow**: in the rAF loop, call `editor.centerOnPoint(riderPos)` (or
   `setCamera`) to keep the sled in view.
-- **Persistence**: pass a `persistenceKey` to `<Tldraw>` to auto-save tracks.

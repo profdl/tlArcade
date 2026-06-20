@@ -3,6 +3,18 @@
 	inset: 0;
 }
 
+/* Stacking: canvas < sled (.lr-sled, 300) < control panel (.lr-panel, 400). */
+.lr-sled {
+	position: absolute;
+	left: 0;
+	top: 0;
+	border-radius: 50%;
+	background: #4263eb;
+	box-shadow: 0 0 0 3px rgba(66, 99, 235, 0.25);
+	pointer-events: none;
+	z-index: 300;
+}
+
 .lr-panel {
 	position: absolute;
 	top: 8px;

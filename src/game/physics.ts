@@ -7,10 +7,15 @@ export interface Vec2 {
 	y: number
 }
 
+/** The gameplay behavior of a track line. */
+export type LineKind = 'solid' | 'accelerate' | 'oneway' | 'scenery'
+
 /** A line segment in world (page) space that the sled can ride on. */
 export interface Segment {
 	a: Vec2
 	b: Vec2
+	/** Gameplay behavior. Defaults to 'solid' when omitted. */
+	kind?: LineKind
 }
 
 /** Tunable constants. Units are page-pixels and seconds. */
@@ -20,8 +25,17 @@ export const PHYSICS = {
 	restitution: 0.0, // 0 = no bounce off lines (classic Line Rider feel)
 	surfaceFriction: 0.0015, // tangential drag when riding a line (Line Rider lines are near-frictionless)
 	riderRadius: 6, // collision radius of the sled point
+	contactSkin: 0.75, // band beyond riderRadius still treated as "riding" the line
 	maxSpeed: 4000, // clamp to avoid tunneling/explosions
+	accelerateBoost: 1200, // px/s^2 tangential acceleration added along 'accelerate' lines
+	// px/s; accelerate lines stop boosting past this. Kept below the tunneling
+	// threshold (~2*riderRadius / FIXED_DT) so boosted sleds don't shoot through
+	// thin lines in a single step.
+	accelerateMaxSpeed: 1000,
 }
+
+// Below this we treat a displacement as zero (avoid divide-by-zero / NaN).
+const EPSILON = 1e-9
 
 export interface RiderState {
 	pos: Vec2
@@ -74,16 +88,41 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 
 	// --- Collision resolution (iterate for stability) ---
 	const r = PHYSICS.riderRadius
-	for (let iter = 0; iter < 2; iter++) {
+	// A sled resting on a line settles at exactly dist == r. Treat a thin band
+	// beyond r as still "in contact" so surface friction and kind-based effects
+	// (accelerate / oneway) keep engaging while the sled rides the line, not
+	// only during the brief penetration transient.
+	const contact = r + PHYSICS.contactSkin
+	const ITERATIONS = 2
+	for (let iter = 0; iter < ITERATIONS; iter++) {
+		// Apply the accelerate boost only on the final iteration so it's added
+		// once per step, not once per stabilization pass.
+		const lastIter = iter === ITERATIONS - 1
 		for (const seg of segments) {
 			const { point } = closestPointOnSegment(state.pos, seg.a, seg.b)
 			const diff = sub(state.pos, point)
 			const dist = len(diff)
-			if (dist < r && dist > 1e-6) {
+			if (dist < contact && dist > EPSILON) {
 				// Surface normal pointing from line toward the rider.
 				const nx = diff.x / dist
 				const ny = diff.y / dist
-				const penetration = r - dist
+				// Positive only when actually overlapping; 0 within the contact skin.
+				const penetration = Math.max(0, r - dist)
+
+				// One-way lines only collide when the rider sits on the "front"
+				// side — the half-plane the segment's left-hand normal points to.
+				// For a left->right segment that normal points up (-y), so a rider
+				// above the line is blocked and a rider below passes through.
+				// front side <=> collision normal `n` aligns with the left-hand
+				// normal of (a->b), i.e. their dot product is positive.
+				if (seg.kind === 'oneway') {
+					const sdx = seg.b.x - seg.a.x
+					const sdy = seg.b.y - seg.a.y
+					// Left-hand normal of (sdx,sdy) is (sdy,-sdx) in screen coords
+					// (y points down), which evaluates to (0,-len) pointing up.
+					const alignFront = nx * sdy + ny * -sdx
+					if (alignFront <= 0) continue
+				}
 
 				// Push the rider out along the normal.
 				state.pos.x += nx * penetration
@@ -104,6 +143,19 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 				vX -= tX * PHYSICS.surfaceFriction
 				vY -= tY * PHYSICS.surfaceFriction
 
+				// Accelerate lines push the sled along the surface tangent, in
+				// whichever tangential direction it's already moving — but stop
+				// boosting past accelerateMaxSpeed so it can't run away or tunnel.
+				if (seg.kind === 'accelerate' && lastIter) {
+					const tLen = Math.hypot(tX, tY)
+					const speed = Math.hypot(vX, vY) / dt
+					if (tLen > EPSILON && speed < PHYSICS.accelerateMaxSpeed) {
+						const impulse = PHYSICS.accelerateBoost * dt * dt
+						vX += (tX / tLen) * impulse
+						vY += (tY / tLen) * impulse
+					}
+				}
+
 				state.prev.x = state.pos.x - vX
 				state.prev.y = state.pos.y - vY
 			}
@@ -113,9 +165,9 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 	// --- Speed clamp ---
 	const sx = state.pos.x - state.prev.x
 	const sy = state.pos.y - state.prev.y
-	const speed = Math.hypot(sx, sy) / dt
-	if (speed > PHYSICS.maxSpeed) {
-		const scale = (PHYSICS.maxSpeed * dt) / Math.hypot(sx, sy)
+	const stepLen = Math.hypot(sx, sy)
+	if (stepLen > EPSILON && stepLen / dt > PHYSICS.maxSpeed) {
+		const scale = (PHYSICS.maxSpeed * dt) / stepLen
 		state.prev.x = state.pos.x - sx * scale
 		state.prev.y = state.pos.y - sy * scale
 	}

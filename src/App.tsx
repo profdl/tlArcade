@@ -5,6 +5,10 @@ import { Rider } from './game/Rider'
 import type { Vec2 } from './game/physics'
 import './App.css'
 
+// How far above the viewport center to drop the sled when "set start" is hit,
+// so it has room to fall onto the track below.
+const START_DROP_ABOVE_CENTER = 150
+
 function App() {
 	const [editor, setEditor] = useState<Editor | null>(null)
 	const [playing, setPlaying] = useState(false)
@@ -65,7 +69,7 @@ function App() {
 					onClick={() => {
 						if (!editor) return
 						const c = editor.getViewportPageBounds().center
-						setStartPoint({ x: c.x, y: c.y - 150 })
+						setStartPoint({ x: c.x, y: c.y - START_DROP_ABOVE_CENTER })
 					}}
 				>
 					⌖

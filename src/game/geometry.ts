@@ -1,10 +1,10 @@
 import { getPointsFromDrawSegment, type Editor, type TLShape, type TLDrawShape, type Vec } from 'tldraw'
-import type { Segment, Vec2 } from './physics'
+import type { LineKind, Segment, Vec2 } from './physics'
 
-// The "kind" of a track line, derived from a native shape's color. This keeps
+// The "kind" of a track line is derived from a native shape's color. This keeps
 // us fully on tldraw's native stack — users draw with the native pencil/geo
 // tools and pick a color; we interpret the color as gameplay behavior.
-export type LineKind = 'solid' | 'accelerate' | 'oneway' | 'scenery'
+// `LineKind` is defined in physics.ts (the consumer); we map colors onto it.
 
 // Map native tldraw colors -> gameplay line kinds.
 const COLOR_TO_KIND: Record<string, LineKind> = {
@@ -18,7 +18,7 @@ const COLOR_TO_KIND: Record<string, LineKind> = {
 	'light-green': 'scenery',
 }
 
-/** A page-space collision segment plus the gameplay kind it came from. */
+/** A page-space collision segment with a definite gameplay kind. */
 export interface TrackSegment extends Segment {
 	kind: LineKind
 }

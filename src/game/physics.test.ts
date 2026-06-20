@@ -84,4 +84,68 @@ describe('physics: speed clamp', () => {
 		const speed = Math.hypot(v.x, v.y)
 		expect(speed).toBeLessThanOrEqual(PHYSICS.maxSpeed + 1)
 	})
+
+	it('a perfectly stationary rider stays finite (no NaN from zero-velocity clamp)', () => {
+		// Wedge the rider exactly on a flat floor with zero initial velocity.
+		const floor: Segment = { a: { x: -100, y: 0 }, b: { x: 100, y: 0 } }
+		const r = makeRider({ x: 0, y: 0 })
+		r.prev = { x: 0, y: 0 }
+		step(r, [floor], DT)
+		expect(Number.isFinite(r.pos.x)).toBe(true)
+		expect(Number.isFinite(r.pos.y)).toBe(true)
+	})
+})
+
+describe('physics: accelerate lines', () => {
+	const flat = (kind?: Segment['kind']): Segment => ({
+		a: { x: -1000, y: 50 },
+		b: { x: 1000, y: 50 },
+		kind,
+	})
+
+	it('an accelerate line drives the sled faster than a plain solid line', () => {
+		// Start just above the floor with initial rightward motion and let
+		// gravity press it into contact so collisions (and the boost) fire.
+		const solid = makeRider({ x: 0, y: 40 })
+		solid.prev = { x: -2, y: 40 }
+		run(solid, [flat('solid')], 240)
+
+		const boost = makeRider({ x: 0, y: 40 })
+		boost.prev = { x: -2, y: 40 }
+		run(boost, [flat('accelerate')], 240)
+
+		expect(boost.pos.x).toBeGreaterThan(solid.pos.x)
+	})
+
+	it('stays on a long line without runaway speed or tunneling', () => {
+		// A practically infinite line so the sled never runs off the end.
+		const line: Segment = { a: { x: -1e7, y: 50 }, b: { x: 1e7, y: 50 }, kind: 'accelerate' }
+		const r = makeRider({ x: 0, y: 40 })
+		r.prev = { x: -2, y: 40 }
+		run(r, [line], 2000)
+		// Still riding the line (didn't tunnel through), and speed is capped.
+		expect(Math.abs(r.pos.y - (50 - PHYSICS.riderRadius))).toBeLessThan(2)
+		const v = velocity(r, DT)
+		expect(Math.hypot(v.x, v.y)).toBeLessThanOrEqual(PHYSICS.accelerateMaxSpeed + 50)
+	})
+})
+
+describe('physics: one-way lines', () => {
+	// Left-hand normal of a left->right segment points up (-y), so "front" is above.
+	const oneway: Segment = { a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 }, kind: 'oneway' }
+
+	it('blocks a sled falling onto it from the front (above)', () => {
+		const r = makeRider({ x: 0, y: 0 }) // above the line
+		run(r, [oneway], 240)
+		expect(r.pos.y).toBeLessThanOrEqual(50)
+	})
+
+	it('lets a sled rising from behind (below) pass through', () => {
+		const r = makeRider({ x: 0, y: 100 }) // below the line
+		r.prev = { x: 0, y: 110 } // moving upward toward the line
+		run(r, [oneway], 10)
+		// It should not be stopped at the line; gravity may slow it, but the line
+		// must not have pushed it back below where a solid line would trap it.
+		expect(r.pos.y).toBeLessThan(100)
+	})
 })

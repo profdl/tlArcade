@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { useEditor, toDomPrecision } from 'tldraw'
-import { makeRider, step, velocity, type Vec2 } from './physics'
+import { makeRider, step, velocity, PHYSICS, type Vec2 } from './physics'
 import { collectSegments } from './geometry'
 
 const FIXED_DT = 1 / 120 // physics substep (s)
 const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
+// Sled is drawn at its physics collision diameter so visuals match collisions.
+const SLED_DIAMETER = PHYSICS.riderRadius * 2
 
 interface RiderProps {
 	playing: boolean
@@ -24,16 +26,24 @@ export function Rider({ playing, startPoint, onStats }: RiderProps) {
 	const startRef = useRef(startPoint)
 
 	// Keep the latest props in refs so the long-lived rAF loop never goes stale.
+	// Sync in effects (not during render) so React 19 / StrictMode is happy.
 	const playingRef = useRef(playing)
 	const onStatsRef = useRef(onStats)
-	playingRef.current = playing
-	onStatsRef.current = onStats
-
-	// Reset the sim whenever play starts or the start point moves.
 	useEffect(() => {
-		stateRef.current = makeRider(startPoint)
+		playingRef.current = playing
+	}, [playing])
+	useEffect(() => {
+		onStatsRef.current = onStats
+	}, [onStats])
+
+	// Reset the sim to the start point whenever the start point moves, or when a
+	// run begins. Resetting on stop is intentionally avoided so the sled holds
+	// its final resting position for inspection.
+	useEffect(() => {
 		startRef.current = startPoint
-	}, [playing, startPoint.x, startPoint.y])
+		if (!playing) return
+		stateRef.current = makeRider(startPoint)
+	}, [playing, startPoint])
 
 	useEffect(() => {
 		let raf = 0
@@ -79,7 +89,7 @@ export function Rider({ playing, startPoint, onStats }: RiderProps) {
 			if (el) {
 				const s = editor.pageToScreen(stateRef.current.pos)
 				const z = editor.getCamera().z
-				const size = 16 * z
+				const size = SLED_DIAMETER * z
 				el.style.transform = `translate(${toDomPrecision(s.x)}px, ${toDomPrecision(s.y)}px)`
 				el.style.width = `${size}px`
 				el.style.height = `${size}px`
@@ -93,23 +103,13 @@ export function Rider({ playing, startPoint, onStats }: RiderProps) {
 		return () => cancelAnimationFrame(raf)
 	}, [editor])
 
+	// Static appearance lives in App.css (.lr-sled); the rAF loop only writes the
+	// dynamic transform/size. Initial size is set so the first paint isn't 0×0.
 	return (
 		<div
 			ref={elRef}
-			style={{
-				position: 'absolute',
-				left: 0,
-				top: 0,
-				width: 16,
-				height: 16,
-				marginLeft: -8,
-				marginTop: -8,
-				borderRadius: '50%',
-				background: '#4263eb',
-				boxShadow: '0 0 0 3px rgba(66,99,235,0.25)',
-				pointerEvents: 'none',
-				zIndex: 300,
-			}}
+			className="lr-sled"
+			style={{ width: SLED_DIAMETER, height: SLED_DIAMETER, marginLeft: -SLED_DIAMETER / 2, marginTop: -SLED_DIAMETER / 2 }}
 		/>
 	)
 }
