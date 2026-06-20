@@ -44,18 +44,21 @@ export const PHYSICS = {
 	gravity: 1800, // px/s^2, pulls the sled down
 	friction: 0.999, // velocity retained per step along free fall
 	restitution: 0.0, // 0 = no bounce off lines (classic Line Rider feel)
-	surfaceFriction: 0.0015, // tangential drag when riding a line (Line Rider lines are near-frictionless)
+	// Default surface drag when riding a solid line. Low (Line Rider lines are
+	// near-frictionless) but non-trivial, so 'ice' (0) reads as noticeably slicker
+	// and 'sticky' as noticeably grippier than a plain line.
+	surfaceFriction: 0.02,
 	riderRadius: 6, // collision radius of the sled point
 	contactSkin: 0.75, // band beyond riderRadius still treated as "riding" the line
 	maxSpeed: 4000, // clamp to avoid tunneling/explosions
-	accelerateBoost: 1200, // px/s^2 tangential acceleration added along 'accelerate' lines
+	accelerateBoost: 2400, // px/s^2 tangential acceleration added along 'accelerate' lines
 	// px/s; accelerate lines stop boosting past this. Kept below the tunneling
-	// threshold (~2*riderRadius / FIXED_DT) so boosted sleds don't shoot through
-	// thin lines in a single step.
-	accelerateMaxSpeed: 1000,
-	brakeDrag: 0.08, // fraction of tangential speed removed per step on 'brake' lines
+	// threshold (2*riderRadius / FIXED_DT = 1440 px/s here) so boosted sleds don't
+	// shoot through thin lines in a single step.
+	accelerateMaxSpeed: 1300,
+	brakeDrag: 0.2, // fraction of tangential speed removed per step on 'brake' lines
 	bounceRestitution: 0.85, // restitution for 'bounce' lines (springy; 0=none, 1=elastic)
-	stickyFriction: 0.25, // tangential drag fraction on 'sticky' lines (strong grip)
+	stickyFriction: 0.45, // tangential drag fraction on 'sticky' lines (strong grip)
 	iceFriction: 0.0, // tangential drag on 'ice' lines (perfectly frictionless glide)
 }
 
@@ -112,13 +115,17 @@ function integrate(state: RiderState, dt: number): void {
  * reflect/damp the velocity into the surface, honoring each segment's kind.
  * `applyKindEffects` gates the once-per-step velocity-changing effects
  * (accelerate / brake) so they fire on a single resolution pass, not every
- * stabilization iteration. Mutates `state`.
+ * stabilization iteration. `suppressBounce` skips per-point bounce restitution:
+ * the multi-point body handles bounce at the center-of-mass level (see stepBody),
+ * so letting it ALSO fire per point would double-count the impulse and gain
+ * energy. The single-point step() leaves it false. Mutates `state`.
  */
 function resolveCollisions(
 	state: RiderState,
 	segments: Segment[],
 	dt: number,
-	applyKindEffects: boolean
+	applyKindEffects: boolean,
+	suppressBounce = false
 ): void {
 	const r = PHYSICS.riderRadius
 	// A sled resting on a line settles at exactly dist == r. Treat a thin band
@@ -168,7 +175,9 @@ function resolveCollisions(
 				// Bounce lines are springy; everything else keeps the classic
 				// near-zero restitution.
 				const restitution =
-					seg.kind === 'bounce' ? PHYSICS.bounceRestitution * strength : PHYSICS.restitution
+					seg.kind === 'bounce' && !suppressBounce
+						? PHYSICS.bounceRestitution * strength
+						: PHYSICS.restitution
 				// Tangential drag varies by surface: ice glides, sticky grips,
 				// everything else uses the default near-frictionless value.
 				let tangentFriction: number
@@ -348,6 +357,41 @@ function solveConstraint(body: Body, c: Constraint): void {
 }
 
 /**
+ * Detect whether the body is contacting a 'bounce' segment this step, and if so
+ * return the contact normal (pointing from the line toward the body). Only the
+ * bottom one or two points of a tumbling quad touch a line, so per-point
+ * restitution inside resolveCollisions reflects just those points while the
+ * non-contacting points keep their full downward velocity — the constraint solve
+ * then averages the rebound away to nearly zero. So bounce is handled at the body
+ * level instead (see stepBody): we reflect the WHOLE body's center-of-mass normal
+ * velocity once per step, which propagates the spring to every point uniformly.
+ * Returns null when no point is in contact with a bounce line.
+ */
+function bounceContactNormal(body: Body, segments: Segment[]): { n: Vec2; strength: number } | null {
+	const contact = PHYSICS.riderRadius + PHYSICS.contactSkin
+	for (const seg of segments) {
+		if (seg.kind !== 'bounce') continue
+		for (const p of body.points) {
+			const { point } = closestPointOnSegment(p.pos, seg.a, seg.b)
+			const diff = sub(p.pos, point)
+			const dist = len(diff)
+			if (dist < contact && dist > EPSILON) {
+				return { n: { x: diff.x / dist, y: diff.y / dist }, strength: seg.strength ?? 1 }
+			}
+		}
+	}
+	return null
+}
+
+/** Add a velocity delta (px/s-equivalent step displacement) to every body point. */
+function addBodyVelocity(body: Body, dvx: number, dvy: number): void {
+	for (const p of body.points) {
+		p.prev.x -= dvx
+		p.prev.y -= dvy
+	}
+}
+
+/**
  * Advance a multi-point body by one fixed timestep. Integrates every point,
  * then interleaves constraint solving with collision resolution so the body
  * both holds its shape and rests on the track. Mutates and returns `body`.
@@ -355,11 +399,41 @@ function solveConstraint(body: Body, c: Constraint): void {
 export function stepBody(body: Body, segments: Segment[], dt: number): Body {
 	for (const p of body.points) integrate(p, dt)
 
+	// Bounce is a whole-body effect: sample the body's normal velocity into a
+	// bounce line BEFORE collisions flatten it, so we can re-launch the whole rig
+	// after. (Per-point restitution alone barely moves a 4-point body — see
+	// bounceContactNormal.)
+	const bounce = bounceContactNormal(body, segments)
+	let vnBefore = 0
+	if (bounce) {
+		const v = bodyVelocity(body, dt)
+		vnBefore = v.x * bounce.n.x + v.y * bounce.n.y // <0 means moving into the line
+	}
+
 	const ITERATIONS = 4 // more passes than the point sled: shape + contacts to settle
 	for (let iter = 0; iter < ITERATIONS; iter++) {
 		for (const c of body.constraints) solveConstraint(body, c)
 		const last = iter === ITERATIONS - 1
-		for (const p of body.points) resolveCollisions(p, segments, dt, last)
+		// suppressBounce: bounce is re-applied at the body level below, so don't
+		// also reflect it per point (that would double the impulse, gaining energy).
+		for (const p of body.points) resolveCollisions(p, segments, dt, last, true)
+	}
+
+	// Re-launch the body off the bounce line. Set the center-of-mass normal
+	// velocity to an ABSOLUTE target (-restitution * inbound speed) rather than
+	// adding a reflected impulse: after the collision iterations the COM still
+	// carries residual normal velocity (the contacting corner stopped while the
+	// free corners kept falling), so adding (1+e)|vn| on top of that residual
+	// over-injects energy and the bounces grow without bound. Correcting toward a
+	// target instead caps the rebound at restitution and stays stable. Applied to
+	// every point so the whole rig lifts off together, not just the touching corner.
+	if (bounce && vnBefore < 0) {
+		const restitution = PHYSICS.bounceRestitution * bounce.strength
+		const targetVn = -restitution * vnBefore // desired outbound (along +n) speed
+		const after = bodyVelocity(body, dt)
+		const vnAfter = after.x * bounce.n.x + after.y * bounce.n.y
+		const dv = targetVn - vnAfter // close the gap to the target only
+		addBodyVelocity(body, bounce.n.x * dv * dt, bounce.n.y * dv * dt)
 	}
 
 	for (const p of body.points) clampSpeed(p, dt)

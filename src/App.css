@@ -16,15 +16,35 @@
 	z-index: 300;
 }
 .lr-sled-body {
-	fill: rgba(66, 99, 235, 0.85);
+	fill: rgba(66, 99, 235, 0.9);
 	stroke: #2b4acb;
-	stroke-width: 2;
+	stroke-width: 2.5;
+	/* Round the joins and lift the body off the track with a soft shadow so it
+	   reads as a solid little sled rather than a flat blue square. */
 	stroke-linejoin: round;
+	stroke-linecap: round;
+	filter: drop-shadow(0 1px 2px rgba(43, 74, 203, 0.35));
 }
+/* Lead-point marker: a bright dot at the body's heading corner so its rotation
+   and direction of travel are legible as it tumbles. */
 .lr-sled-dot {
 	fill: #fff;
 	stroke: #2b4acb;
+	stroke-width: 2;
+}
+
+/* Start marker: a target ring + crosshair pinned to the spawn point while
+   stopped, so the player can see (and aim) where the sled will drop from. */
+.lr-start-ring {
+	fill: rgba(66, 99, 235, 0.08);
+	stroke: #4263eb;
+	stroke-width: 2;
+	stroke-dasharray: 3 3;
+}
+.lr-start-cross {
+	stroke: #4263eb;
 	stroke-width: 1.5;
+	opacity: 0.6;
 }
 
 .lr-panel {

@@ -344,6 +344,28 @@ describe('physics: multi-point body', () => {
 		})
 	})
 
+	it('rebounds off a bounce line higher than off a solid line', () => {
+		// The in-game sled is a body, not a point, so verify bounce reads on it too.
+		// Drop from the same height onto each surface; the bounce floor should fling
+		// the body's center back higher (smaller min-y after contact) than solid.
+		const apex = (kind: Segment['kind']) => {
+			const floor: Segment = { a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 }, kind }
+			const body = makeBody({ x: 0, y: -60 })
+			let contacted = false
+			let best = Infinity
+			for (let i = 0; i < 200; i++) {
+				stepBody(body, [floor], DT)
+				// Contact = the body's lowest point reached the floor (the body's center
+				// rests ~half its height above the line, so test the lowest point).
+				const low = Math.max(...body.points.map((p) => p.pos.y))
+				if (!contacted && low > 50 - PHYSICS.riderRadius - 2) contacted = true
+				if (contacted) best = Math.min(best, bodyCenter(body).y)
+			}
+			return best
+		}
+		expect(apex('bounce')).toBeLessThan(apex('solid'))
+	})
+
 	it('slides and rotates down a slope (a point sled cannot rotate)', () => {
 		const slope: Segment = { a: { x: -300, y: -100 }, b: { x: 300, y: 200 } }
 		const body = makeBody({ x: -200, y: -120 })

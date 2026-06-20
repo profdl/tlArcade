@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { Tldraw, type TLComponents, type Editor, useValue } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Rider } from './game/Rider'
-import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom } from './game/state'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom } from './game/state'
 import './App.css'
 
 // How far above the viewport center to drop the sled when "set start" is hit,
@@ -63,6 +63,17 @@ function App() {
 		playingAtom.set(next)
 	}, [editor])
 
+	// Reset: stop any in-progress run (restoring editing) and re-seat the sled at
+	// the start point. Bumping the nonce makes the rider rebuild its body even
+	// though the start point itself didn't move.
+	const handleReset = useCallback(() => {
+		if (editor && playingAtom.get()) {
+			editor.run(() => editor.updateInstanceState({ isReadonly: false }), { history: 'ignore' })
+		}
+		playingAtom.set(false)
+		resetNonceAtom.update((n) => n + 1)
+	}, [editor])
+
 	return (
 		<div className="lr-root">
 			<Tldraw persistenceKey="line-rider" components={components} onMount={handleMount} />
@@ -74,6 +85,13 @@ function App() {
 					title={playing ? 'Stop' : 'Play'}
 				>
 					{playing ? '■' : '▶'}
+				</button>
+				<button
+					className="lr-btn lr-icon"
+					title="Reset to start"
+					onClick={handleReset}
+				>
+					↺
 				</button>
 				<button
 					className="lr-btn lr-icon"

@@ -22,6 +22,14 @@ export const followAtom = atom('lr-follow', true)
 /** Page-space point the sled spawns from at the start of a run. */
 export const startPointAtom = atom<Vec2>('lr-startPoint', { x: 200, y: 100 })
 
+/**
+ * Monotonic counter the Reset button bumps to re-seat the sled at the start
+ * point without moving the start itself. The rider re-builds its body whenever
+ * this changes (and whenever startPointAtom changes); a counter — not a boolean —
+ * so repeated resets to the same start still register as a change.
+ */
+export const resetNonceAtom = atom('lr-resetNonce', 0)
+
 /** Live run telemetry the rider publishes for the panel. */
 export const statsAtom = atom('lr-stats', { distance: 0, speed: 0 })
 

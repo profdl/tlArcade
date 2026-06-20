@@ -9,7 +9,7 @@ import {
 } from './physics'
 import { collectSegments, collectCheckpoints } from './geometry'
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
-import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom } from './state'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom } from './state'
 
 const FIXED_DT = 1 / 120 // physics substep (s)
 const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
@@ -37,6 +37,7 @@ export function Rider() {
 	const editor = useEditor()
 	const polyRef = useRef<SVGPolygonElement | null>(null)
 	const dotRef = useRef<SVGCircleElement | null>(null)
+	const startRef = useRef<SVGGElement | null>(null)
 	const bodyRef = useRef<Body>(makeBody(startPointAtom.get()))
 
 	useEffect(() => {
@@ -52,14 +53,20 @@ export function Rider() {
 		// Re-snapshot collision geometry each time a run begins.
 		let wasPlaying = false
 		// Re-seat the sled whenever the start point moves (immediate feedback even
-		// while stopped). Track the last-seen start so we only rebuild on change.
+		// while stopped) or the Reset button bumps the nonce. Track the last-seen
+		// values so we only rebuild on change.
 		let lastStart = startPointAtom.get()
+		let lastReset = resetNonceAtom.get()
 
 		const tick = (now: number) => {
 			const start = startPointAtom.get()
-			if (start !== lastStart) {
+			const reset = resetNonceAtom.get()
+			if (start !== lastStart || reset !== lastReset) {
 				lastStart = start
+				lastReset = reset
 				bodyRef.current = makeBody(start)
+				// Clear last run's telemetry so the panel reads 0 after a reset.
+				statsAtom.set({ distance: 0, speed: 0 })
 			}
 
 			const isPlaying = playingAtom.get()
@@ -131,6 +138,21 @@ export function Rider() {
 			// that container). pageToScreen would return window-relative coords and
 			// drift by the container's screen offset whenever the editor isn't flush
 			// to the window. Correct under pan/zoom/resize in every state.
+			// Start marker: a crosshair pinned to the spawn point in page space, so
+			// the player can see where the sled will drop from. Hidden during a run
+			// (the sled itself shows where you are). Positioned with pageToViewport
+			// like the sled, so it tracks pan/zoom.
+			const startG = startRef.current
+			if (startG) {
+				if (isPlaying) {
+					startG.setAttribute('opacity', '0')
+				} else {
+					const s = editor.pageToViewport(start)
+					startG.setAttribute('opacity', '1')
+					startG.setAttribute('transform', `translate(${toDomPrecision(s.x)},${toDomPrecision(s.y)})`)
+				}
+			}
+
 			const poly = polyRef.current
 			const dot = dotRef.current
 			if (poly) {
@@ -159,6 +181,13 @@ export function Rider() {
 	// screen space each frame. Static appearance lives in App.css (.lr-sled-*).
 	return (
 		<svg className="lr-sled-svg" aria-hidden="true">
+			{/* Start marker: a target ring + crosshair at the spawn point, centered on
+			    its own origin so the rAF loop only has to translate the group. */}
+			<g ref={startRef} className="lr-start-marker" opacity="0">
+				<circle className="lr-start-ring" r={12} />
+				<line className="lr-start-cross" x1={-16} y1={0} x2={16} y2={0} />
+				<line className="lr-start-cross" x1={0} y1={-16} x2={0} y2={16} />
+			</g>
 			<polygon ref={polyRef} className="lr-sled-body" points="" />
 			<circle ref={dotRef} className="lr-sled-dot" r={3} />
 		</svg>
