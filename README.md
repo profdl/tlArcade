@@ -34,20 +34,24 @@ src/
                        editor read-only while playing.
   App.css              Styling for the control panel and the sled.
   game/
+    state.ts           Shared gameplay atoms (play/follow/start inputs,
+                       stats/score outputs). Atoms (not props) keep App's
+                       `components` object stable so the overlay never remounts.
     geometry.ts        Turns collidable native shapes on the current page into
                        page-space collision segments via getShapeGeometry /
                        getPointsFromDrawSegment. Maps shape color -> LineKind.
-                       Also collects note shapes as scoring checkpoints.
-    checkpoints.ts     Pure checkpoint hit-testing (point-in-box, scored once).
+                       Also collects note shapes as scoring checkpoints (oriented
+                       boxes that respect note rotation).
+    checkpoints.ts     Pure checkpoint hit-testing (point-in-oriented-box,
+                       scored once).
     physics.ts         The sim: a multi-point sled body (constraint-solved quad)
                        under gravity, colliding against line segments (Verlet
                        integration). Honors each segment's kind. Also exports the
                        single-point rider primitives the body is built from.
-    checkpoints.ts     Pure checkpoint hit-testing (point-in-box, scored once).
     physics.test.ts    Vitest unit tests for the sim (point + body).
     Rider.tsx          Snapshots segments + checkpoints on play, runs a
                        fixed-timestep rAF loop, and draws the sled body as an SVG
-                       polygon overlay positioned via pageToScreen.
+                       polygon overlay positioned via pageToViewport.
 ```
 
 ### Line types (by shape color)

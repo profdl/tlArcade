@@ -1,24 +1,41 @@
-// Checkpoint scoring. A checkpoint is a page-space axis-aligned box; the sled
-// "collects" it the first time its position lands inside the box during a run.
-// This module is pure (no tldraw / framework deps) so the crossing logic stays
-// unit-testable, mirroring physics.ts. tldraw note shapes are turned into these
-// boxes in geometry.ts.
+// Checkpoint scoring. A checkpoint is a page-space (possibly rotated) box; the
+// sled "collects" it the first time its position lands inside the box during a
+// run. This module is pure (no tldraw / framework deps) so the crossing logic
+// stays unit-testable, mirroring physics.ts. tldraw note shapes are turned into
+// these boxes in geometry.ts.
 
 import type { Vec2 } from './physics'
 
-/** A page-space axis-aligned checkpoint region. */
+/**
+ * A checkpoint region: an oriented (possibly rotated) box in page space.
+ * Stored as a center, half-extents, and rotation so a rotated note's catch
+ * region matches the note's actual footprint rather than its inflated
+ * axis-aligned bounding box.
+ */
 export interface Checkpoint {
 	/** Stable id (the source shape id) used to track which are collected. */
 	id: string
-	minX: number
-	minY: number
-	maxX: number
-	maxY: number
+	/** Box center in page space. */
+	cx: number
+	cy: number
+	/** Half-width and half-height along the box's own (unrotated) axes. */
+	halfW: number
+	halfH: number
+	/** Box rotation in radians (matches the source shape's page rotation). */
+	rotation: number
 }
 
-/** True when point `p` lies within checkpoint `c`'s box (inclusive). */
+/** True when point `p` lies within checkpoint `c`'s oriented box (inclusive). */
 export function pointInCheckpoint(p: Vec2, c: Checkpoint): boolean {
-	return p.x >= c.minX && p.x <= c.maxX && p.y >= c.minY && p.y <= c.maxY
+	// Translate into the box's local frame, then rotate by -rotation so the box
+	// is axis-aligned, and compare against the half-extents.
+	const dx = p.x - c.cx
+	const dy = p.y - c.cy
+	const cos = Math.cos(-c.rotation)
+	const sin = Math.sin(-c.rotation)
+	const localX = dx * cos - dy * sin
+	const localY = dx * sin + dy * cos
+	return Math.abs(localX) <= c.halfW && Math.abs(localY) <= c.halfH
 }
 
 /**

@@ -26,12 +26,22 @@ Read [README.md](README.md) for the file-by-file map; it's accurate. The short
 version:
 
 - [src/App.tsx](src/App.tsx) — mounts `<Tldraw>`, control panel, mounts `Rider`
-  via `components.InFrontOfTheCanvas`. Toggles `isReadonly` while playing.
+  via `components.InFrontOfTheCanvas`. Toggles `isReadonly` while playing. The
+  `components` object is a **module-level constant** (stable identity) so the
+  overlay never remounts; gameplay state flows through atoms (see state.ts), not
+  props.
+- [src/game/state.ts](src/game/state.ts) — the shared gameplay atoms
+  (`playing`/`follow`/`startPoint` inputs, `stats`/`score` outputs). Atoms, not
+  React state/props, so `App`'s `components` object stays referentially stable —
+  threading these through props would remount `Rider` mid-ride and snap the sled
+  to the start. App mirrors them with `useValue`; Rider polls/writes them in its
+  rAF loop.
 - [src/game/geometry.ts](src/game/geometry.ts) — turns collidable native page
   shapes into page-space collision segments; maps shape **color → `LineKind`**.
-  Also collects `note` shapes as scoring checkpoints.
+  Also collects `note` shapes as scoring checkpoints (oriented boxes, so a
+  rotated note's catch region matches its footprint, not its inflated AABB).
 - [src/game/checkpoints.ts](src/game/checkpoints.ts) — pure checkpoint hit-test
-  (point-in-box, scored once per run). **Pure & framework-free.**
+  (point-in-oriented-box, scored once per run). **Pure & framework-free.**
 - [src/game/physics.ts](src/game/physics.ts) — the sim. The sled is a multi-point
   body (`makeBody`/`stepBody`); `step()` is the single-point primitive it reuses,
   so both share one collision path (`resolveCollisions`). `PHYSICS` holds all
@@ -50,6 +60,18 @@ native shapes over inventing custom records.
 
 ## Gotchas (things that will bite you)
 
+- **Position the overlay with `editor.pageToViewport`, not `pageToScreen`.** The
+  sled lives in `components.InFrontOfTheCanvas`, which tldraw mounts inside the
+  editor *container* (CSS `inset: 0` on `.lr-sled-svg`). `pageToViewport` returns
+  container-relative coords; `pageToScreen` returns window-relative ones and
+  drifts by the container's screen offset whenever the editor isn't flush to the
+  window. See the comment in `Rider.tsx`.
+- **Keep the `components` object referentially stable.** It's a module-level
+  const in App.tsx. tldraw remounts a `components` slot when the object's
+  identity changes, so threading volatile state (play/follow/start/stats) through
+  it would remount `Rider` and reset its rAF loop mid-ride. That state lives in
+  atoms (state.ts) instead; the overlay reads/writes them, App mirrors with
+  `useValue`.
 - **Read geometry inside `editor.run(..., { history: 'ignore' })`.** tldraw's
   geometry/transform caches (`getShapeGeometry`, `getShapePageTransform`) are
   reactive computeds; read cold from a bare rAF callback they can return

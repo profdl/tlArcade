@@ -6,10 +6,10 @@ import {
 	bodyCenter,
 	bodyVelocity,
 	type Body,
-	type Vec2,
 } from './physics'
 import { collectSegments, collectCheckpoints } from './geometry'
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom } from './state'
 
 const FIXED_DT = 1 / 120 // physics substep (s)
 const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
@@ -18,62 +18,26 @@ const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
 // Low enough to glide smoothly, high enough to keep a fast sled on screen.
 const CAMERA_FOLLOW_LERP = 0.12
 
-interface RiderProps {
-	playing: boolean
-	follow: boolean
-	startPoint: Vec2
-	onStats: (distance: number, speed: number) => void
-	/** Reports checkpoint progress: how many of `total` flags collected this run. */
-	onScore: (collected: number, total: number) => void
-}
-
 // The sled overlay. Rendered via components.InFrontOfTheCanvas. A single rAF
 // loop runs continuously: while playing it advances the physics; in all states
-// it positions the sled by recomputing editor.pageToScreen() each frame, so the
-// sled stays glued to the canvas under pan / zoom / resize without any per-frame
-// React re-render (we write the SVG geometry imperatively).
+// it positions the sled by recomputing editor.pageToViewport() each frame, so
+// the sled stays glued to the canvas under pan / zoom / resize without any
+// per-frame React re-render (we write the SVG geometry imperatively).
+//
+// Gameplay state flows through tldraw atoms (defined in App), not props: the
+// loop reads playing/follow/start cold via .get() each frame and writes
+// stats/score back. This lets the parent keep its `components` object stable, so
+// toggling follow or play never remounts this component (which would reset the
+// rAF loop and snap the sled to the start mid-ride).
 //
 // The sled is a multi-point body (see makeBody): a constraint-solved quad that
 // tumbles. We draw it as an SVG polygon over the body's four points plus a small
 // marker dot at the lead point so its rotation is visible.
-export function Rider({ playing, follow, startPoint, onStats, onScore }: RiderProps) {
+export function Rider() {
 	const editor = useEditor()
 	const polyRef = useRef<SVGPolygonElement | null>(null)
 	const dotRef = useRef<SVGCircleElement | null>(null)
-	const bodyRef = useRef<Body>(makeBody(startPoint))
-	const startRef = useRef(startPoint)
-
-	// Keep the latest props in refs so the long-lived rAF loop never goes stale.
-	// Sync in effects (not during render) so React 19 / StrictMode is happy.
-	const playingRef = useRef(playing)
-	const followRef = useRef(follow)
-	const onStatsRef = useRef(onStats)
-	const onScoreRef = useRef(onScore)
-	useEffect(() => {
-		playingRef.current = playing
-	}, [playing])
-	useEffect(() => {
-		followRef.current = follow
-	}, [follow])
-	useEffect(() => {
-		onStatsRef.current = onStats
-	}, [onStats])
-	useEffect(() => {
-		onScoreRef.current = onScore
-	}, [onScore])
-
-	// Snap the sled to the start point whenever the start point moves (so "set
-	// start here" gives immediate feedback even while stopped), and re-seat it at
-	// the start whenever a run begins. Stopping is intentionally NOT a reset, so
-	// the sled holds its final resting pose for inspection.
-	useEffect(() => {
-		startRef.current = startPoint
-		bodyRef.current = makeBody(startPoint)
-	}, [startPoint])
-
-	useEffect(() => {
-		if (playing) bodyRef.current = makeBody(startRef.current)
-	}, [playing])
+	const bodyRef = useRef<Body>(makeBody(startPointAtom.get()))
 
 	useEffect(() => {
 		let raf = 0
@@ -87,14 +51,26 @@ export function Rider({ playing, follow, startPoint, onStats, onScore }: RiderPr
 
 		// Re-snapshot collision geometry each time a run begins.
 		let wasPlaying = false
+		// Re-seat the sled whenever the start point moves (immediate feedback even
+		// while stopped). Track the last-seen start so we only rebuild on change.
+		let lastStart = startPointAtom.get()
 
 		const tick = (now: number) => {
-			const isPlaying = playingRef.current
+			const start = startPointAtom.get()
+			if (start !== lastStart) {
+				lastStart = start
+				bodyRef.current = makeBody(start)
+			}
+
+			const isPlaying = playingAtom.get()
 			if (isPlaying && !wasPlaying) {
+				// Run begins: re-seat the sled at the start and re-snapshot the track.
+				bodyRef.current = makeBody(start)
 				segments = collectSegments(editor)
 				checkpoints = collectCheckpoints(editor)
 				collected = new Set<string>()
-				onScoreRef.current(0, checkpoints.length)
+				scoreAtom.set({ collected: 0, total: checkpoints.length })
+				statsAtom.set({ distance: 0, speed: 0 }) // clear last run's readout immediately
 				last = now
 				acc = 0
 				frameCount = 0 // restart stats cadence so the first run frame samples predictably
@@ -119,12 +95,12 @@ export function Rider({ playing, follow, startPoint, onStats, onScore }: RiderPr
 					}
 					acc -= FIXED_DT
 				}
-				if (scored) onScoreRef.current(collected.size, checkpoints.length)
+				if (scored) scoreAtom.set({ collected: collected.size, total: checkpoints.length })
 				if (++frameCount % STATS_EVERY === 0) {
 					const c = bodyCenter(bodyRef.current)
-					const d = Math.hypot(c.x - startRef.current.x, c.y - startRef.current.y)
+					const d = Math.hypot(c.x - start.x, c.y - start.y)
 					const v = bodyVelocity(bodyRef.current, FIXED_DT)
-					onStatsRef.current(d, Math.hypot(v.x, v.y))
+					statsAtom.set({ distance: d, speed: Math.hypot(v.x, v.y) })
 				}
 
 				// Camera follow: ease the viewport center toward the sled so a fast
@@ -132,7 +108,7 @@ export function Rider({ playing, follow, startPoint, onStats, onScore }: RiderPr
 				// and skipping when already close avoids fighting a settled sled with
 				// sub-pixel camera nudges. history:'ignore' keeps it off the undo
 				// stack; the camera move must not be an undoable edit.
-				if (followRef.current) {
+				if (followAtom.get()) {
 					const center = editor.getViewportPageBounds().center
 					const c = bodyCenter(bodyRef.current)
 					const dx = c.x - center.x
@@ -149,13 +125,17 @@ export function Rider({ playing, follow, startPoint, onStats, onScore }: RiderPr
 				last = now // keep timebase fresh while paused
 			}
 
-			// Position the sled. pageToScreen reads live camera + screenBounds, so
-			// this is correct under pan/zoom/resize in every state.
+			// Position the sled. pageToViewport reads live camera + screenBounds and
+			// returns coords relative to the editor container — which is exactly the
+			// frame our overlay lives in (InFrontOfTheCanvas, positioned inset:0 in
+			// that container). pageToScreen would return window-relative coords and
+			// drift by the container's screen offset whenever the editor isn't flush
+			// to the window. Correct under pan/zoom/resize in every state.
 			const poly = polyRef.current
 			const dot = dotRef.current
 			if (poly) {
 				const pts = bodyRef.current.points
-				const screenPts = pts.map((p) => editor.pageToScreen(p.pos))
+				const screenPts = pts.map((p) => editor.pageToViewport(p.pos))
 				poly.setAttribute(
 					'points',
 					screenPts

@@ -1,0 +1,29 @@
+// Shared gameplay state, held in tldraw atoms rather than React state.
+//
+// Why atoms and not props/React state: the rider overlay is mounted through
+// <Tldraw>'s `components.InFrontOfTheCanvas`. tldraw remounts a slot whenever the
+// `components` object identity changes, so that object must stay stable. If the
+// volatile gameplay values (play/pause, follow, start point, live stats) rode in
+// React state and threaded through `components`, every change would mint a new
+// object and remount the rider — tearing down its rAF loop and snapping the sled
+// to the start mid-ride. Routing them through atoms lets the App pass a constant
+// `components` object: the rider reads inputs and writes outputs via these atoms,
+// and the panel mirrors them reactively with useValue.
+
+import { atom } from 'tldraw'
+import type { Vec2 } from './physics'
+
+/** Whether a run is in progress. */
+export const playingAtom = atom('lr-playing', false)
+
+/** Whether the camera eases to follow the sled while playing. */
+export const followAtom = atom('lr-follow', true)
+
+/** Page-space point the sled spawns from at the start of a run. */
+export const startPointAtom = atom<Vec2>('lr-startPoint', { x: 200, y: 100 })
+
+/** Live run telemetry the rider publishes for the panel. */
+export const statsAtom = atom('lr-stats', { distance: 0, speed: 0 })
+
+/** Checkpoint progress: how many of `total` flags collected this run. */
+export const scoreAtom = atom('lr-score', { collected: 0, total: 0 })

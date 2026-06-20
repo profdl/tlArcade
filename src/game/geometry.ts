@@ -131,7 +131,9 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		}
 
 		// Everything else: use tldraw's geometry outline (local) -> page space.
-		const geometry = editor.getShapeGeometry(shape)
+		// Pass the shape id (like the transform/bounds reads above) so the geometry
+		// cache resolves against the live record, per the CLAUDE.md gotcha.
+		const geometry = editor.getShapeGeometry(shape.id)
 		const localVerts = geometry.vertices
 		if (!localVerts || localVerts.length < 2) continue
 		const verts = transform.applyToPoints(localVerts)
@@ -186,10 +188,28 @@ function collectCheckpointsNow(editor: Editor): Checkpoint[] {
 	const checkpoints: Checkpoint[] = []
 	for (const shape of editor.getCurrentPageShapes()) {
 		if (shape.type !== CHECKPOINT_TYPE) continue
-		// Page bounds resolve against the live record via the shape id.
-		const b = editor.getShapePageBounds(shape.id)
-		if (!b) continue
-		checkpoints.push({ id: shape.id, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY })
+		// Build an oriented box from the note's LOCAL geometry bounds + page
+		// transform, so a rotated note's catch region matches its actual footprint
+		// rather than its inflated axis-aligned page bounding box. (Reading page
+		// bounds would over-collect: a 45°-rotated note's AABB is ~2x its area.)
+		const geometry = editor.getShapeGeometry(shape.id)
+		const transform = editor.getShapePageTransform(shape.id)
+		if (!transform) continue
+		const lb = geometry.bounds
+		// Local center -> page space gives the box center under any rotation.
+		const center = transform.applyToPoint({ x: lb.x + lb.w / 2, y: lb.y + lb.h / 2 })
+		// Decompose so the half-extents pick up any page-space scale (a note's
+		// `scale` prop) alongside the rotation — local bounds alone would be wrong
+		// for a scaled note.
+		const { scaleX, scaleY, rotation } = transform.decompose()
+		checkpoints.push({
+			id: shape.id,
+			cx: center.x,
+			cy: center.y,
+			halfW: (lb.w / 2) * Math.abs(scaleX),
+			halfH: (lb.h / 2) * Math.abs(scaleY),
+			rotation,
+		})
 	}
 	return checkpoints
 }
