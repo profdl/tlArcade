@@ -88,13 +88,8 @@ function closestPointOnSegment(p: Vec2, a: Vec2, b: Vec2): { point: Vec2; t: num
 	return { point: { x: a.x + abx * t, y: a.y + aby * t }, t }
 }
 
-/**
- * Advance the rider by one fixed timestep. Mutates and returns `state`.
- * Resolves collisions against every segment by projecting the rider out of
- * the line and reflecting/damping the velocity component into the surface.
- */
-export function step(state: RiderState, segments: Segment[], dt: number): RiderState {
-	// --- Verlet integration with gravity ---
+/** Verlet integration of a single point under gravity. Mutates `state`. */
+function integrate(state: RiderState, dt: number): void {
 	const vx = (state.pos.x - state.prev.x) * PHYSICS.friction
 	const vy = (state.pos.y - state.prev.y) * PHYSICS.friction
 
@@ -103,19 +98,31 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 
 	state.pos.x += vx
 	state.pos.y += vy + PHYSICS.gravity * dt * dt
+}
 
-	// --- Collision resolution (iterate for stability) ---
+/**
+ * Resolve one point against every segment: project it out of the line and
+ * reflect/damp the velocity into the surface, honoring each segment's kind.
+ * `applyKindEffects` gates the once-per-step velocity-changing effects
+ * (accelerate / brake) so they fire on a single resolution pass, not every
+ * stabilization iteration. Mutates `state`.
+ */
+function resolveCollisions(
+	state: RiderState,
+	segments: Segment[],
+	dt: number,
+	applyKindEffects: boolean
+): void {
 	const r = PHYSICS.riderRadius
 	// A sled resting on a line settles at exactly dist == r. Treat a thin band
 	// beyond r as still "in contact" so surface friction and kind-based effects
 	// (accelerate / oneway) keep engaging while the sled rides the line, not
 	// only during the brief penetration transient.
 	const contact = r + PHYSICS.contactSkin
-	const ITERATIONS = 2
-	for (let iter = 0; iter < ITERATIONS; iter++) {
-		// Apply the accelerate boost only on the final iteration so it's added
-		// once per step, not once per stabilization pass.
-		const lastIter = iter === ITERATIONS - 1
+	{
+		// Renamed from the old per-iteration `lastIter`: callers decide when the
+		// once-per-step kind effects apply.
+		const lastIter = applyKindEffects
 		for (const seg of segments) {
 			const { point } = closestPointOnSegment(state.pos, seg.a, seg.b)
 			const diff = sub(state.pos, point)
@@ -202,8 +209,10 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 			}
 		}
 	}
+}
 
-	// --- Speed clamp ---
+/** Clamp a point's per-step displacement so its speed never exceeds maxSpeed. */
+function clampSpeed(state: RiderState, dt: number): void {
 	const sx = state.pos.x - state.prev.x
 	const sy = state.pos.y - state.prev.y
 	const stepLen = Math.hypot(sx, sy)
@@ -212,7 +221,20 @@ export function step(state: RiderState, segments: Segment[], dt: number): RiderS
 		state.prev.x = state.pos.x - sx * scale
 		state.prev.y = state.pos.y - sy * scale
 	}
+}
 
+/**
+ * Advance the single-point rider by one fixed timestep. Mutates and returns
+ * `state`. Integrates under gravity, then resolves collisions over a couple of
+ * stabilization iterations (kind effects applied once, on the last).
+ */
+export function step(state: RiderState, segments: Segment[], dt: number): RiderState {
+	integrate(state, dt)
+	const ITERATIONS = 2
+	for (let iter = 0; iter < ITERATIONS; iter++) {
+		resolveCollisions(state, segments, dt, iter === ITERATIONS - 1)
+	}
+	clampSpeed(state, dt)
 	return state
 }
 
@@ -222,4 +244,115 @@ export function velocity(state: RiderState, dt: number): Vec2 {
 		x: (state.pos.x - state.prev.x) / dt,
 		y: (state.pos.y - state.prev.y) / dt,
 	}
+}
+
+// --- Multi-point sled body --------------------------------------------------
+// A real Line Rider sled is a rigid-ish body that can tumble, not a single
+// point. We model it as a small set of point masses joined by distance
+// constraints (a "Verlet rig"): each point collides exactly like the single
+// rider above, and constraints solved between collision passes hold the shape
+// together. Reusing integrate()/resolveCollisions() keeps one collision code
+// path, so every line behavior works on the body for free.
+
+/** A distance constraint holding two body points at a fixed rest length. */
+export interface Constraint {
+	i: number // index into body.points
+	j: number // index into body.points
+	rest: number // target distance between the two points
+	/** Stiffness 0..1: fraction of the error corrected per solve pass. */
+	stiffness: number
+}
+
+/** A multi-point sled: point masses joined by distance constraints. */
+export interface Body {
+	points: RiderState[]
+	constraints: Constraint[]
+}
+
+/**
+ * Build a default sled body: a small rigid quad (4 points) braced by its two
+ * diagonals so it holds a roughly square shape while tumbling. `center` is the
+ * spawn point; `size` is the half-extent of the quad.
+ */
+export function makeBody(center: Vec2, size = PHYSICS.riderRadius * 2): Body {
+	const offsets: Vec2[] = [
+		{ x: -size, y: -size },
+		{ x: size, y: -size },
+		{ x: size, y: size },
+		{ x: -size, y: size },
+	]
+	const points = offsets.map((o) => makeRider({ x: center.x + o.x, y: center.y + o.y }))
+	const dist = (a: number, b: number) => Math.hypot(points[a].pos.x - points[b].pos.x, points[a].pos.y - points[b].pos.y)
+	const edge = 1 // edges fully rigid
+	const brace = 0.8 // diagonals slightly softer so the solve stays stable
+	const constraints: Constraint[] = [
+		{ i: 0, j: 1, rest: dist(0, 1), stiffness: edge },
+		{ i: 1, j: 2, rest: dist(1, 2), stiffness: edge },
+		{ i: 2, j: 3, rest: dist(2, 3), stiffness: edge },
+		{ i: 3, j: 0, rest: dist(3, 0), stiffness: edge },
+		{ i: 0, j: 2, rest: dist(0, 2), stiffness: brace },
+		{ i: 1, j: 3, rest: dist(1, 3), stiffness: brace },
+	]
+	return { points, constraints }
+}
+
+/** The body's center of mass (average of its points). Used for camera/stats. */
+export function bodyCenter(body: Body): Vec2 {
+	let x = 0
+	let y = 0
+	for (const p of body.points) {
+		x += p.pos.x
+		y += p.pos.y
+	}
+	const n = body.points.length || 1
+	return { x: x / n, y: y / n }
+}
+
+/** Mean velocity (px/s) of the body's points. */
+export function bodyVelocity(body: Body, dt: number): Vec2 {
+	let x = 0
+	let y = 0
+	for (const p of body.points) {
+		x += (p.pos.x - p.prev.x) / dt
+		y += (p.pos.y - p.prev.y) / dt
+	}
+	const n = body.points.length || 1
+	return { x: x / n, y: y / n }
+}
+
+/** Move two constrained points toward their rest length (positional solve). */
+function solveConstraint(body: Body, c: Constraint): void {
+	const a = body.points[c.i]
+	const b = body.points[c.j]
+	const dx = b.pos.x - a.pos.x
+	const dy = b.pos.y - a.pos.y
+	const d = Math.hypot(dx, dy)
+	if (d < EPSILON) return
+	// Half the error moved by each end (equal mass), scaled by stiffness.
+	const diff = ((d - c.rest) / d) * 0.5 * c.stiffness
+	const ox = dx * diff
+	const oy = dy * diff
+	a.pos.x += ox
+	a.pos.y += oy
+	b.pos.x -= ox
+	b.pos.y -= oy
+}
+
+/**
+ * Advance a multi-point body by one fixed timestep. Integrates every point,
+ * then interleaves constraint solving with collision resolution so the body
+ * both holds its shape and rests on the track. Mutates and returns `body`.
+ */
+export function stepBody(body: Body, segments: Segment[], dt: number): Body {
+	for (const p of body.points) integrate(p, dt)
+
+	const ITERATIONS = 4 // more passes than the point sled: shape + contacts to settle
+	for (let iter = 0; iter < ITERATIONS; iter++) {
+		for (const c of body.constraints) solveConstraint(body, c)
+		const last = iter === ITERATIONS - 1
+		for (const p of body.points) resolveCollisions(p, segments, dt, last)
+	}
+
+	for (const p of body.points) clampSpeed(p, dt)
+	return body
 }

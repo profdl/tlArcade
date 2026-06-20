@@ -7,8 +7,8 @@ and update this file.
 ## What this is
 
 A [Line Rider](https://en.wikipedia.org/wiki/Line_Rider) clone on **tldraw v5**:
-draw track on the canvas, hit Play, watch a point-mass sled ride it under a
-hand-rolled Verlet physics sim. **Vite + React 19 + TypeScript**, no
+draw track on the canvas, hit Play, watch a constraint-solved multi-point sled
+ride it under a hand-rolled Verlet physics sim. **Vite + React 19 + TypeScript**, no
 physics-engine dependency.
 
 ## Commands
@@ -27,13 +27,19 @@ version:
 
 - [src/App.tsx](src/App.tsx) — mounts `<Tldraw>`, control panel, mounts `Rider`
   via `components.InFrontOfTheCanvas`. Toggles `isReadonly` while playing.
-- [src/game/geometry.ts](src/game/geometry.ts) — turns every native page shape
-  into page-space collision segments; maps shape **color → `LineKind`**.
-- [src/game/physics.ts](src/game/physics.ts) — the sim. `step()` is the core;
-  `PHYSICS` holds all tunables. **Pure & framework-free** — keep it that way so
-  the unit tests stay simple.
+- [src/game/geometry.ts](src/game/geometry.ts) — turns collidable native page
+  shapes into page-space collision segments; maps shape **color → `LineKind`**.
+  Also collects `note` shapes as scoring checkpoints.
+- [src/game/checkpoints.ts](src/game/checkpoints.ts) — pure checkpoint hit-test
+  (point-in-box, scored once per run). **Pure & framework-free.**
+- [src/game/physics.ts](src/game/physics.ts) — the sim. The sled is a multi-point
+  body (`makeBody`/`stepBody`); `step()` is the single-point primitive it reuses,
+  so both share one collision path (`resolveCollisions`). `PHYSICS` holds all
+  tunables. **Pure & framework-free** — keep it that way so the unit tests stay
+  simple.
 - [src/game/Rider.tsx](src/game/Rider.tsx) — fixed-timestep rAF loop; draws the
-  sled by writing the DOM transform imperatively (no per-frame React render).
+  sled body as an SVG polygon, writing its screen-space geometry imperatively
+  each frame (no per-frame React render).
 
 ## Core design contract: native-first
 

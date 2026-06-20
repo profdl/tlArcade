@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { makeRider, step, velocity, PHYSICS, type Segment } from './physics'
+import {
+	makeRider,
+	step,
+	velocity,
+	PHYSICS,
+	makeBody,
+	stepBody,
+	bodyCenter,
+	bodyVelocity,
+	type Body,
+	type Segment,
+} from './physics'
 
 const DT = 1 / 120
 
@@ -260,5 +271,67 @@ describe('physics: one-way lines', () => {
 		// It should not be stopped at the line; gravity may slow it, but the line
 		// must not have pushed it back below where a solid line would trap it.
 		expect(r.pos.y).toBeLessThan(100)
+	})
+})
+
+describe('physics: multi-point body', () => {
+	const runBody = (body: Body, segments: Segment[], steps: number) => {
+		for (let i = 0; i < steps; i++) stepBody(body, segments, DT)
+		return body
+	}
+
+	// Edge rest lengths captured at spawn; used to assert the body holds shape.
+	const edgeLengths = (body: Body) =>
+		body.constraints.map((c) =>
+			Math.hypot(
+				body.points[c.i].pos.x - body.points[c.j].pos.x,
+				body.points[c.i].pos.y - body.points[c.j].pos.y
+			)
+		)
+
+	it('falls under gravity (center drifts down with no track)', () => {
+		const body = makeBody({ x: 0, y: 0 })
+		runBody(body, [], 60)
+		expect(bodyCenter(body).y).toBeGreaterThan(0)
+		expect(bodyVelocity(body, DT).y).toBeGreaterThan(0)
+	})
+
+	it('comes to rest on a floor instead of passing through', () => {
+		const floor: Segment = { a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 } }
+		const body = makeBody({ x: 0, y: -40 })
+		runBody(body, [floor], 300)
+		// Every point sits at or above the floor (within the contact radius).
+		for (const p of body.points) {
+			expect(p.pos.y).toBeLessThanOrEqual(50 + PHYSICS.riderRadius)
+		}
+		// And it has settled: near-zero vertical velocity, not still driving down.
+		expect(Math.abs(bodyVelocity(body, DT).y)).toBeLessThan(2)
+	})
+
+	it('holds its shape: constraint lengths stay near their rest length', () => {
+		const floor: Segment = { a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 } }
+		const rest = makeBody({ x: 0, y: -40 }).constraints.map((c) => c.rest)
+		const body = makeBody({ x: 0, y: -40 })
+		runBody(body, [floor], 300)
+		const now = edgeLengths(body)
+		now.forEach((len, idx) => {
+			// Verlet distance constraints are soft, but the rig should stay within
+			// ~25% of its rest shape rather than collapsing or exploding.
+			expect(Math.abs(len - rest[idx]) / rest[idx]).toBeLessThan(0.25)
+		})
+	})
+
+	it('slides and rotates down a slope (a point sled cannot rotate)', () => {
+		const slope: Segment = { a: { x: -300, y: -100 }, b: { x: 300, y: 200 } }
+		const body = makeBody({ x: -200, y: -120 })
+		const angleOf = (b: Body) =>
+			Math.atan2(b.points[1].pos.y - b.points[0].pos.y, b.points[1].pos.x - b.points[0].pos.x)
+		const before = angleOf(body)
+		runBody(body, [slope], 180)
+		// Moved down-slope (right and down) ...
+		expect(bodyCenter(body).x).toBeGreaterThan(-200)
+		expect(bodyCenter(body).y).toBeGreaterThan(-120)
+		// ... and the body's top edge tilted as it rode (it tumbles, unlike a point).
+		expect(Math.abs(angleOf(body) - before)).toBeGreaterThan(0.01)
 	})
 })

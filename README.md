@@ -39,13 +39,15 @@ src/
                        getPointsFromDrawSegment. Maps shape color -> LineKind.
                        Also collects note shapes as scoring checkpoints.
     checkpoints.ts     Pure checkpoint hit-testing (point-in-box, scored once).
-    physics.ts         The sim: a point-mass sled under gravity, colliding
-                       against line segments (Verlet integration). Honors each
-                       segment's kind (accelerate / oneway).
-    physics.test.ts    Vitest unit tests for the sim.
-    Rider.tsx          Snapshots segments on play, runs a fixed-timestep rAF
-                       loop, and draws the sled as an overlay positioned via
-                       pageToScreen.
+    physics.ts         The sim: a multi-point sled body (constraint-solved quad)
+                       under gravity, colliding against line segments (Verlet
+                       integration). Honors each segment's kind. Also exports the
+                       single-point rider primitives the body is built from.
+    checkpoints.ts     Pure checkpoint hit-testing (point-in-box, scored once).
+    physics.test.ts    Vitest unit tests for the sim (point + body).
+    Rider.tsx          Snapshots segments + checkpoints on play, runs a
+                       fixed-timestep rAF loop, and draws the sled body as an SVG
+                       polygon overlay positioned via pageToScreen.
 ```
 
 ### Line types (by shape color)
@@ -64,8 +66,10 @@ at half strength (a weaker version of the same effect).
 
 ## Where to take it next
 
-- **A real sled**: replace the single point mass with 2–4 linked points
-  (constraint-solved) for a body that tumbles, matching classic Line Rider.
+- **A real sled** *(done)*: the sled is a 4-point constraint-solved quad
+  (`makeBody` / `stepBody` in [physics.ts](src/game/physics.ts)) that tumbles
+  down the track. Each point collides with the same code path as the original
+  single point, so every line behavior applies to the body unchanged.
 - **Scoring** *(done)*: drop **sticky-note shapes** as flags; the sled collects
   each the first time it passes through, and the panel shows a `collected/total`
   count. See [checkpoints.ts](src/game/checkpoints.ts) (pure hit-test) and
