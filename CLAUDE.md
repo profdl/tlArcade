@@ -46,10 +46,18 @@ version:
   body (`makeBody`/`stepBody`); `step()` is the single-point primitive it reuses,
   so both share one collision path (`resolveCollisions`). `PHYSICS` holds all
   tunables. **Pure & framework-free** — keep it that way so the unit tests stay
-  simple.
+  simple. It reports surface contacts for audio by *pushing* `ContactEvent`s into
+  an optional sink (`step`/`stepBody`'s last arg); omit the sink and behavior is
+  byte-identical, so it makes no sound itself.
+- [src/game/audio.ts](src/game/audio.ts) — Web Audio surface sounds. **Pure of
+  React/tldraw**; the rAF loop is its only caller. Per-kind voices: a one-shot
+  `impact` on contact-enter and a sustained, speed-scaled `setRide` voice while
+  riding. All tunables in the `AUDIO` object.
 - [src/game/Rider.tsx](src/game/Rider.tsx) — fixed-timestep rAF loop; draws the
   sled body as an SVG polygon, writing its screen-space geometry imperatively
-  each frame (no per-frame React render).
+  each frame (no per-frame React render). Owns the audio engine: passes a reused
+  contact sink into `stepBody`, does enter-detection (diffs this substep's
+  contact keys vs. last) to fire impacts, and drives the ride voices.
 
 ## Core design contract: native-first
 
@@ -81,9 +89,20 @@ native shapes over inventing custom records.
 - **Draw (pencil) shapes hold multiple strokes** separated by pen-lifts. Decode
   each stroke with `getPointsFromDrawSegment` and push it separately — never
   bridge across strokes or you draw phantom collision lines.
-- **Tunneling threshold.** Any new behavior that raises speed must stay under
-  `~2 * riderRadius / FIXED_DT`, or the sled shoots through thin lines in one
-  step. `accelerateMaxSpeed` is the existing cap; copy that pattern.
+- **Collision is swept, not proximity-only.** `resolveCollisions` resolves each
+  point against a segment via `sweptContact`, which tests the point's THIS-STEP
+  motion (`prev`→`pos`) against the line and orients the contact normal toward
+  the side the point came from. This is what stops a fast point tunneling through
+  a thin line, and stops the "ejected into the inside of a box" bug (a one-sided
+  push-out using `pos - closestPoint` sends a point that landed just past a line
+  deeper through it). A consequence: collision no longer depends on a shape's
+  outline winding, so rotating/transforming a geo shape can't flip which side is
+  solid.
+- **Tunneling threshold (still keep it).** Swept collision catches a single
+  thin-line cross, but stacked thin lines or huge per-step jumps can still slip
+  through. Any new behavior that raises speed should stay under
+  `~2 * riderRadius / FIXED_DT`; `accelerateMaxSpeed` is the existing cap — copy
+  that pattern rather than relying on the swept test alone.
 - **New physics tunables go in the `PHYSICS` object**, not as inline literals.
 - **Only `COLLIDABLE_TYPES` shapes are track.** `collectSegments` allowlists
   `draw`/`line`/`geo`/`arrow`; text, images, frames, etc. are skipped so they

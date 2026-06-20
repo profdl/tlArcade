@@ -6,10 +6,12 @@ import {
 	bodyCenter,
 	bodyVelocity,
 	type Body,
+	type ContactEvent,
 } from './physics'
 import { collectSegments, collectCheckpoints } from './geometry'
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
-import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom } from './state'
+import { createAudioEngine } from './audio'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom } from './state'
 
 const FIXED_DT = 1 / 120 // physics substep (s)
 const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
@@ -50,6 +52,21 @@ export function Rider() {
 		// Ids collected this run; reset when a run begins so flags re-arm.
 		let collected = new Set<string>()
 
+		// --- Audio -----------------------------------------------------------
+		// The pure sim reports contacts into `contacts`; we sonify them here. One
+		// reused array (cleared, never reallocated) keeps the 120 Hz substep loop
+		// allocation-free. `prevContactKeys` is the set of (kind|shape) surfaces the
+		// sled touched on the PREVIOUS substep; diffing finds NEW contacts to fire a
+		// one-shot impact for. `frameContacts` aggregates the substeps' contacts so
+		// the sustained ride voices read the whole frame, not just the last substep.
+		const engine = createAudioEngine()
+		const contacts: ContactEvent[] = []
+		let prevContactKeys = new Set<string>()
+		let frameContacts: ContactEvent[] = []
+		let lastMuted = mutedAtom.get()
+		engine.setMuted(lastMuted)
+		const contactKey = (c: ContactEvent) => `${c.kind}|${c.shape ?? ''}`
+
 		// Re-snapshot collision geometry each time a run begins.
 		let wasPlaying = false
 		// Re-seat the sled whenever the start point moves (immediate feedback even
@@ -69,6 +86,13 @@ export function Rider() {
 				statsAtom.set({ distance: 0, speed: 0 })
 			}
 
+			// Mirror the mute atom into the engine on change (cheap; only on toggle).
+			const muted = mutedAtom.get()
+			if (muted !== lastMuted) {
+				lastMuted = muted
+				engine.setMuted(muted)
+			}
+
 			const isPlaying = playingAtom.get()
 			if (isPlaying && !wasPlaying) {
 				// Run begins: re-seat the sled at the start and re-snapshot the track.
@@ -78,6 +102,10 @@ export function Rider() {
 				collected = new Set<string>()
 				scoreAtom.set({ collected: 0, total: checkpoints.length })
 				statsAtom.set({ distance: 0, speed: 0 }) // clear last run's readout immediately
+				// Audio: resume the context on this user-gesture-initiated run and
+				// clear any stale contact state so impacts re-arm.
+				engine.resume()
+				prevContactKeys = new Set<string>()
 				last = now
 				acc = 0
 				frameCount = 0 // restart stats cadence so the first run frame samples predictably
@@ -90,8 +118,25 @@ export function Rider() {
 				if (frame > 0.05) frame = 0.05 // avoid spiral-of-death after tab blur
 				acc += frame
 				let scored = false
+				frameContacts = []
 				while (acc >= FIXED_DT) {
-					stepBody(bodyRef.current, segments, FIXED_DT)
+					contacts.length = 0 // reuse the buffer; sim fills it this substep
+					stepBody(bodyRef.current, segments, FIXED_DT, contacts)
+
+					// Audio: fire a one-shot for any surface newly touched this substep
+					// (a key absent from the previous substep's set), then carry this
+					// substep's contacts into the frame aggregate for the ride voices.
+					const substepKeys = new Set<string>()
+					for (const c of contacts) {
+						const key = contactKey(c)
+						if (!substepKeys.has(key)) {
+							substepKeys.add(key)
+							if (!prevContactKeys.has(key)) engine.impact(c.kind, c.shape, c.speed)
+							frameContacts.push(c)
+						}
+					}
+					prevContactKeys = substepKeys
+
 					// Test checkpoints against the body center per substep so a fast
 					// sled can't tunnel past a flag between rendered frames.
 					// collectCheckpointHits mutates `collected` so each flag scores once.
@@ -103,6 +148,9 @@ export function Rider() {
 					acc -= FIXED_DT
 				}
 				if (scored) scoreAtom.set({ collected: collected.size, total: checkpoints.length })
+				// Drive the sustained ride voices from this frame's aggregated contacts
+				// (empty when airborne -> voices fade out).
+				engine.setRide(frameContacts)
 				if (++frameCount % STATS_EVERY === 0) {
 					const c = bodyCenter(bodyRef.current)
 					const d = Math.hypot(c.x - start.x, c.y - start.y)
@@ -130,6 +178,12 @@ export function Rider() {
 				}
 			} else {
 				last = now // keep timebase fresh while paused
+				// Silence sustained voices and drop contact state while stopped, so a
+				// new run re-arms impacts and nothing hums when not riding.
+				if (prevContactKeys.size > 0) {
+					engine.setRide([])
+					prevContactKeys = new Set<string>()
+				}
 			}
 
 			// Position the sled. pageToViewport reads live camera + screenBounds and
@@ -174,7 +228,10 @@ export function Rider() {
 			raf = requestAnimationFrame(tick)
 		}
 		raf = requestAnimationFrame(tick)
-		return () => cancelAnimationFrame(raf)
+		return () => {
+			cancelAnimationFrame(raf)
+			engine.dispose()
+		}
 	}, [editor])
 
 	// Full-viewport SVG overlay; the rAF loop writes the polygon/dot geometry in

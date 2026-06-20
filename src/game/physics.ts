@@ -37,6 +37,28 @@ export interface Segment {
 	 * kinds.
 	 */
 	flip?: boolean
+	/**
+	 * The native tldraw shape type this segment came from ('draw' | 'line' |
+	 * 'geo' | 'arrow'). The physics sim ignores it; it rides along only so the
+	 * audio layer can vary a sound by shape type as well as kind. Optional — the
+	 * unit tests omit it.
+	 */
+	shape?: string
+}
+
+/**
+ * A surface-contact report emitted (optionally) during a step, for the audio
+ * layer to sonify. The sim itself stays silent and stateless: it only pushes
+ * these into a caller-supplied sink. Omitting the sink leaves behavior
+ * byte-identical to a sim with no audio at all.
+ */
+export interface ContactEvent {
+	kind: LineKind
+	strength: number
+	/** Source shape type of the contacted segment, if known. */
+	shape?: string
+	/** Sled speed at contact (px/s), for speed-scaled volume/pitch. */
+	speed: number
 }
 
 /** Tunable constants. Units are page-pixels and seconds. */
@@ -44,10 +66,16 @@ export const PHYSICS = {
 	gravity: 1800, // px/s^2, pulls the sled down
 	friction: 0.999, // velocity retained per step along free fall
 	restitution: 0.0, // 0 = no bounce off lines (classic Line Rider feel)
-	// Default surface drag when riding a solid line. Low (Line Rider lines are
-	// near-frictionless) but non-trivial, so 'ice' (0) reads as noticeably slicker
-	// and 'sticky' as noticeably grippier than a plain line.
-	surfaceFriction: 0.02,
+	// Default surface drag when riding a solid line. Line Rider lines are
+	// near-frictionless, so this is tiny: 'ice' (0) still reads as slicker and
+	// 'sticky' as much grippier than a plain line. It must stay small because the
+	// in-game sled is a 4-point body: this drag fires per CONTACTING point and the
+	// constraint solve then spreads it across the whole rig, so a value that feels
+	// gentle on the single-point step() (the unit-test path) compounds on the body
+	// and can stall it dead on a flat line or cancel gravity on a gentle downhill —
+	// which is what made solid/accelerate feel wrong while bounce/sticky (meant to
+	// be dramatic) felt fine. See the slope probe in the fix that set this.
+	surfaceFriction: 0.004,
 	riderRadius: 6, // collision radius of the sled point
 	contactSkin: 0.75, // band beyond riderRadius still treated as "riding" the line
 	maxSpeed: 4000, // clamp to avoid tunneling/explosions
@@ -98,6 +126,79 @@ function closestPointOnSegment(p: Vec2, a: Vec2, b: Vec2): { point: Vec2; t: num
 	return { point: { x: a.x + abx * t, y: a.y + aby * t }, t }
 }
 
+/**
+ * Detect contact between a point's THIS-STEP motion (`prev` -> `pos`) and a
+ * segment, returning the contact normal (unit, pointing toward the side the
+ * point came from) and how far to push the point to sit `r` off the line.
+ *
+ * Why swept, not just proximity: a body point moves up to `maxSpeed * dt`
+ * (~33px) per substep, far more than the contact band (~7px). A pure "is the
+ * end position near the line?" test misses a fast point that crossed a thin
+ * line in one step (tunneling), and — worse — when the end position lands just
+ * past the line, `pos - closestPoint` points to the FAR side, so the old
+ * push-out ejected the point deeper through the line instead of back out (the
+ * "hits the inside of the box" bug).
+ *
+ * Fix: pick the normal from the line itself and orient it toward wherever `prev`
+ * was (the side the point came from this step). Then a contact fires when the
+ * point either ends within the contact band OR its motion segment crossed the
+ * line within the segment's span — and the push-out always sends it back the way
+ * it came. Returns null when there's no contact this step.
+ */
+function sweptContact(
+	state: RiderState,
+	seg: Segment,
+	contact: number,
+	r: number
+): { nx: number; ny: number; penetration: number } | null {
+	// Unit perpendicular of the segment (its left-hand normal in screen coords).
+	let sdx = seg.b.x - seg.a.x
+	let sdy = seg.b.y - seg.a.y
+	const segLen = Math.hypot(sdx, sdy)
+	if (segLen < EPSILON) return null
+	sdx /= segLen
+	sdy /= segLen
+	// Left-hand normal (sdy, -sdx): for a left->right segment this points up (-y).
+	const perpX = sdy
+	const perpY = -sdx
+
+	// Signed perpendicular distance of prev/pos from the infinite line.
+	const sPrev = (state.prev.x - seg.a.x) * perpX + (state.prev.y - seg.a.y) * perpY
+	const sPos = (state.pos.x - seg.a.x) * perpX + (state.pos.y - seg.a.y) * perpY
+
+	// Orient the collision normal toward the side the point came from. Use prev's
+	// side when it's clearly off the line; if prev sat on the line (|sPrev| tiny),
+	// fall back to pos's side so a point grazing the line still resolves outward.
+	const side = Math.abs(sPrev) > EPSILON ? Math.sign(sPrev) : Math.sign(sPos) || 1
+	const nx = perpX * side
+	const ny = perpY * side
+
+	// The point's signed distance along that oriented normal (positive = outside).
+	const dPos = sPos * side
+	const dPrev = sPrev * side
+
+	// Is the closest point of `pos` actually within the segment's span (not off
+	// its end)? Off-the-end contacts are handled by the endpoint proximity test
+	// below, matching the original closest-point-on-SEGMENT behavior.
+	const { point, t } = closestPointOnSegment(state.pos, seg.a, seg.b)
+	const onSpan = t > 0 && t < 1
+	const endDist = Math.hypot(state.pos.x - point.x, state.pos.y - point.y)
+
+	// Crossing test: did the motion pass from outside the band to inside/through
+	// it, within the segment span? Catches a fast point that tunneled past.
+	const crossed = onSpan && dPrev >= r && dPos < contact
+	// Resting/penetrating test: end position is within the contact band on the
+	// span, or near an endpoint (closest-point distance), like the old check.
+	const resting = (onSpan && dPos < contact) || endDist < contact
+
+	if (!crossed && !resting) return null
+	// Push the point back to sit exactly `r` off the line on the side it came
+	// from. For a crossing (dPos can be negative — it punched through) this is the
+	// full depth back to the surface; for a graze it's the small overlap.
+	const penetration = Math.max(0, r - dPos)
+	return { nx, ny, penetration }
+}
+
 /** Verlet integration of a single point under gravity. Mutates `state`. */
 function integrate(state: RiderState, dt: number): void {
 	const vx = (state.pos.x - state.prev.x) * PHYSICS.friction
@@ -125,7 +226,8 @@ function resolveCollisions(
 	segments: Segment[],
 	dt: number,
 	applyKindEffects: boolean,
-	suppressBounce = false
+	suppressBounce = false,
+	contacts?: ContactEvent[]
 ): void {
 	const r = PHYSICS.riderRadius
 	// A sled resting on a line settles at exactly dist == r. Treat a thin band
@@ -138,15 +240,12 @@ function resolveCollisions(
 		// once-per-step kind effects apply.
 		const lastIter = applyKindEffects
 		for (const seg of segments) {
-			const { point } = closestPointOnSegment(state.pos, seg.a, seg.b)
-			const diff = sub(state.pos, point)
-			const dist = len(diff)
-			if (dist < contact && dist > EPSILON) {
-				// Surface normal pointing from line toward the rider.
-				const nx = diff.x / dist
-				const ny = diff.y / dist
-				// Positive only when actually overlapping; 0 within the contact skin.
-				const penetration = Math.max(0, r - dist)
+			// Swept detection: catches a fast point that crossed a thin line this
+			// step (tunneling) and always orients the normal toward the side the
+			// point came from, so the push-out never ejects it through the line.
+			const hit = sweptContact(state, seg, contact, r)
+			if (hit) {
+				const { nx, ny, penetration } = hit
 
 				// One-way lines only collide when the rider sits on the "front"
 				// side — the half-plane the segment's left-hand normal points to.
@@ -224,6 +323,19 @@ function resolveCollisions(
 
 				state.prev.x = state.pos.x - vX
 				state.prev.y = state.pos.y - vY
+
+				// Report the contact for the audio layer (only on the kind-effect pass,
+				// so each contacted segment is reported once per step — not once per
+				// stabilization iteration). `speed` is the post-resolution tangential-ish
+				// speed, which reads well for a ride sound. No-op when no sink is passed.
+				if (lastIter && contacts) {
+					contacts.push({
+						kind: seg.kind ?? 'solid',
+						strength: seg.strength ?? 1,
+						shape: seg.shape,
+						speed: Math.hypot(vX, vY) / dt,
+					})
+				}
 			}
 		}
 	}
@@ -246,11 +358,17 @@ function clampSpeed(state: RiderState, dt: number): void {
  * `state`. Integrates under gravity, then resolves collisions over a couple of
  * stabilization iterations (kind effects applied once, on the last).
  */
-export function step(state: RiderState, segments: Segment[], dt: number): RiderState {
+export function step(
+	state: RiderState,
+	segments: Segment[],
+	dt: number,
+	contacts?: ContactEvent[]
+): RiderState {
 	integrate(state, dt)
 	const ITERATIONS = 2
 	for (let iter = 0; iter < ITERATIONS; iter++) {
-		resolveCollisions(state, segments, dt, iter === ITERATIONS - 1)
+		const last = iter === ITERATIONS - 1
+		resolveCollisions(state, segments, dt, last, false, last ? contacts : undefined)
 	}
 	clampSpeed(state, dt)
 	return state
@@ -396,7 +514,12 @@ function addBodyVelocity(body: Body, dvx: number, dvy: number): void {
  * then interleaves constraint solving with collision resolution so the body
  * both holds its shape and rests on the track. Mutates and returns `body`.
  */
-export function stepBody(body: Body, segments: Segment[], dt: number): Body {
+export function stepBody(
+	body: Body,
+	segments: Segment[],
+	dt: number,
+	contacts?: ContactEvent[]
+): Body {
 	for (const p of body.points) integrate(p, dt)
 
 	// Bounce is a whole-body effect: sample the body's normal velocity into a
@@ -416,7 +539,9 @@ export function stepBody(body: Body, segments: Segment[], dt: number): Body {
 		const last = iter === ITERATIONS - 1
 		// suppressBounce: bounce is re-applied at the body level below, so don't
 		// also reflect it per point (that would double the impulse, gaining energy).
-		for (const p of body.points) resolveCollisions(p, segments, dt, last, true)
+		// Collect contacts only on the last pass; every point reports, so the audio
+		// layer sees each surface the body touches (it dedupes by kind/shape).
+		for (const p of body.points) resolveCollisions(p, segments, dt, last, true, last ? contacts : undefined)
 	}
 
 	// Re-launch the body off the bounce line. Set the center-of-mass normal

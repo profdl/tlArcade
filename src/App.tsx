@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { Tldraw, type TLComponents, type Editor, useValue } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Rider } from './game/Rider'
-import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom } from './game/state'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom } from './game/state'
 import './App.css'
 
 // How far above the viewport center to drop the sled when "set start" is hit,
@@ -14,12 +14,12 @@ const START_DROP_ABOVE_CENTER = 150
 // need to read as "that color" next to its name. Source of truth for the
 // mapping itself is COLOR_TO_KIND in game/geometry.ts; keep these in sync.
 const LEGEND: { label: string; desc: string; swatches: string[] }[] = [
-	{ label: 'Solid', desc: 'Basic track', swatches: ['#1d1d1d', '#9fa8b2'] },
+	{ label: 'Solid', desc: 'Basic track', swatches: ['#1d1d1d'] },
 	{ label: 'Accelerate', desc: 'Speeds you up', swatches: ['#e03131', '#ff8787'] },
 	{ label: 'Brake', desc: 'Slows you down', swatches: ['#f76707'] },
 	{ label: 'Bounce', desc: 'Springy', swatches: ['#ffc034'] },
 	{ label: 'Sticky', desc: 'High grip', swatches: ['#ae3ec9', '#e599f7'] },
-	{ label: 'Ice', desc: 'Frictionless', swatches: ['#e8eef2'] },
+	{ label: 'Ice', desc: 'Frictionless', swatches: ['#9fa8b2'] },
 	{ label: 'One-way', desc: 'Blocks from above', swatches: ['#4263eb'] },
 	{ label: 'One-way ↑', desc: 'Blocks from below', swatches: ['#74c0fc'] },
 	{ label: 'Scenery', desc: 'Non-collidable', swatches: ['#2f9e44', '#8ce99a'] },
@@ -40,6 +40,7 @@ function App() {
 	// without making `components` depend on any of these.
 	const playing = useValue('playing', () => playingAtom.get(), [])
 	const follow = useValue('follow', () => followAtom.get(), [])
+	const muted = useValue('muted', () => mutedAtom.get(), [])
 	const stats = useValue('stats', () => statsAtom.get(), [])
 	const score = useValue('score', () => scoreAtom.get(), [])
 
@@ -112,6 +113,14 @@ function App() {
 					onClick={() => followAtom.update((f) => !f)}
 				>
 					🎥
+				</button>
+				<button
+					className="lr-btn lr-icon"
+					title={muted ? 'Sound: off' : 'Sound: on'}
+					aria-pressed={!muted}
+					onClick={() => mutedAtom.update((m) => !m)}
+				>
+					{muted ? '🔇' : '🔊'}
 				</button>
 				<button
 					className={showLegend ? 'lr-btn lr-icon lr-active' : 'lr-btn lr-icon'}

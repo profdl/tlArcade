@@ -20,7 +20,9 @@ interface KindSpec {
 
 const COLOR_TO_KIND: Record<string, KindSpec> = {
 	black: { kind: 'solid', strength: 1 },
-	grey: { kind: 'solid', strength: 1 },
+	// grey is ice: white reads as 'ice' in PLANNING but is invisible in tldraw's
+	// light mode, so grey is the usable frictionless surface. black stays solid.
+	grey: { kind: 'ice', strength: 1 },
 	red: { kind: 'accelerate', strength: 1 },
 	'light-red': { kind: 'accelerate', strength: 0.5 },
 	orange: { kind: 'brake', strength: 1 },
@@ -116,7 +118,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 				if (pts.length === 0) continue
 				// Push each stroke on its own so we never bridge a pen-lift gap
 				// with a phantom line between strokes.
-				pushPolyline(segments, pts, spec, false)
+				pushPolyline(segments, pts, spec, false, shape.type)
 				if (!firstPt) firstPt = pts[0]
 				lastPt = pts[pts.length - 1]
 				totalPts += pts.length
@@ -125,7 +127,7 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 			// overall first point. Guard on the total point count (not the final
 			// stroke's) so a closed loop ending in a degenerate tap still closes.
 			if (draw.props.isClosed && firstPt && lastPt && totalPts > 2) {
-				segments.push(makeSeg(lastPt, firstPt, spec))
+				segments.push(makeSeg(lastPt, firstPt, spec, shape.type))
 			}
 			continue
 		}
@@ -137,28 +139,31 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		const localVerts = geometry.vertices
 		if (!localVerts || localVerts.length < 2) continue
 		const verts = transform.applyToPoints(localVerts)
-		pushPolyline(segments, verts, spec, geometry.isClosed)
+		pushPolyline(segments, verts, spec, geometry.isClosed, shape.type)
 	}
 
 	return segments
 }
 
 /** Emit segments between consecutive points; optionally close the loop. */
-function pushPolyline(out: TrackSegment[], pts: Vec[], spec: KindSpec, closed: boolean) {
+function pushPolyline(out: TrackSegment[], pts: Vec[], spec: KindSpec, closed: boolean, shapeType: string) {
 	for (let i = 0; i < pts.length - 1; i++) {
-		out.push(makeSeg(pts[i], pts[i + 1], spec))
+		out.push(makeSeg(pts[i], pts[i + 1], spec, shapeType))
 	}
 	if (closed && pts.length > 2) {
-		out.push(makeSeg(pts[pts.length - 1], pts[0], spec))
+		out.push(makeSeg(pts[pts.length - 1], pts[0], spec, shapeType))
 	}
 }
 
-function makeSeg(a: Vec2, b: Vec2, spec: KindSpec): TrackSegment {
+function makeSeg(a: Vec2, b: Vec2, spec: KindSpec, shapeType: string): TrackSegment {
 	const seg: TrackSegment = {
 		a: { x: a.x, y: a.y },
 		b: { x: b.x, y: b.y },
 		kind: spec.kind,
 		strength: spec.strength,
+		// Carry the source shape type so the audio layer can vary a sound by shape
+		// (draw/line/geo/arrow) as well as by kind. Physics ignores it.
+		shape: shapeType,
 	}
 	if (spec.flip) seg.flip = true
 	return seg

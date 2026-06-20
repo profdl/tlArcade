@@ -10,6 +10,7 @@ import {
 	bodyVelocity,
 	type Body,
 	type Segment,
+	type ContactEvent,
 } from './physics'
 
 const DT = 1 / 120
@@ -105,6 +106,58 @@ describe('physics: speed clamp', () => {
 		step(r, [floor], DT)
 		expect(Number.isFinite(r.pos.x)).toBe(true)
 		expect(Number.isFinite(r.pos.y)).toBe(true)
+	})
+})
+
+describe('physics: swept collision (no tunneling)', () => {
+	// A thin horizontal floor. A fast point must not pass through it in one step
+	// even when its per-step displacement is many times the contact band.
+	const floor: Segment = { a: { x: -1000, y: 0 }, b: { x: 1000, y: 0 } }
+
+	it('a fast point crossing a thin line in one step is caught, not tunneled', () => {
+		// Place the point just above the line and give it a huge downward step so
+		// (pos - prev) far exceeds the contact band. Without a swept test the point
+		// lands well below the line and the proximity check never sees it.
+		const r = makeRider({ x: 0, y: -5 })
+		r.prev = { x: 0, y: -5 - 200 } // ~200px downward in one step (>> contact band)
+		step(r, [floor], DT)
+		// It must be stopped at/above the floor, not tunneled through to the far side.
+		expect(r.pos.y).toBeLessThanOrEqual(0 + 1)
+	})
+
+	it('a point that crosses the line is ejected back to the side it came from, not through it', () => {
+		// Start clearly above the line and give it a step that lands it just past
+		// the line (a fast cross within one step). The swept test must push it back
+		// UP to the side it came from, never deeper through to the underside — this
+		// is the "hits the inside of the box" bug at the single-segment level.
+		const r = makeRider({ x: 0, y: -5 })
+		r.prev = { x: 0, y: -20 } // moving down ~15px/integrate; came from above
+		// One integrate carries pos past y=0; resolveCollisions must catch the cross.
+		step(r, [floor], DT)
+		expect(r.pos.y).toBeLessThanOrEqual(0 + 1)
+	})
+
+	it('the body does not tunnel into a box; it rests on top, not inside', () => {
+		// A 200x120 box (CCW outline) dropped onto from above. The body must settle
+		// on the TOP wall (y ~ top - radius), never end up inside the box interior.
+		const top = -60,
+			bottom = 60,
+			left = -100,
+			right = 100
+		const box: Segment[] = [
+			{ a: { x: left, y: top }, b: { x: right, y: top } }, // top
+			{ a: { x: right, y: top }, b: { x: right, y: bottom } }, // right
+			{ a: { x: right, y: bottom }, b: { x: left, y: bottom } }, // bottom
+			{ a: { x: left, y: bottom }, b: { x: left, y: top } }, // left
+		]
+		const body = makeBody({ x: 0, y: top - 80 }) // start above the box
+		for (let i = 0; i < 400; i++) stepBody(body, box, DT)
+		const c = bodyCenter(body)
+		// Center rests above the top wall (just outside), not floating inside the box.
+		expect(c.y).toBeLessThan(top)
+		// And horizontally still over the box (didn't get flung sideways out).
+		expect(c.x).toBeGreaterThan(left - 50)
+		expect(c.x).toBeLessThan(right + 50)
 	})
 })
 
@@ -297,6 +350,74 @@ describe('physics: one-way lines', () => {
 	})
 })
 
+describe('physics: contact events (audio sink)', () => {
+	const floor: Segment = {
+		a: { x: -1000, y: 50 },
+		b: { x: 1000, y: 50 },
+		kind: 'accelerate',
+		strength: 0.5,
+		shape: 'line',
+	}
+
+	it('passing a sink does not change the simulated path (byte-identical)', () => {
+		// Same start, same segments, same step count — one with a sink, one without.
+		const withSink = makeRider({ x: 0, y: 40 })
+		withSink.prev = { x: -2, y: 40 }
+		const withoutSink = makeRider({ x: 0, y: 40 })
+		withoutSink.prev = { x: -2, y: 40 }
+		for (let i = 0; i < 240; i++) {
+			step(withSink, [floor], DT, [])
+			step(withoutSink, [floor], DT)
+		}
+		expect(withSink.pos.x).toBe(withoutSink.pos.x)
+		expect(withSink.pos.y).toBe(withoutSink.pos.y)
+		expect(withSink.prev.x).toBe(withoutSink.prev.x)
+		expect(withSink.prev.y).toBe(withoutSink.prev.y)
+	})
+
+	it('reports a contact with the segment kind/strength/shape while riding', () => {
+		const r = makeRider({ x: 0, y: 40 })
+		r.prev = { x: -2, y: 40 }
+		// Settle onto the floor first, then sample one resting step.
+		run(r, [floor], 60)
+		const contacts: ContactEvent[] = []
+		step(r, [floor], DT, contacts)
+		expect(contacts.length).toBeGreaterThan(0)
+		const c = contacts[0]
+		expect(c.kind).toBe('accelerate')
+		expect(c.strength).toBe(0.5)
+		expect(c.shape).toBe('line')
+		expect(c.speed).toBeGreaterThanOrEqual(0)
+		expect(Number.isFinite(c.speed)).toBe(true)
+	})
+
+	it('reports nothing in free fall (no segments touched)', () => {
+		const r = makeRider({ x: 0, y: 0 })
+		const contacts: ContactEvent[] = []
+		for (let i = 0; i < 30; i++) step(r, [], DT, contacts)
+		expect(contacts.length).toBe(0)
+	})
+
+	it('reports at most once per contacted segment per step (not once per iteration)', () => {
+		const r = makeRider({ x: 0, y: 40 })
+		r.prev = { x: -2, y: 40 }
+		run(r, [floor], 60) // settle onto the single floor line
+		const contacts: ContactEvent[] = []
+		step(r, [floor], DT, contacts)
+		// One segment in contact -> exactly one event, despite step()'s 2 iterations.
+		expect(contacts.length).toBe(1)
+	})
+
+	it('the multi-point body reports contacts through the sink too', () => {
+		const body = makeBody({ x: 0, y: -40 })
+		for (let i = 0; i < 200; i++) stepBody(body, [floor], DT) // settle on the floor
+		const contacts: ContactEvent[] = []
+		stepBody(body, [floor], DT, contacts)
+		expect(contacts.length).toBeGreaterThan(0)
+		expect(contacts.every((c) => c.kind === 'accelerate' && c.shape === 'line')).toBe(true)
+	})
+})
+
 describe('physics: multi-point body', () => {
 	const runBody = (body: Body, segments: Segment[], steps: number) => {
 		for (let i = 0; i < steps; i++) stepBody(body, segments, DT)
@@ -378,5 +499,44 @@ describe('physics: multi-point body', () => {
 		expect(bodyCenter(body).y).toBeGreaterThan(-120)
 		// ... and the body's top edge tilted as it rode (it tumbles, unlike a point).
 		expect(Math.abs(angleOf(body) - before)).toBeGreaterThan(0.01)
+	})
+
+	// The in-game sled is a body, not a point. Surface drag fires per contacting
+	// point and the constraint solve spreads it across the rig, so the body bleeds
+	// far more tangential speed than the single-point step() does. These cases ride
+	// the BODY down a realistic gentle downhill — the regression that made solid
+	// and accelerate feel dead (heavy surfaceFriction stalling the rig / cancelling
+	// gravity) was invisible to the point-only step() tests above.
+	const downhill = (kind?: Segment['kind']): Segment => ({
+		a: { x: -2000, y: -400 },
+		b: { x: 2000, y: 400 },
+		kind,
+	})
+	const slopeSpeed = (kind?: Segment['kind'], steps = 400) => {
+		const body = makeBody({ x: -1900, y: -420 })
+		runBody(body, [downhill(kind)], steps)
+		const v = bodyVelocity(body, DT)
+		return Math.hypot(v.x, v.y)
+	}
+
+	it('the body keeps gliding down a solid downhill (drag never cancels gravity)', () => {
+		// A solid line is near-frictionless: the body should be moving briskly after
+		// riding a long gentle downhill, not stalled to a crawl by surface drag.
+		expect(slopeSpeed('solid')).toBeGreaterThan(150)
+	})
+
+	it('an accelerate downhill drives the body faster than solid OR ice', () => {
+		// Accelerate actively pushes, so it must end up the fastest surface — it was
+		// previously slower than ice because the boost was fighting heavy surface
+		// drag. It rides at/under the speed cap (no runaway/tunneling).
+		const accel = slopeSpeed('accelerate')
+		expect(accel).toBeGreaterThan(slopeSpeed('solid'))
+		expect(accel).toBeGreaterThan(slopeSpeed('ice'))
+		expect(accel).toBeLessThanOrEqual(PHYSICS.accelerateMaxSpeed + 50)
+	})
+
+	it('an ice downhill preserves more glide than a solid one', () => {
+		// Ice adds zero tangential drag, so the body coasts faster than on solid.
+		expect(slopeSpeed('ice')).toBeGreaterThan(slopeSpeed('solid'))
 	})
 })

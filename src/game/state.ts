@@ -19,6 +19,9 @@ export const playingAtom = atom('lr-playing', false)
 /** Whether the camera eases to follow the sled while playing. */
 export const followAtom = atom('lr-follow', true)
 
+/** Whether surface sounds are muted. Off (audible) by default. */
+export const mutedAtom = atom('lr-muted', false)
+
 /** Page-space point the sled spawns from at the start of a run. */
 export const startPointAtom = atom<Vec2>('lr-startPoint', { x: 200, y: 100 })
 

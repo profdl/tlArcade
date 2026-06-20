@@ -26,7 +26,7 @@ tuned constant" approach — so the palette stays learnable and the switch in
 | Color           | Kind        | Behavior                                                     |
 |-----------------|-------------|--------------------------------------------------------------|
 | `black`         | solid       | **Solid** — basic collidable track (the default line).       |
-| `grey`          | solid       | **Solid** — same as black; a neutral alias.                  |
+| `grey`          | ice         | **Ice** — zero surface friction, max glide (white is invisible in light mode). |
 | `red`           | accelerate  | **Accelerate** — tangential boost in the direction of travel.|
 | `light-red`     | accelerate  | **Accelerate (weak)** — half-strength boost.                 |
 | `orange`        | brake       | **Brake** — tangential drag, slows the sled.                 |
@@ -37,7 +37,7 @@ tuned constant" approach — so the palette stays learnable and the switch in
 | `light-blue`    | oneway      | **One-way (flipped)** — blocks from below instead of above.  |
 | `violet`        | sticky      | **Sticky** — strong tangential grip/friction.                |
 | `light-violet`  | sticky      | **Sticky (weak)** — half-strength grip.                      |
-| `white`         | ice         | **Ice** — zero surface friction, max glide.                  |
+| `white`         | ice         | **Ice** — alias of grey; unusable in light mode (invisible). |
 
 Per-kind tunables (`brakeDrag`, `bounceRestitution`, `stickyFriction`,
 `iceFriction`) live in the `PHYSICS` object; `strength` scales them per segment.
@@ -137,10 +137,16 @@ only the "set start here" button. Design constraints to respect when building:
 - Snap nothing; free placement. The sled re-seats immediately on change (the
   rider already rebuilds its body when `startPointAtom` changes).
 
-## Surface sounds (planned, not built)
+## Surface sounds (shipped)
 
 Give each surface an audible character so a player can *hear* what they're
-riding. Decisions are locked in below; implementation has not started.
+riding. Built as designed below; the build-order checklist at the end is done.
+Source of truth is the code: contact reporting in
+[physics.ts](src/game/physics.ts) (`ContactEvent`), the synth in
+[audio.ts](src/game/audio.ts) (`createAudioEngine` + `AUDIO`), the glue in
+[Rider.tsx](src/game/Rider.tsx), and the mute toggle (`mutedAtom` in
+[state.ts](src/game/state.ts) + the 🔊 button in [App.tsx](src/App.tsx)). Sound
+recipes in `KIND_VOICE` / `AUDIO` are tune-by-ear starting points.
 
 ### What plays, and when
 
