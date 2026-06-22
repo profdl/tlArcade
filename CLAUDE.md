@@ -32,8 +32,10 @@ version:
   overlay never remounts; gameplay state flows through atoms (see state.ts), not
   props.
 - [src/game/state.ts](src/game/state.ts) — the shared gameplay atoms
-  (`playing`/`follow`/`startPoint` inputs, `stats`/`score` outputs). Atoms, not
-  React state/props, so `App`'s `components` object stays referentially stable —
+  (`playing`/`follow`/`startPoint`/`showCollisions` inputs, `stats`/`score`
+  outputs). `showCollisions` is a debug toggle that makes `Rider` draw the actual
+  collision geometry (each shape's segments + the sled rig's contact circles).
+  Atoms, not React state/props, so `App`'s `components` object stays referentially stable —
   threading these through props would remount `Rider` mid-ride and snap the sled
   to the start. App mirrors them with `useValue`; Rider polls/writes them in its
   rAF loop.

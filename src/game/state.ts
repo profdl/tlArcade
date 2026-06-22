@@ -22,6 +22,14 @@ export const followAtom = atom('lr-follow', true)
 /** Whether surface sounds are muted. Off (audible) by default. */
 export const mutedAtom = atom('lr-muted', false)
 
+/**
+ * Debug overlay: when on, the rider draws the collision geometry it actually
+ * simulates — every collidable shape's page-space segments plus the sled rig's
+ * per-point contact circles — so you can see what the physics "sees" vs. the
+ * drawn art. Off by default.
+ */
+export const showCollisionsAtom = atom('lr-showCollisions', false)
+
 /** Page-space point the sled spawns from at the start of a run. */
 export const startPointAtom = atom<Vec2>('lr-startPoint', { x: 200, y: 100 })
 

@@ -222,18 +222,34 @@ function sweptContact(
 	const dPrev = sPrev * side
 
 	// Is the closest point of `pos` actually within the segment's span (not off
-	// its end)? Off-the-end contacts are handled by the endpoint proximity test
-	// below, matching the original closest-point-on-SEGMENT behavior.
+	// its end)?
 	const { point, t } = closestPointOnSegment(state.pos, seg.a, seg.b)
 	const onSpan = t > 0 && t < 1
 	const endDist = Math.hypot(state.pos.x - point.x, state.pos.y - point.y)
 
-	// Crossing test: did the motion pass from outside the band to inside/through
-	// it, within the segment span? Catches a fast point that tunneled past.
-	const crossed = onSpan && dPrev >= r && dPos < contact
-	// Resting/penetrating test: end position is within the contact band on the
-	// span, or near an endpoint (closest-point distance), like the old check.
-	const resting = (onSpan && dPos < contact) || endDist < contact
+	// Off-the-end (CORNER) contact: the closest point clamped to an endpoint, so
+	// this is a contact with the corner VERTEX, not the flat edge. Resolve it
+	// RADIALLY — push the point out to radius `r` from the corner along
+	// (pos - corner) — instead of along the edge's perpendicular normal. Using the
+	// edge normal here pins a point that has slid past the end ON TOP of the corner
+	// (it keeps shoving it up to the edge's height even though it's beyond the
+	// edge), so a snail sliding off the end of a box top rides into the air instead
+	// of rounding the corner and falling off. The radial push lets it round the
+	// corner: as it moves past, the normal rotates from "up" toward "sideways/down"
+	// and gravity carries it off. (On-span contacts still use the edge normal.)
+	if (!onSpan) {
+		if (endDist >= contact || endDist < EPSILON) return null
+		const cnx = (state.pos.x - point.x) / endDist
+		const cny = (state.pos.y - point.y) / endDist
+		return { nx: cnx, ny: cny, penetration: Math.max(0, r - endDist) }
+	}
+
+	// On-span contact: resolve against the flat edge using its perpendicular normal.
+	// Crossing test: did the motion pass from outside the band to inside/through it,
+	// within the segment span? Catches a fast point that tunneled past.
+	const crossed = dPrev >= r && dPos < contact
+	// Resting/penetrating test: end position is within the contact band on the span.
+	const resting = dPos < contact
 
 	if (!crossed && !resting) return null
 	// Push the point back to sit exactly `r` off the line on the side it came
@@ -504,6 +520,37 @@ export function bodyAngle(body: Body): number {
 	const a = body.points[BACK].pos
 	const b = body.points[FRONT].pos
 	return Math.atan2(b.y - a.y, b.x - a.x)
+}
+
+/**
+ * The art's horizontal mirror so its head leads the direction of HORIZONTAL
+ * travel: +1 draws it as-authored, -1 mirrors it. Returns `hold` (the previous
+ * value) while horizontal speed is inside `deadband` so a slow/stationary sled
+ * doesn't flicker.
+ *
+ * The art is drawn rotated by `bodyAngle` (the BACK->FRONT runner direction), so
+ * its nose points along `facing * (cos angle, sin angle)` — its on-screen x sign
+ * is `facing * sign(cos angle)`. To point the nose the way the sled moves across
+ * the screen we want that to match `sign(vx)`, hence `facing = sign(vx) *
+ * sign(cos angle)`. The `cos angle` term self-corrects the runner's 180°
+ * ambiguity: when a tumble leaves FRONT on the left, this still faces travel
+ * instead of latching backward (the bug this fixes).
+ *
+ * Velocity is the RUNNER's (BACK+FRONT mean) — the mast oscillates on its upright
+ * spring and including it would let that wobble flip the facing at low speed.
+ * Pure & framework-free so the rig's facing can be unit-tested.
+ */
+export function bodyFacing(body: Body, dt: number, deadband: number, hold: 1 | -1): 1 | -1 {
+	const back = body.points[BACK]
+	const front = body.points[FRONT]
+	// Runner-only mean horizontal velocity (exclude the wobbling mast).
+	const vx = (back.pos.x - back.prev.x + front.pos.x - front.prev.x) / (2 * dt)
+	if (Math.abs(vx) <= deadband) return hold
+	const cos = Math.cos(bodyAngle(body))
+	// At a near-vertical runner (cos ~ 0) horizontal facing is degenerate; the art
+	// is nearly edge-on anyway, so just hold rather than snap on a tiny cos sign.
+	if (Math.abs(cos) < EPSILON) return hold
+	return (Math.sign(vx) * Math.sign(cos)) as 1 | -1
 }
 
 /**

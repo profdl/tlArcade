@@ -9,6 +9,10 @@ import {
 	bodyCenter,
 	bodyVelocity,
 	bodyAngle,
+	bodyFacing,
+	BACK,
+	FRONT,
+	MAST,
 	type Body,
 	type Segment,
 	type ContactEvent,
@@ -59,6 +63,46 @@ describe('physics: flat floor collision', () => {
 		// Settled: vertical velocity is essentially zero, not still driving down
 		// into the floor. A loose bound here would pass even while falling fast.
 		expect(Math.abs(v.y)).toBeLessThan(1)
+	})
+})
+
+describe('physics: body falls off the end of a finite edge (corner)', () => {
+	// The top edge of a box: a finite horizontal segment. A sled sliding slowly to
+	// the right must round the right corner and fall off — not stop dead ON the
+	// corner. Regression: an off-the-end (corner) contact resolved against the
+	// edge's perpendicular (up) normal instead of the radial direction from the
+	// corner, so a slow sled got pinned at edge height at the corner and never fell
+	// off. (Fast slides happened to clear the corner band before settling, which is
+	// why this only showed up "sometimes" — at low speed.) Now corner contacts push
+	// radially, so the normal rotates from up toward sideways/down as the sled
+	// passes the end and gravity carries it off.
+	const runBody = (body: Body, segments: Segment[], steps: number) => {
+		for (let i = 0; i < steps; i++) stepBody(body, segments, DT)
+		return body
+	}
+	const edge: Segment = { a: { x: -100, y: 0 }, b: { x: 100, y: 0 } }
+
+	it('a slow sled sliding past the corner falls off instead of stopping on it', () => {
+		// Rest the sled on the edge near the right end, creeping right (~24 px/s).
+		const body = makeBody({ x: 80, y: -PHYSICS.bodyRadius })
+		for (const p of body.points) p.prev.x = p.pos.x - 0.2
+		runBody(body, [edge], 400)
+		const c = bodyCenter(body)
+		// It rounded the corner (well past x=100) and fell far below edge height,
+		// rather than parking at the corner near edge height (the old bug: cx≈100,
+		// cy≈-bodyRadius).
+		expect(c.x).toBeGreaterThan(100)
+		expect(c.y).toBeGreaterThan(PHYSICS.bodyRadius * 4)
+	})
+
+	it('a sled resting mid-edge stays supported (corner fix did not break the span)', () => {
+		const body = makeBody({ x: 0, y: -30 })
+		runBody(body, [edge], 300)
+		// Still resting on the flat part: its lowest point near the line, not fallen
+		// through, and not flung off.
+		const low = Math.max(...body.points.map((p) => p.pos.y))
+		expect(low).toBeLessThanOrEqual(PHYSICS.bodyRadius + 2)
+		expect(Math.abs(bodyCenter(body).x)).toBeLessThan(40)
 	})
 })
 
@@ -610,5 +654,73 @@ describe('physics: sled rig (upright + crash)', () => {
 		body.crashed = true
 		runBody(body, [{ a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 } }], 200)
 		expect(body.crashed).toBe(true)
+	})
+})
+
+describe('physics: facing (which way the snail points)', () => {
+	// Give a body point a velocity by back-dating its `prev` so (pos-prev)/dt === v.
+	const setVel = (body: Body, i: number, vx: number, vy: number) => {
+		const p = body.points[i]
+		p.prev = { x: p.pos.x - vx * DT, y: p.pos.y - vy * DT }
+	}
+
+	// Rotate the runner about the body center so FRONT lands at a given angle
+	// (radians, BACK->FRONT). Lets us test the runner's 180° ambiguity.
+	const orientRunner = (body: Body, angle: number) => {
+		const c = bodyCenter(body)
+		const half = Math.hypot(
+			body.points[FRONT].pos.x - body.points[BACK].pos.x,
+			body.points[FRONT].pos.y - body.points[BACK].pos.y
+		) / 2
+		body.points[FRONT].pos = { x: c.x + Math.cos(angle) * half, y: c.y + Math.sin(angle) * half }
+		body.points[BACK].pos = { x: c.x - Math.cos(angle) * half, y: c.y - Math.sin(angle) * half }
+	}
+
+	it('faces +1 when moving right, -1 when moving left (flat runner)', () => {
+		const body = makeBody({ x: 0, y: 0 }) // flat, FRONT to the right (+x)
+		setVel(body, BACK, 100, 0)
+		setVel(body, FRONT, 100, 0)
+		expect(bodyFacing(body, DT, 8, -1)).toBe(1) // overrides a stale hold
+
+		setVel(body, BACK, -100, 0)
+		setVel(body, FRONT, -100, 0)
+		expect(bodyFacing(body, DT, 8, 1)).toBe(-1)
+	})
+
+	it('still faces travel when a tumble leaves FRONT on the left (180° runner)', () => {
+		// FRONT now points left, but the snail still slides RIGHT down a ramp. The old
+		// projection-onto-runner rule latched backward here; horizontal velocity wins.
+		const body = makeBody({ x: 0, y: 0 })
+		orientRunner(body, Math.PI) // FRONT to the left, cos(angle) < 0
+		setVel(body, BACK, 100, 0) // moving right
+		setVel(body, FRONT, 100, 0)
+		expect(bodyFacing(body, DT, 8, -1)).toBe(-1) // sign(vx)+ * sign(cos)- = -1
+	})
+
+	it('holds the previous facing inside the dead-band', () => {
+		const body = makeBody({ x: 0, y: 0 })
+		setVel(body, BACK, 2, 0) // 2 px/s horizontal, below the 8 px/s dead-band
+		setVel(body, FRONT, 2, 0)
+		expect(bodyFacing(body, DT, 8, 1)).toBe(1)
+		expect(bodyFacing(body, DT, 8, -1)).toBe(-1)
+	})
+
+	it('holds facing on a near-vertical runner (degenerate horizontal facing)', () => {
+		const body = makeBody({ x: 0, y: 0 })
+		orientRunner(body, Math.PI / 2) // runner straight up/down, cos(angle) ~ 0
+		setVel(body, BACK, 0, 200) // dropping fast, no horizontal component
+		setVel(body, FRONT, 0, 200)
+		expect(bodyFacing(body, DT, 8, 1)).toBe(1)
+		expect(bodyFacing(body, DT, 8, -1)).toBe(-1)
+	})
+
+	it('ignores the mast: its wobble cannot flip the facing at low speed', () => {
+		// Runner crawls right; the mast swings hard left on its spring. A whole-body
+		// mean would read leftward; the runner-only velocity stays rightward.
+		const body = makeBody({ x: 0, y: 0 })
+		setVel(body, BACK, 10, 0)
+		setVel(body, FRONT, 10, 0)
+		setVel(body, MAST, -500, 0)
+		expect(bodyFacing(body, DT, 8, -1)).toBe(1)
 	})
 })

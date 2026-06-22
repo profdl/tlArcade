@@ -1,19 +1,21 @@
 import { useEffect, useRef } from 'react'
-import { useEditor, toDomPrecision } from 'tldraw'
+import { useEditor, toDomPrecision, type Editor } from 'tldraw'
 import {
 	makeBody,
 	stepBody,
 	bodyCenter,
 	bodyVelocity,
 	bodyAngle,
+	bodyFacing,
+	PHYSICS,
 	type Body,
 	type ContactEvent,
 } from './physics'
 import { SnailArt, SNAIL_CENTER_OFFSET } from './SnailArt'
-import { collectSegments, collectCheckpoints } from './geometry'
+import { collectSegments, collectCheckpoints, type TrackSegment } from './geometry'
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
 import { createAudioEngine } from './audio'
-import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom } from './state'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom } from './state'
 
 const FIXED_DT = 1 / 120 // physics substep (s)
 const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
@@ -29,12 +31,27 @@ const CAMERA_FOLLOW_LERP = 0.12
 const FLIP_DEG = 90
 const FLIP_HYSTERESIS = 8
 
-// The snail faces +x in its art frame; when it moves "backward" along the runner
-// (velocity projecting negatively onto the BACK->FRONT facing) we mirror the art
-// horizontally so the head leads the direction of travel. A small dead-band on
-// the projected speed (page px/s) keeps a near-stationary snail from strobing its
-// facing as the projection jitters around zero.
+// The snail's head leads the direction of HORIZONTAL travel; bodyFacing mirrors
+// the art on the sign of the runner's horizontal velocity. A small dead-band on
+// that speed (page px/s) keeps a near-stationary snail from strobing its facing
+// as the velocity jitters around zero.
 const FACING_FLIP_SPEED = 8
+
+// Debug overlay (Show Collisions): the stroke color used to draw each kind's
+// collision segments, roughly matching its draw-color legend so the overlay reads
+// against the track. The rig's contact circles use a separate accent below.
+const DEBUG_KIND_COLOR: Record<string, string> = {
+	solid: '#1d1d1d',
+	accelerate: '#e03131',
+	brake: '#f76707',
+	bounce: '#ffc034',
+	sticky: '#ae3ec9',
+	ice: '#4dabf7',
+	oneway: '#4263eb',
+	scenery: '#2f9e44',
+}
+const DEBUG_SEGMENT_COLOR = '#1d1d1d'
+const DEBUG_RIG_COLOR = '#ff1493' // hot pink so the rig circles pop off the track
 
 // The sled overlay. Rendered via components.InFrontOfTheCanvas. A single rAF
 // loop runs continuously: while playing it advances the physics; in all states
@@ -53,12 +70,103 @@ const FACING_FLIP_SPEED = 8
 // like classic Line Rider rather than tumbling — until a hard hit trips its
 // crash state and it ragdolls. We draw the snail character (SnailArt) in a group
 // placed at the runner midpoint, rotated by the runner angle, scaled by zoom.
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+// Reconcile `g`'s direct children to exactly `count` elements of `tag` (pool
+// reusable nodes, create/trim the delta). Pooling avoids thrashing the DOM every
+// frame on a busy track. Returns the live child NodeList for the caller to fill.
+function poolChildren(g: SVGGElement, tag: string, count: number): NodeListOf<ChildNode> {
+	while (g.childElementCount < count) g.appendChild(document.createElementNS(SVG_NS, tag))
+	while (g.childElementCount > count) g.removeChild(g.lastChild as ChildNode)
+	return g.childNodes
+}
+
+/**
+ * Draw the collision debug overlay into `g`, imperatively (no React render in the
+ * rAF loop, matching the snail draw). All geometry is computed in PAGE space and
+ * mapped through pageToViewport so it tracks pan/zoom exactly like the sled.
+ *
+ * `g` holds three child groups, each pooling one element type so reconciliation
+ * stays simple:
+ *  - SEGMENT lines: one per collision segment, colored by kind. Drawn THICK and
+ *    semi-transparent so they read as a highlight OVER the source stroke rather
+ *    than hiding exactly under it (a pencil shape's segments trace the drawn line
+ *    1:1, so a thin opaque line would be invisible — the bug this fixes).
+ *  - VERTEX dots: one per segment endpoint, so you can see where the actual
+ *    collision points sit along the polyline (each pencil/geo vertex).
+ *  - RIG circles: one per sled-rig point at PHYSICS.bodyRadius — the real contact
+ *    surface the sim uses, which is larger than the drawn snail.
+ */
+function drawDebug(
+	groups: { segs: SVGGElement; verts: SVGGElement; rig: SVGGElement },
+	segments: TrackSegment[],
+	body: Body,
+	editor: Editor
+): void {
+	const zoom = editor.getZoomLevel()
+
+	// Segment lines: thick, semi-transparent, kind-colored highlight.
+	const segEls = poolChildren(groups.segs, 'line', segments.length)
+	for (let i = 0; i < segments.length; i++) {
+		const seg = segments[i]
+		const a = editor.pageToViewport(seg.a)
+		const b = editor.pageToViewport(seg.b)
+		const el = segEls[i] as SVGElement
+		el.setAttribute('x1', `${toDomPrecision(a.x)}`)
+		el.setAttribute('y1', `${toDomPrecision(a.y)}`)
+		el.setAttribute('x2', `${toDomPrecision(b.x)}`)
+		el.setAttribute('y2', `${toDomPrecision(b.y)}`)
+		el.setAttribute('stroke', DEBUG_KIND_COLOR[seg.kind] ?? DEBUG_SEGMENT_COLOR)
+		el.setAttribute('stroke-width', '4')
+		el.setAttribute('stroke-opacity', '0.45')
+		el.setAttribute('stroke-linecap', 'round')
+	}
+
+	// Vertex dots at each segment's start, plus the very last segment's end so the
+	// polyline's final point is marked too.
+	const vertEls = poolChildren(groups.verts, 'circle', segments.length > 0 ? segments.length + 1 : 0)
+	for (let i = 0; i < segments.length; i++) {
+		const v = editor.pageToViewport(segments[i].a)
+		const el = vertEls[i] as SVGElement
+		el.setAttribute('cx', `${toDomPrecision(v.x)}`)
+		el.setAttribute('cy', `${toDomPrecision(v.y)}`)
+		el.setAttribute('r', '2')
+		el.setAttribute('fill', DEBUG_KIND_COLOR[segments[i].kind] ?? DEBUG_SEGMENT_COLOR)
+	}
+	if (segments.length > 0) {
+		const last = segments[segments.length - 1]
+		const v = editor.pageToViewport(last.b)
+		const el = vertEls[segments.length] as SVGElement
+		el.setAttribute('cx', `${toDomPrecision(v.x)}`)
+		el.setAttribute('cy', `${toDomPrecision(v.y)}`)
+		el.setAttribute('r', '2')
+		el.setAttribute('fill', DEBUG_KIND_COLOR[last.kind] ?? DEBUG_SEGMENT_COLOR)
+	}
+
+	// Rig contact circles at the true body radius.
+	const rigEls = poolChildren(groups.rig, 'circle', body.points.length)
+	for (let i = 0; i < body.points.length; i++) {
+		const c = editor.pageToViewport(body.points[i].pos)
+		const el = rigEls[i] as SVGElement
+		el.setAttribute('cx', `${toDomPrecision(c.x)}`)
+		el.setAttribute('cy', `${toDomPrecision(c.y)}`)
+		el.setAttribute('r', `${toDomPrecision(PHYSICS.bodyRadius * zoom)}`)
+		el.setAttribute('fill', 'none')
+		el.setAttribute('stroke', DEBUG_RIG_COLOR)
+		el.setAttribute('stroke-width', '1.5')
+	}
+}
+
 export function Rider() {
 	const editor = useEditor()
 	const snailRef = useRef<SVGGElement | null>(null)
 	const snailFullRef = useRef<SVGGElement | null>(null)
 	const snailShellRef = useRef<SVGGElement | null>(null)
 	const startRef = useRef<SVGGElement | null>(null)
+	const debugRef = useRef<SVGGElement | null>(null)
+	const debugSegsRef = useRef<SVGGElement | null>(null)
+	const debugVertsRef = useRef<SVGGElement | null>(null)
+	const debugRigRef = useRef<SVGGElement | null>(null)
 	const bodyRef = useRef<Body>(makeBody(startPointAtom.get()))
 
 	useEffect(() => {
@@ -91,15 +199,27 @@ export function Rider() {
 		// Whether the snail is currently drawn shell-only (flipped). Tracked across
 		// frames so the swap can use hysteresis and only touch the DOM on a change.
 		let shellOnly = false
-		// Horizontal facing of the art: +1 faces +x (along the runner), -1 mirrors it
-		// to lead a reverse run. Tracked across frames so we only flip when the
-		// projected travel speed clears the dead-band, and hold otherwise.
-		let facingX = 1
+		// Horizontal facing of the art: +1 as-authored, -1 mirrored. Tracked across
+		// frames so we only flip when the horizontal travel speed clears the dead-band,
+		// and hold otherwise. Reset to +1 with the body (see makeBody calls below).
+		let facingX: 1 | -1 = 1
 		// Re-seat the sled whenever the start point moves (immediate feedback even
 		// while stopped) or the Reset button bumps the nonce. Track the last-seen
 		// values so we only rebuild on change.
 		let lastStart = startPointAtom.get()
 		let lastReset = resetNonceAtom.get()
+
+		// --- Collision debug overlay -----------------------------------------
+		// When `showCollisionsAtom` is on we draw the physics' actual collision
+		// geometry into `debugRef`. We keep our own segment snapshot for it (rather
+		// than reusing the gameplay `segments`, which only refreshes at run start)
+		// so the overlay reflects track edits live while stopped — re-collected each
+		// frame off the editor. While playing we draw the same `segments` the sim is
+		// running against, so the overlay matches what the sled actually hits. The
+		// rig circles are the body points drawn at PHYSICS.bodyRadius — the real
+		// contact surface, which is larger than the visible snail. We build the DOM
+		// once and mutate it; toggling off just hides the group.
+		let debugWasOn = false
 
 		const tick = (now: number) => {
 			const start = startPointAtom.get()
@@ -108,6 +228,7 @@ export function Rider() {
 				lastStart = start
 				lastReset = reset
 				bodyRef.current = makeBody(start)
+				facingX = 1 // fresh body spawns facing +x; don't inherit last run's facing
 				// Clear last run's telemetry so the panel reads 0 after a reset.
 				statsAtom.set({ distance: 0, speed: 0 })
 			}
@@ -123,6 +244,7 @@ export function Rider() {
 			if (isPlaying && !wasPlaying) {
 				// Run begins: re-seat the sled at the start and re-snapshot the track.
 				bodyRef.current = makeBody(start)
+				facingX = 1 // fresh body spawns facing +x; don't inherit last run's facing
 				segments = collectSegments(editor)
 				checkpoints = collectCheckpoints(editor)
 				collected = new Set<string>()
@@ -254,19 +376,16 @@ export function Rider() {
 				const angleDeg = (angle * 180) / Math.PI
 				const zoom = editor.getZoomLevel()
 
-				// Face the direction of travel. The art faces +x, and `angle` already
-				// aligns that local +x with the runner's BACK->FRONT direction, so we
-				// only need to know whether the snail moves forward or backward ALONG
-				// that facing: project velocity onto the facing unit vector. A reverse
-				// run mirrors the art horizontally (in its own frame) so the head still
-				// leads. Hold the last facing inside a dead-band so a slow/stationary
-				// snail doesn't flicker, and don't reorient while crashed — a
-				// ragdolling snail has no meaningful "forward".
+				// Mirror the art so its head leads the direction of HORIZONTAL travel.
+				// `bodyFacing` flips on the sign of the runner's horizontal velocity
+				// (mast excluded — its upright-spring wobble would otherwise flip the
+				// facing at low speed), corrected for the runner's 180° ambiguity so a
+				// tumble that lands FRONT-on-the-left still faces travel rather than
+				// latching backward. It holds the last value inside a dead-band so a
+				// slow/stationary snail doesn't flicker. Don't reorient while crashed —
+				// a ragdolling snail has no meaningful "forward".
 				if (!body.crashed) {
-					const v = bodyVelocity(body, FIXED_DT)
-					const proj = v.x * Math.cos(angle) + v.y * Math.sin(angle)
-					if (proj > FACING_FLIP_SPEED) facingX = 1
-					else if (proj < -FACING_FLIP_SPEED) facingX = -1
+					facingX = bodyFacing(body, FIXED_DT, FACING_FLIP_SPEED, facingX)
 				}
 
 				snail.setAttribute(
@@ -295,6 +414,32 @@ export function Rider() {
 				}
 			}
 
+			// Collision debug overlay. Draw the segments the sim collides against
+			// and the sled rig's per-point contact circles, all mapped to viewport
+			// coords (same frame as the sled). Hidden — and untouched — when off.
+			const debugG = debugRef.current
+			const segsG = debugSegsRef.current
+			const vertsG = debugVertsRef.current
+			const rigG = debugRigRef.current
+			if (debugG && segsG && vertsG && rigG) {
+				const showDebug = showCollisionsAtom.get()
+				if (!showDebug) {
+					if (debugWasOn) {
+						debugG.setAttribute('display', 'none')
+						debugWasOn = false
+					}
+				} else {
+					if (!debugWasOn) {
+						debugG.removeAttribute('display')
+						debugWasOn = true
+					}
+					// While playing, mirror the sim's snapshot; while stopped, re-collect
+					// each frame so edits to the track show up live.
+					const debugSegs: TrackSegment[] = isPlaying ? segments : collectSegments(editor)
+					drawDebug({ segs: segsG, verts: vertsG, rig: rigG }, debugSegs, bodyRef.current, editor)
+				}
+			}
+
 			raf = requestAnimationFrame(tick)
 		}
 		raf = requestAnimationFrame(tick)
@@ -309,6 +454,15 @@ export function Rider() {
 	// start marker .lr-start-*).
 	return (
 		<svg className="lr-sled-svg" aria-hidden="true">
+			{/* Collision debug overlay (Show Collisions button). The rAF loop fills the
+			    three child groups in viewport coords: kind-colored segment highlights,
+			    vertex dots, and the sled-rig contact circles. Drawn first so the snail
+			    sits on top; the wrapper is hidden via display:none when off. */}
+			<g ref={debugRef} display="none">
+				<g ref={debugSegsRef} />
+				<g ref={debugVertsRef} />
+				<g ref={debugRigRef} />
+			</g>
 			{/* Start marker: a target ring + crosshair at the spawn point, centered on
 			    its own origin so the rAF loop only has to translate the group. */}
 			<g ref={startRef} className="lr-start-marker" opacity="0">

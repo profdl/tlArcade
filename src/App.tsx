@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { Tldraw, type TLComponents, type Editor, useValue } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Rider } from './game/Rider'
-import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom } from './game/state'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom } from './game/state'
 import './App.css'
 
 // How far above the viewport center to drop the sled when "set start" is hit,
@@ -41,6 +41,7 @@ function App() {
 	const playing = useValue('playing', () => playingAtom.get(), [])
 	const follow = useValue('follow', () => followAtom.get(), [])
 	const muted = useValue('muted', () => mutedAtom.get(), [])
+	const showCollisions = useValue('showCollisions', () => showCollisionsAtom.get(), [])
 	const stats = useValue('stats', () => statsAtom.get(), [])
 	const score = useValue('score', () => scoreAtom.get(), [])
 
@@ -127,6 +128,14 @@ function App() {
 					onClick={() => mutedAtom.update((m) => !m)}
 				>
 					{muted ? '🔇' : '🔊'}
+				</button>
+				<button
+					className={showCollisions ? 'lr-btn lr-icon lr-active' : 'lr-btn lr-icon'}
+					title={showCollisions ? 'Hide collision shapes' : 'Show collision shapes'}
+					aria-pressed={showCollisions}
+					onClick={() => showCollisionsAtom.update((s) => !s)}
+				>
+					◎
 				</button>
 				<button
 					className={showLegend ? 'lr-btn lr-icon lr-active' : 'lr-btn lr-icon'}
