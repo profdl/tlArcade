@@ -5,9 +5,11 @@ import {
 	stepBody,
 	bodyCenter,
 	bodyVelocity,
+	bodyAngle,
 	type Body,
 	type ContactEvent,
 } from './physics'
+import { SnailArt, SNAIL_CENTER_OFFSET } from './SnailArt'
 import { collectSegments, collectCheckpoints } from './geometry'
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
 import { createAudioEngine } from './audio'
@@ -19,6 +21,20 @@ const STATS_EVERY = 4 // throttle React stat updates to every Nth frame
 // Fraction of the gap to the sled the camera closes each frame while following.
 // Low enough to glide smoothly, high enough to keep a fast sled on screen.
 const CAMERA_FOLLOW_LERP = 0.12
+
+// Past this rotation from upright (degrees) the snail is "flipped" and we draw
+// just its shell (head/eye/mouth would poke through the line). 90° = the snail's
+// up-vector has crossed the horizon; a small hysteresis band avoids flicker when
+// it settles right at the threshold (see the swap below).
+const FLIP_DEG = 90
+const FLIP_HYSTERESIS = 8
+
+// The snail faces +x in its art frame; when it moves "backward" along the runner
+// (velocity projecting negatively onto the BACK->FRONT facing) we mirror the art
+// horizontally so the head leads the direction of travel. A small dead-band on
+// the projected speed (page px/s) keeps a near-stationary snail from strobing its
+// facing as the projection jitters around zero.
+const FACING_FLIP_SPEED = 8
 
 // The sled overlay. Rendered via components.InFrontOfTheCanvas. A single rAF
 // loop runs continuously: while playing it advances the physics; in all states
@@ -32,13 +48,16 @@ const CAMERA_FOLLOW_LERP = 0.12
 // toggling follow or play never remounts this component (which would reset the
 // rAF loop and snap the sled to the start mid-ride).
 //
-// The sled is a multi-point body (see makeBody): a constraint-solved quad that
-// tumbles. We draw it as an SVG polygon over the body's four points plus a small
-// marker dot at the lead point so its rotation is visible.
+// The sled is a sled rig (see makeBody): a runner base (BACK<->FRONT) that rides
+// the track plus a mast held upright by a spring, so the snail tracks the slope
+// like classic Line Rider rather than tumbling — until a hard hit trips its
+// crash state and it ragdolls. We draw the snail character (SnailArt) in a group
+// placed at the runner midpoint, rotated by the runner angle, scaled by zoom.
 export function Rider() {
 	const editor = useEditor()
-	const polyRef = useRef<SVGPolygonElement | null>(null)
-	const dotRef = useRef<SVGCircleElement | null>(null)
+	const snailRef = useRef<SVGGElement | null>(null)
+	const snailFullRef = useRef<SVGGElement | null>(null)
+	const snailShellRef = useRef<SVGGElement | null>(null)
 	const startRef = useRef<SVGGElement | null>(null)
 	const bodyRef = useRef<Body>(makeBody(startPointAtom.get()))
 
@@ -69,6 +88,13 @@ export function Rider() {
 
 		// Re-snapshot collision geometry each time a run begins.
 		let wasPlaying = false
+		// Whether the snail is currently drawn shell-only (flipped). Tracked across
+		// frames so the swap can use hysteresis and only touch the DOM on a change.
+		let shellOnly = false
+		// Horizontal facing of the art: +1 faces +x (along the runner), -1 mirrors it
+		// to lead a reverse run. Tracked across frames so we only flip when the
+		// projected travel speed clears the dead-band, and hold otherwise.
+		let facingX = 1
 		// Re-seat the sled whenever the start point moves (immediate feedback even
 		// while stopped) or the Reset button bumps the nonce. Track the last-seen
 		// values so we only rebuild on change.
@@ -207,21 +233,65 @@ export function Rider() {
 				}
 			}
 
-			const poly = polyRef.current
-			const dot = dotRef.current
-			if (poly) {
-				const pts = bodyRef.current.points
-				const screenPts = pts.map((p) => editor.pageToViewport(p.pos))
-				poly.setAttribute(
-					'points',
-					screenPts
-						.map((s) => `${toDomPrecision(s.x)},${toDomPrecision(s.y)}`)
-						.join(' ')
+			// Position + orient the snail. We pivot about the body's CENTER (the
+			// centroid of all rig points) so the snail rotates about its middle, not
+			// its base — important when it tumbles after a crash. The art is authored
+			// belly-centered (see SnailArt), so to center the WHOLE graphic on the rig
+			// center (which is where the start marker sits at spawn) we push the art
+			// down by SNAIL_CENTER_OFFSET — the belly-to-visual-center distance — so the
+			// snail's middle lands on the placement point rather than its belly.
+			// Transform order: translate to the body center (in viewport coords) →
+			// rotate by the runner's facing angle → scale by camera zoom → translate the
+			// art down so its visual center sits at the origin. Computing the center and
+			// angle in PAGE space and mapping only the translation through pageToViewport
+			// keeps the rotation correct (page→viewport is a uniform scale + translate,
+			// so it preserves angles); the zoom is applied as an explicit scale here.
+			const snail = snailRef.current
+			if (snail) {
+				const body = bodyRef.current
+				const center = editor.pageToViewport(bodyCenter(body))
+				const angle = bodyAngle(body)
+				const angleDeg = (angle * 180) / Math.PI
+				const zoom = editor.getZoomLevel()
+
+				// Face the direction of travel. The art faces +x, and `angle` already
+				// aligns that local +x with the runner's BACK->FRONT direction, so we
+				// only need to know whether the snail moves forward or backward ALONG
+				// that facing: project velocity onto the facing unit vector. A reverse
+				// run mirrors the art horizontally (in its own frame) so the head still
+				// leads. Hold the last facing inside a dead-band so a slow/stationary
+				// snail doesn't flicker, and don't reorient while crashed — a
+				// ragdolling snail has no meaningful "forward".
+				if (!body.crashed) {
+					const v = bodyVelocity(body, FIXED_DT)
+					const proj = v.x * Math.cos(angle) + v.y * Math.sin(angle)
+					if (proj > FACING_FLIP_SPEED) facingX = 1
+					else if (proj < -FACING_FLIP_SPEED) facingX = -1
+				}
+
+				snail.setAttribute(
+					'transform',
+					`translate(${toDomPrecision(center.x)},${toDomPrecision(center.y)}) rotate(${toDomPrecision(angleDeg)}) scale(${toDomPrecision(facingX * zoom)},${toDomPrecision(zoom)}) translate(0,${toDomPrecision(SNAIL_CENTER_OFFSET)})`
 				)
-				if (dot) {
-					// Marker at the body's lead point (index 1) so rotation reads.
-					dot.setAttribute('cx', `${toDomPrecision(screenPts[1].x)}`)
-					dot.setAttribute('cy', `${toDomPrecision(screenPts[1].y)}`)
+				// Flash a warmer tint while crashed so a wipeout reads at a glance.
+				snail.setAttribute('opacity', body.crashed ? '0.85' : '1')
+
+				// How far the snail has rotated from upright (deg, 0..180). The art faces
+				// +x with -y as up; rotating by angleDeg, the tilt from upright is just
+				// angleDeg reduced to [-180,180] and made positive — 0 = upright, 180 =
+				// upside-down. The horizontal facing flip (scale x by -1) mirrors
+				// left/right only and leaves "up" unchanged, so tilt reads off angleDeg
+				// regardless of which way the snail faces. Past FLIP_DEG the head/eye/
+				// mouth dip below the shell and would clip the line, so we show the shell
+				// alone. Hysteresis: once flipped, stay flipped until it recovers past
+				// FLIP_DEG-band (and vice versa) so a snail resting near the threshold
+				// doesn't strobe.
+				const tiltDeg = Math.abs(((angleDeg + 180) % 360 + 360) % 360 - 180)
+				const nextShellOnly = shellOnly ? tiltDeg > FLIP_DEG - FLIP_HYSTERESIS : tiltDeg > FLIP_DEG
+				if (nextShellOnly !== shellOnly) {
+					shellOnly = nextShellOnly
+					if (snailFullRef.current) snailFullRef.current.style.display = shellOnly ? 'none' : ''
+					if (snailShellRef.current) snailShellRef.current.style.display = shellOnly ? '' : 'none'
 				}
 			}
 
@@ -234,8 +304,9 @@ export function Rider() {
 		}
 	}, [editor])
 
-	// Full-viewport SVG overlay; the rAF loop writes the polygon/dot geometry in
-	// screen space each frame. Static appearance lives in App.css (.lr-sled-*).
+	// Full-viewport SVG overlay; the rAF loop writes the snail group's transform in
+	// screen space each frame. Static appearance lives in App.css (.lr-snail / the
+	// start marker .lr-start-*).
 	return (
 		<svg className="lr-sled-svg" aria-hidden="true">
 			{/* Start marker: a target ring + crosshair at the spawn point, centered on
@@ -245,8 +316,20 @@ export function Rider() {
 				<line className="lr-start-cross" x1={-16} y1={0} x2={16} y2={0} />
 				<line className="lr-start-cross" x1={0} y1={-16} x2={0} y2={16} />
 			</g>
-			<polygon ref={polyRef} className="lr-sled-body" points="" />
-			<circle ref={dotRef} className="lr-sled-dot" r={3} />
+			{/* The snail. The rAF loop sets this group's transform (position/rotation/
+			    zoom); SnailArt draws the character in a belly-centered, +x-facing local
+			    frame. We render BOTH the full snail and a shell-only variant and let the
+			    loop toggle which is shown: when the snail rotates past ~90° (upside-down)
+			    its head/eye/mouth would poke through the line, so we show just the
+			    rounded shell — the part the collision radius keeps off the line. */}
+			<g ref={snailRef} className="lr-snail">
+				<g ref={snailFullRef}>
+					<SnailArt />
+				</g>
+				<g ref={snailShellRef} style={{ display: 'none' }}>
+					<SnailArt shellOnly />
+				</g>
+			</g>
 		</svg>
 	)
 }

@@ -64,12 +64,18 @@ function App() {
 		playingAtom.set(next)
 	}, [editor])
 
-	// Reset: stop any in-progress run (restoring editing) and re-seat the sled at
-	// the start point. Bumping the nonce makes the rider rebuild its body even
-	// though the start point itself didn't move.
+	// Reset: stop any in-progress run (restoring editing), re-seat the sled at the
+	// start point, and recenter the camera there. Bumping the nonce makes the rider
+	// rebuild its body even though the start point itself didn't move.
 	const handleReset = useCallback(() => {
-		if (editor && playingAtom.get()) {
-			editor.run(() => editor.updateInstanceState({ isReadonly: false }), { history: 'ignore' })
+		if (editor) {
+			editor.run(
+				() => {
+					if (playingAtom.get()) editor.updateInstanceState({ isReadonly: false })
+					editor.centerOnPoint(startPointAtom.get())
+				},
+				{ history: 'ignore' }
+			)
 		}
 		playingAtom.set(false)
 		resetNonceAtom.update((n) => n + 1)

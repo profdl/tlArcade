@@ -69,25 +69,69 @@ export const PHYSICS = {
 	// Default surface drag when riding a solid line. Line Rider lines are
 	// near-frictionless, so this is tiny: 'ice' (0) still reads as slicker and
 	// 'sticky' as much grippier than a plain line. It must stay small because the
-	// in-game sled is a 4-point body: this drag fires per CONTACTING point and the
-	// constraint solve then spreads it across the whole rig, so a value that feels
+	// in-game sled is a multi-point rig: this drag fires per CONTACTING point and
+	// the constraint solve then spreads it across the whole rig, so a value that feels
 	// gentle on the single-point step() (the unit-test path) compounds on the body
 	// and can stall it dead on a flat line or cancel gravity on a gentle downhill —
 	// which is what made solid/accelerate feel wrong while bounce/sticky (meant to
 	// be dramatic) felt fine. See the slope probe in the fix that set this.
 	surfaceFriction: 0.004,
-	riderRadius: 6, // collision radius of the sled point
+	riderRadius: 6, // collision radius of a single sled point (the step() primitive)
+	// Collision radius used for the multi-point sled BODY. The drawn snail is much
+	// larger than a 6px point and is centered on the rig center, so a tiny radius
+	// lets the visible art sink through lines on contact. We grow the body's contact
+	// surface to reach the snail's DRAWN silhouette: it's centered on the rig center
+	// with a visible half-height of ~24.97px (SnailArt.SNAIL_HALF_HEIGHT) and the
+	// runner line sits sledMast/3 below center, so the radius that lands the contact
+	// surface on the visible belly is ~24.97 - 14/3 ≈ 20.3. Kept in sync by hand
+	// (physics stays free of the TSX art module). Only the body uses this; the
+	// single-point step() keeps riderRadius, so its tests/feel are unchanged. A
+	// bigger radius RAISES the tunneling threshold (2*r/FIXED_DT) so it's safe
+	// against tunneling; it rounds corners a touch more, fine for a body this size.
+	bodyRadius: 20,
 	contactSkin: 0.75, // band beyond riderRadius still treated as "riding" the line
 	maxSpeed: 4000, // clamp to avoid tunneling/explosions
 	accelerateBoost: 2400, // px/s^2 tangential acceleration added along 'accelerate' lines
 	// px/s; accelerate lines stop boosting past this. Kept below the tunneling
-	// threshold (2*riderRadius / FIXED_DT = 1440 px/s here) so boosted sleds don't
+	// threshold (2*riderRadius / FIXED_DT = 4800 px/s here) so boosted sleds don't
 	// shoot through thin lines in a single step.
 	accelerateMaxSpeed: 1300,
 	brakeDrag: 0.2, // fraction of tangential speed removed per step on 'brake' lines
 	bounceRestitution: 0.85, // restitution for 'bounce' lines (springy; 0=none, 1=elastic)
 	stickyFriction: 0.45, // tangential drag fraction on 'sticky' lines (strong grip)
 	iceFriction: 0.0, // tangential drag on 'ice' lines (perfectly frictionless glide)
+
+	// --- Sled rig (classic Line Rider feel) ---------------------------------
+	// The body is a SLED, not a free-tumbling quad: a rigid base (two runner
+	// points) plus a mast point held above the base midpoint by an upright spring.
+	// The runner edge tracks the slope it rides; the mast keeps it from flipping —
+	// until a hard hit trips the crash state, which kills the spring so it ragdolls.
+	// Half-length of the runner base. Kept compact (close to the old quad's
+	// footprint) so the rig doesn't catch a long base on convex corners — a wide
+	// rigid runner snags edges a small body rolls over. Don't grow this without
+	// re-checking corner snagging.
+	sledRunner: 11, // half-length of the runner base (front<->back), px
+	sledMast: 14, // height of the mast point above the base midpoint, px
+	// Upright restoring spring: each step we rotate the mast a fraction of the way
+	// back toward "above the runner, opposing gravity". 0 = no righting (free
+	// tumble), 1 = snaps upright instantly. Soft enough to pivot OVER bumps/corners
+	// (a stiff spring fights the pivot and jams the rig on a seam) while still
+	// keeping it upright on open track and recovering after jumps.
+	uprightStiffness: 0.12,
+	// Crash triggers. The sled ragdolls (upright spring off) for the rest of the
+	// run once either fires:
+	//  - a runner point's inbound impact speed exceeds this (px/s): slamming a wall
+	crashImpactSpeed: 1700,
+	//  - the body's angular speed exceeds this (rad/s): spun out / over-rotated
+	crashSpin: 16,
+	// ...but only after it has spun that fast for this many CONSECUTIVE substeps.
+	// A hard landing snaps the runner from flat to slope-aligned in one frame (a
+	// brief spin spike); requiring a streak distinguishes that transient settle
+	// from a genuine tumble, so the rig doesn't "crash" just from landing.
+	crashSpinFrames: 4,
+	// How far past vertical (radians) the mast may tilt before it counts as
+	// "tipped over" and crashes. ~75deg: rides steep ramps, crashes on a flip.
+	crashTilt: 1.3,
 }
 
 // Below this we treat a displacement as zero (avoid divide-by-zero / NaN).
@@ -227,9 +271,10 @@ function resolveCollisions(
 	dt: number,
 	applyKindEffects: boolean,
 	suppressBounce = false,
-	contacts?: ContactEvent[]
+	contacts?: ContactEvent[],
+	radius = PHYSICS.riderRadius
 ): void {
-	const r = PHYSICS.riderRadius
+	const r = radius
 	// A sled resting on a line settles at exactly dist == r. Treat a thin band
 	// beyond r as still "in contact" so surface friction and kind-based effects
 	// (accelerate / oneway) keep engaging while the sled rides the line, not
@@ -382,13 +427,16 @@ export function velocity(state: RiderState, dt: number): Vec2 {
 	}
 }
 
-// --- Multi-point sled body --------------------------------------------------
-// A real Line Rider sled is a rigid-ish body that can tumble, not a single
-// point. We model it as a small set of point masses joined by distance
-// constraints (a "Verlet rig"): each point collides exactly like the single
-// rider above, and constraints solved between collision passes hold the shape
-// together. Reusing integrate()/resolveCollisions() keeps one collision code
-// path, so every line behavior works on the body for free.
+// --- Multi-point sled rig ---------------------------------------------------
+// A Line Rider sled rides upright and tracks the slope, not a single point and
+// not a free-tumbling box. We model it as a small set of point masses joined by
+// distance constraints (a "Verlet rig"): a runner base that contacts the track
+// plus a mast point held above it by an UPRIGHT SPRING (applyUpright), which is
+// the righting moment that keeps it from flipping. A hard hit latches `crashed`,
+// switching the spring off so the rig ragdolls. Each point collides exactly like
+// the single rider above, and constraints solved between collision passes hold
+// the shape together — reusing integrate()/resolveCollisions() keeps one
+// collision code path, so every line behavior works on the body for free.
 
 /** A distance constraint holding two body points at a fixed rest length. */
 export interface Constraint {
@@ -399,37 +447,141 @@ export interface Constraint {
 	stiffness: number
 }
 
-/** A multi-point sled: point masses joined by distance constraints. */
+/**
+ * A sled body — the classic Line Rider rig. Three point masses:
+ *  - points[BACK] / points[FRONT]: the two ends of the runner base (what rides
+ *    the track). The runner edge tracks the slope it sits on.
+ *  - points[MAST]: held above the base midpoint by the upright spring, so the
+ *    sled resists tumbling and stays upright as it rides.
+ * `crashed` latches true on a hard hit / over-rotation: the upright spring then
+ * switches off and the rig ragdolls (free tumble) for the rest of the run.
+ * `spinStreak` counts consecutive substeps the body has been spinning fast, so a
+ * brief landing-settling spike doesn't read as a crash — only a sustained spin
+ * (a real tumble) does.
+ */
 export interface Body {
 	points: RiderState[]
 	constraints: Constraint[]
+	crashed: boolean
+	spinStreak: number
+}
+
+// Named indices into Body.points for the sled rig.
+export const BACK = 0
+export const FRONT = 1
+export const MAST = 2
+
+/**
+ * Build a sled body: a rigid runner base (BACK<->FRONT) with a mast point above
+ * its midpoint. `center` is the spawn point. The sled spawns facing +x (the
+ * direction of travel) and upright (mast above, in screen coords -y).
+ */
+export function makeBody(center: Vec2): Body {
+	const half = PHYSICS.sledRunner
+	const mast = PHYSICS.sledMast
+	const points = [
+		makeRider({ x: center.x - half, y: center.y }), // BACK runner
+		makeRider({ x: center.x + half, y: center.y }), // FRONT runner
+		makeRider({ x: center.x, y: center.y - mast }), // MAST (above midpoint)
+	]
+	const dist = (a: number, b: number) => Math.hypot(points[a].pos.x - points[b].pos.x, points[a].pos.y - points[b].pos.y)
+	const edge = 1 // runner is fully rigid
+	const arm = 0.9 // mast arms slightly softer so the constraint solve stays stable
+	const constraints: Constraint[] = [
+		{ i: BACK, j: FRONT, rest: dist(BACK, FRONT), stiffness: edge },
+		{ i: BACK, j: MAST, rest: dist(BACK, MAST), stiffness: arm },
+		{ i: FRONT, j: MAST, rest: dist(FRONT, MAST), stiffness: arm },
+	]
+	return { points, constraints, crashed: false, spinStreak: 0 }
 }
 
 /**
- * Build a default sled body: a small rigid quad (4 points) braced by its two
- * diagonals so it holds a roughly square shape while tumbling. `center` is the
- * spawn point; `size` is the half-extent of the quad.
+ * The sled's facing angle (radians): the direction of the runner base from BACK
+ * to FRONT. 0 = riding flat facing +x; tracks the slope as the runner sits on a
+ * line. Used to orient the drawn character.
  */
-export function makeBody(center: Vec2, size = PHYSICS.riderRadius * 2): Body {
-	const offsets: Vec2[] = [
-		{ x: -size, y: -size },
-		{ x: size, y: -size },
-		{ x: size, y: size },
-		{ x: -size, y: size },
-	]
-	const points = offsets.map((o) => makeRider({ x: center.x + o.x, y: center.y + o.y }))
-	const dist = (a: number, b: number) => Math.hypot(points[a].pos.x - points[b].pos.x, points[a].pos.y - points[b].pos.y)
-	const edge = 1 // edges fully rigid
-	const brace = 0.8 // diagonals slightly softer so the solve stays stable
-	const constraints: Constraint[] = [
-		{ i: 0, j: 1, rest: dist(0, 1), stiffness: edge },
-		{ i: 1, j: 2, rest: dist(1, 2), stiffness: edge },
-		{ i: 2, j: 3, rest: dist(2, 3), stiffness: edge },
-		{ i: 3, j: 0, rest: dist(3, 0), stiffness: edge },
-		{ i: 0, j: 2, rest: dist(0, 2), stiffness: brace },
-		{ i: 1, j: 3, rest: dist(1, 3), stiffness: brace },
-	]
-	return { points, constraints }
+export function bodyAngle(body: Body): number {
+	const a = body.points[BACK].pos
+	const b = body.points[FRONT].pos
+	return Math.atan2(b.y - a.y, b.x - a.x)
+}
+
+/**
+ * Rotate the mast back toward upright (above the runner midpoint, opposing
+ * gravity) by `uprightStiffness`. This is the righting moment that keeps the
+ * sled from tumbling: the mast's rest position is perpendicular to the runner,
+ * on the side away from gravity. We move the mast point (and counter-move the
+ * runner, conserving the center of mass) a fraction of the way there each step.
+ * No-op once crashed, so a crashed sled tumbles freely. Mutates `body`.
+ */
+function applyUpright(body: Body): void {
+	if (body.crashed) return
+	const back = body.points[BACK]
+	const front = body.points[FRONT]
+	const m = body.points[MAST]
+	const midx = (back.pos.x + front.pos.x) * 0.5
+	const midy = (back.pos.y + front.pos.y) * 0.5
+	// Runner tangent (BACK->FRONT), normalized.
+	let tx = front.pos.x - back.pos.x
+	let ty = front.pos.y - back.pos.y
+	const tlen = Math.hypot(tx, ty)
+	if (tlen < EPSILON) return
+	tx /= tlen
+	ty /= tlen
+	// Two perpendiculars to the runner; pick the one pointing AWAY from gravity
+	// (more negative y = "up" in screen space) as the upright direction.
+	const upx = ty
+	const upy = -tx
+	const upDir = upy <= 0 ? { x: upx, y: upy } : { x: -upx, y: -upy }
+	// Where the mast should sit: above the midpoint along upDir at the rest height.
+	const targetx = midx + upDir.x * PHYSICS.sledMast
+	const targety = midy + upDir.y * PHYSICS.sledMast
+	// Move the mast a fraction toward the target; counter-move the runner ends by
+	// half each (conserving COM) so the whole rig rotates rather than translating.
+	const dx = (targetx - m.pos.x) * PHYSICS.uprightStiffness
+	const dy = (targety - m.pos.y) * PHYSICS.uprightStiffness
+	m.pos.x += dx
+	m.pos.y += dy
+	back.pos.x -= dx * 0.5
+	back.pos.y -= dy * 0.5
+	front.pos.x -= dx * 0.5
+	front.pos.y -= dy * 0.5
+}
+
+/**
+ * Decide whether this step's events should crash the sled (latch ragdoll mode):
+ *  - the mast has tilted more than `crashTilt` from upright (flipped over), or
+ *  - the body is spinning faster than `crashSpin` (rad/s).
+ * Returns true to crash. Cheap; called once per step. (Hard wall slams surface
+ * via the spin/tilt that the impact induces, so we don't need a separate
+ * per-contact impact probe here.)
+ */
+function shouldCrash(body: Body, prevAngle: number, dt: number): boolean {
+	if (body.crashed) return false
+	// Tilt: angle of the mast above the midpoint vs. true up. A genuine flip-over
+	// crashes immediately (no streak needed — you're upside down).
+	const back = body.points[BACK]
+	const front = body.points[FRONT]
+	const m = body.points[MAST]
+	const midx = (back.pos.x + front.pos.x) * 0.5
+	const midy = (back.pos.y + front.pos.y) * 0.5
+	const mx = m.pos.x - midx
+	const my = m.pos.y - midy
+	const mlen = Math.hypot(mx, my)
+	if (mlen > EPSILON) {
+		// Angle between mast direction and straight up (0,-1).
+		const tilt = Math.acos(Math.max(-1, Math.min(1, -my / mlen)))
+		if (tilt > PHYSICS.crashTilt) return true
+	}
+	// Angular speed from the change in runner facing this step. A hard LANDING
+	// spins the runner for a frame or two as it snaps onto the slope; only a
+	// SUSTAINED fast spin (held for crashSpinFrames substeps) is a real tumble.
+	let dAng = bodyAngle(body) - prevAngle
+	while (dAng > Math.PI) dAng -= 2 * Math.PI
+	while (dAng < -Math.PI) dAng += 2 * Math.PI
+	if (Math.abs(dAng / dt) > PHYSICS.crashSpin) body.spinStreak++
+	else body.spinStreak = 0
+	return body.spinStreak >= PHYSICS.crashSpinFrames
 }
 
 /** The body's center of mass (average of its points). Used for camera/stats. */
@@ -477,7 +629,7 @@ function solveConstraint(body: Body, c: Constraint): void {
 /**
  * Detect whether the body is contacting a 'bounce' segment this step, and if so
  * return the contact normal (pointing from the line toward the body). Only the
- * bottom one or two points of a tumbling quad touch a line, so per-point
+ * runner points touch a line, so per-point
  * restitution inside resolveCollisions reflects just those points while the
  * non-contacting points keep their full downward velocity — the constraint solve
  * then averages the rebound away to nearly zero. So bounce is handled at the body
@@ -486,7 +638,7 @@ function solveConstraint(body: Body, c: Constraint): void {
  * Returns null when no point is in contact with a bounce line.
  */
 function bounceContactNormal(body: Body, segments: Segment[]): { n: Vec2; strength: number } | null {
-	const contact = PHYSICS.riderRadius + PHYSICS.contactSkin
+	const contact = PHYSICS.bodyRadius + PHYSICS.contactSkin
 	for (const seg of segments) {
 		if (seg.kind !== 'bounce') continue
 		for (const p of body.points) {
@@ -520,11 +672,12 @@ export function stepBody(
 	dt: number,
 	contacts?: ContactEvent[]
 ): Body {
+	const prevAngle = bodyAngle(body)
 	for (const p of body.points) integrate(p, dt)
 
 	// Bounce is a whole-body effect: sample the body's normal velocity into a
 	// bounce line BEFORE collisions flatten it, so we can re-launch the whole rig
-	// after. (Per-point restitution alone barely moves a 4-point body — see
+	// after. (Per-point restitution alone barely moves the rig — see
 	// bounceContactNormal.)
 	const bounce = bounceContactNormal(body, segments)
 	let vnBefore = 0
@@ -536,12 +689,16 @@ export function stepBody(
 	const ITERATIONS = 4 // more passes than the point sled: shape + contacts to settle
 	for (let iter = 0; iter < ITERATIONS; iter++) {
 		for (const c of body.constraints) solveConstraint(body, c)
+		// Righting moment: nudge the mast back toward upright between constraint
+		// and collision passes, so the sled tracks the slope without tumbling. A
+		// no-op once crashed, so a crashed sled ragdolls freely.
+		applyUpright(body)
 		const last = iter === ITERATIONS - 1
 		// suppressBounce: bounce is re-applied at the body level below, so don't
 		// also reflect it per point (that would double the impulse, gaining energy).
 		// Collect contacts only on the last pass; every point reports, so the audio
 		// layer sees each surface the body touches (it dedupes by kind/shape).
-		for (const p of body.points) resolveCollisions(p, segments, dt, last, true, last ? contacts : undefined)
+		for (const p of body.points) resolveCollisions(p, segments, dt, last, true, last ? contacts : undefined, PHYSICS.bodyRadius)
 	}
 
 	// Re-launch the body off the bounce line. Set the center-of-mass normal
@@ -562,5 +719,12 @@ export function stepBody(
 	}
 
 	for (const p of body.points) clampSpeed(p, dt)
+
+	// Latch the crash state after the step settles: if the sled flipped past
+	// `crashTilt` or spun faster than `crashSpin`, switch off the upright spring
+	// for the rest of the run so it ragdolls. Checked last so it sees the resolved
+	// post-collision pose (a wall slam shows up as the induced spin/tilt).
+	if (!body.crashed && shouldCrash(body, prevAngle, dt)) body.crashed = true
+
 	return body
 }

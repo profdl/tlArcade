@@ -44,14 +44,17 @@ src/
                        boxes that respect note rotation).
     checkpoints.ts     Pure checkpoint hit-testing (point-in-oriented-box,
                        scored once).
-    physics.ts         The sim: a multi-point sled body (constraint-solved quad)
+    physics.ts         The sim: a sled rig (runner base + upright-sprung mast)
                        under gravity, colliding against line segments (Verlet
-                       integration). Honors each segment's kind. Also exports the
-                       single-point rider primitives the body is built from.
-    physics.test.ts    Vitest unit tests for the sim (point + body).
+                       integration). Tracks the slope upright, ragdolls on a hard
+                       crash. Honors each segment's kind. Also exports the
+                       single-point rider primitives the rig is built from.
+    physics.test.ts    Vitest unit tests for the sim (point + rig + crash).
+    SnailArt.tsx       The snail character SVG, normalized to a belly-centered,
+                       +x-facing local frame the rig places each frame.
     Rider.tsx          Snapshots segments + checkpoints on play, runs a
-                       fixed-timestep rAF loop, and draws the sled body as an SVG
-                       polygon overlay positioned via pageToViewport.
+                       fixed-timestep rAF loop, and draws the snail as an SVG
+                       group positioned/rotated via pageToViewport + bodyAngle.
 ```
 
 ### Line types (by shape color)
@@ -70,10 +73,12 @@ at half strength (a weaker version of the same effect).
 
 ## Where to take it next
 
-- **A real sled** *(done)*: the sled is a 4-point constraint-solved quad
-  (`makeBody` / `stepBody` in [physics.ts](src/game/physics.ts)) that tumbles
-  down the track. Each point collides with the same code path as the original
-  single point, so every line behavior applies to the body unchanged.
+- **A real sled** *(done)*: the rider is a sled rig — a runner base plus an
+  upright-sprung mast (`makeBody` / `stepBody` in [physics.ts](src/game/physics.ts))
+  that rides upright and tracks the slope like classic Line Rider, then ragdolls
+  on a hard crash (`crashed`). The snail character (`SnailArt`) is drawn over the
+  rig. Each point collides with the same code path as the original single point,
+  so every line behavior applies to the rig unchanged.
 - **Scoring** *(done)*: drop **sticky-note shapes** as flags; the sled collects
   each the first time it passes through, and the panel shows a `collected/total`
   count. See [checkpoints.ts](src/game/checkpoints.ts) (pure hit-test) and

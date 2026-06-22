@@ -15,22 +15,10 @@
 	pointer-events: none;
 	z-index: 300;
 }
-.lr-sled-body {
-	fill: rgba(66, 99, 235, 0.9);
-	stroke: #2b4acb;
-	stroke-width: 2.5;
-	/* Round the joins and lift the body off the track with a soft shadow so it
-	   reads as a solid little sled rather than a flat blue square. */
-	stroke-linejoin: round;
-	stroke-linecap: round;
-	filter: drop-shadow(0 1px 2px rgba(43, 74, 203, 0.35));
-}
-/* Lead-point marker: a bright dot at the body's heading corner so its rotation
-   and direction of travel are legible as it tumbles. */
-.lr-sled-dot {
-	fill: #fff;
-	stroke: #2b4acb;
-	stroke-width: 2;
+/* The snail character. The rAF loop sets its transform; we just lift it off the
+   track with a soft shadow so it reads as sitting ON the line, not behind it. */
+.lr-snail {
+	filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
 }
 
 /* Start marker: a target ring + crosshair pinned to the spawn point while

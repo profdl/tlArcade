@@ -1,235 +1,182 @@
-// Web Audio surface sounds for the sled. Framework-free (no React, no tldraw):
-// the Rider rAF loop owns this engine and feeds it contact events that the pure
+// Piano surface sounds for the sled, voiced with the Salamander Grand piano via
+// @tonejs/piano (on top of Tone.js). Framework-free (no React, no tldraw): the
+// Rider rAF loop owns this engine and feeds it the contact events the pure
 // physics sim reports (see ContactEvent in physics.ts). The sim stays silent;
 // all sound lives here.
 //
-// Two voices per surface kind:
-//   - impact: a one-shot fired when the sled NEWLY touches a surface (the Rider
-//     does the enter-detection; we just play a burst).
-//   - ride: a sustained voice that hums/scrapes while the sled stays in contact,
-//     its gain/pitch scaled by speed. setRide() each frame ramps the present
-//     kinds up and the absent ones down.
+// Because a piano is a pitched, struck instrument (not a drone), surfaces are
+// sonified as NOTES rather than the old noise/oscillator timbres:
+//   - impact: a struck note fired when the sled NEWLY touches a surface (the
+//     Rider does the enter-detection; we just play the note). Velocity scales
+//     with entry speed.
+//   - ride: while the sled stays in contact, we retrigger a soft note on a
+//     speed-scaled cadence — faster riding = notes more often + a little louder —
+//     so a sustained ride reads as a run of notes instead of silence.
 //
-// Kind picks the timbre; the native shape type (draw/line/geo/arrow) nudges the
-// pitch and (for arrow) the waveform, so the kind stays recognizable while each
-// shape sounds a little different.
+// Each LineKind owns a base octave and a small scale; faster contact climbs the
+// scale, so a kind keeps its register (ice high, sticky low...) while speed
+// gives it melodic motion. The native shape type nudges the note up a few
+// scale-degrees so draw/line/geo/arrow on the same kind don't all play in unison.
+//
+// Samples stream from the library's default CDN (tambien.github.io) on first
+// load; the browser caches them after. load() is async and we simply skip all
+// sound until it resolves — the sim is unaffected either way.
 
+import { Piano } from '@tonejs/piano'
+import * as Tone from 'tone'
 import type { ContactEvent, LineKind } from './physics'
 
 // All tunables live here (mirrors the PHYSICS object) — no inline literals.
 export const AUDIO = {
-	masterGain: 0.5, // overall output level (pre-mute)
-	rampTime: 0.04, // s; gain/pitch glide so voices don't click on/off
+	masterVolumeDb: -6, // overall piano output level in dB (pre-mute)
+	mutedVolumeDb: -60, // master level while muted (a deep fade, not a hard cut)
 	muteRampTime: 0.08, // s; master fade for the mute toggle
-	impactGain: 0.5, // peak gain of a one-shot impact
-	impactDecay: 0.18, // s; how fast an impact tails off
-	// Speed (px/s) at which a ride voice reaches full volume. Below this, volume
-	// scales linearly with speed; above, it's clamped. Keeps a slow crawl quiet.
-	rideFullSpeed: 900,
-	rideMaxGain: 0.35, // peak gain of a sustained ride voice at full speed
-	// How much ride pitch rises with speed, in cents at rideFullSpeed (accelerate
-	// uses a stronger value below). 1200 cents = one octave.
-	ridePitchCents: 200,
-	// Per-shape pitch offset in semitones, applied to both impact and ride. arrow
-	// also swaps to a square wave for a buzzier edge (see waveForShape).
-	shapeSemitones: { draw: 0, line: 4, geo: -3, arrow: 7 } as Record<string, number>,
+	velocities: 4, // sampled velocity layers to load (higher = bigger download)
+	// Speed (px/s) at which a contact reaches full velocity / climbs to the top of
+	// its kind's scale. Below this, both scale linearly; above, they clamp. Keeps a
+	// slow crawl quiet and low-pitched.
+	fullSpeed: 900,
+	impactMinVel: 0.3, // note velocity (0..1) of the slowest audible impact
+	impactMaxVel: 0.9, // note velocity of a full-speed impact
+	rideMinVel: 0.12, // note velocity of the quietest ride retrigger
+	rideMaxVel: 0.4, // note velocity of a full-speed ride retrigger
+	// How often a sustained ride retriggers, in seconds. Slow riding uses the slow
+	// interval, full speed the fast one — a speed-scaled note cadence.
+	rideIntervalSlow: 0.32,
+	rideIntervalFast: 0.09,
+	// Per-shape offset in scale-degrees, so draw/line/geo/arrow differ on one kind.
+	shapeDegrees: { draw: 0, line: 1, geo: -1, arrow: 2 } as Record<string, number>,
+} as const
+
+// Per-kind musical recipe: a root MIDI note and a scale (semitone offsets from
+// the root). Speed selects an index into the scale, so each kind keeps its
+// register while climbing as the sled goes faster. Tuned by ear.
+//   60 = C4. Pentatonic/triad scales avoid dissonance when several kinds overlap.
+interface KindNotes {
+	root: number // MIDI note of the scale's bottom degree
+	scale: number[] // semitone offsets; index chosen by speed
 }
 
-// Per-kind voice recipe. `osc`/`noise` select the sound source; `base` is the
-// fundamental in Hz for tonal kinds. Tune by ear.
-interface KindVoice {
-	source: 'osc' | 'noise'
-	wave: OscillatorType // for osc kinds
-	base: number // Hz fundamental (osc) / filter center (noise)
-	filterType: BiquadFilterType // shapes the noise / tames the osc
-	filterQ: number
-	pitchCents: number // ride pitch sensitivity to speed (overrides AUDIO default)
-}
+const MAJOR_PENT = [0, 2, 4, 7, 9, 12]
+const MINOR_PENT = [0, 3, 5, 7, 10, 12]
 
-const KIND_VOICE: Record<LineKind, KindVoice> = {
-	// soft low scrape
-	solid: { source: 'noise', wave: 'sawtooth', base: 1200, filterType: 'bandpass', filterQ: 0.8, pitchCents: 200 },
+const KIND_NOTES: Record<LineKind, KindNotes> = {
+	// plain line: mid major pentatonic
+	solid: { root: 60, scale: MAJOR_PENT },
 	// oneway is a solid that only blocks one side — same voice.
-	oneway: { source: 'noise', wave: 'sawtooth', base: 1200, filterType: 'bandpass', filterQ: 0.8, pitchCents: 200 },
-	// rising tone that climbs hard with speed
-	accelerate: { source: 'osc', wave: 'sawtooth', base: 220, filterType: 'lowpass', filterQ: 1, pitchCents: 900 },
-	// low gritty grind
-	brake: { source: 'noise', wave: 'sawtooth', base: 500, filterType: 'lowpass', filterQ: 1.2, pitchCents: 120 },
-	// short pitched boing (mostly an impact; ride is faint)
-	bounce: { source: 'osc', wave: 'sine', base: 330, filterType: 'lowpass', filterQ: 1, pitchCents: 300 },
-	// dull damped low thud
-	sticky: { source: 'osc', wave: 'triangle', base: 150, filterType: 'lowpass', filterQ: 0.7, pitchCents: 120 },
-	// bright airy high glide
-	ice: { source: 'osc', wave: 'sine', base: 1400, filterType: 'highpass', filterQ: 0.7, pitchCents: 350 },
+	oneway: { root: 60, scale: MAJOR_PENT },
+	// accelerate: a bright rising major run, an octave up
+	accelerate: { root: 72, scale: [0, 2, 4, 5, 7, 9, 11, 12] },
+	// brake: low, dark minor pentatonic
+	brake: { root: 43, scale: MINOR_PENT },
+	// bounce: a sparkly high triad
+	bounce: { root: 76, scale: [0, 4, 7, 12, 16] },
+	// sticky: very low, dull
+	sticky: { root: 36, scale: MINOR_PENT },
+	// ice: airy, high
+	ice: { root: 84, scale: MAJOR_PENT },
 	// scenery never collides, so it never sounds — present for type completeness.
-	scenery: { source: 'osc', wave: 'sine', base: 440, filterType: 'lowpass', filterQ: 1, pitchCents: 0 },
+	scenery: { root: 60, scale: MAJOR_PENT },
 }
 
-function semitonesToRatio(semitones: number): number {
-	return Math.pow(2, semitones / 12)
+const MIDI_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+/** MIDI note number -> scientific pitch name (e.g. 60 -> "C4"). */
+function midiToNote(midi: number): string {
+	const clamped = Math.max(21, Math.min(108, Math.round(midi))) // piano range A0..C8
+	const name = MIDI_NAMES[((clamped % 12) + 12) % 12]
+	const octave = Math.floor(clamped / 12) - 1
+	return `${name}${octave}`
 }
 
-function centsToRatio(cents: number): number {
-	return Math.pow(2, cents / 1200)
+function lerp(a: number, b: number, t: number): number {
+	return a + (b - a) * t
 }
 
-function waveForShape(base: OscillatorType, shape?: string): OscillatorType {
-	// arrow gets a buzzier square; others keep the kind's base waveform.
-	return shape === 'arrow' ? 'square' : base
-}
-
-/** Build a short looping white-noise buffer for the scrape/grind kinds. */
-function makeNoiseBuffer(ctx: AudioContext): AudioBuffer {
-	const length = Math.floor(ctx.sampleRate * 0.5)
-	const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
-	const data = buffer.getChannelData(0)
-	// Deterministic-ish fill (no Math.random needed): a cheap LCG so the noise is
-	// reproducible and we avoid pulling in randomness that could differ per run.
-	let seed = 0x2545f491
-	for (let i = 0; i < length; i++) {
-		seed = (seed * 1103515245 + 12345) & 0x7fffffff
-		data[i] = (seed / 0x3fffffff) - 1 // ~[-1, 1)
-	}
-	return buffer
-}
-
-/** A live sustained voice for one kind: a source -> filter -> gain chain. */
-interface RideVoice {
-	gain: GainNode
-	filter: BiquadFilterNode
-	osc?: OscillatorNode
-	noise?: AudioBufferSourceNode
-	base: number
-	pitchCents: number
-	active: boolean // whether it's currently ramped up
+/**
+ * Pick the note a contact should play: speed climbs the kind's scale, and the
+ * shape type shifts a few scale-degrees so shapes differ. Returns a pitch name.
+ */
+function noteFor(kind: LineKind, shape: string | undefined, speedFrac: number): string {
+	const recipe = KIND_NOTES[kind]
+	const shapeShift = AUDIO.shapeDegrees[shape ?? 'draw'] ?? 0
+	const top = recipe.scale.length - 1
+	const degree = Math.round(speedFrac * top) + shapeShift
+	const wrapped = ((degree % recipe.scale.length) + recipe.scale.length) % recipe.scale.length
+	return midiToNote(recipe.root + recipe.scale[wrapped])
 }
 
 export interface AudioEngine {
-	/** Resume the context (call from a user gesture, e.g. Play). */
+	/** Resume Tone's context (call from a user gesture, e.g. Play) and kick off
+	 *  the async sample load on first use. */
 	resume(): void
-	/** Fire a one-shot for a surface the sled just entered. */
+	/** Fire a struck note for a surface the sled just entered. */
 	impact(kind: LineKind, shape: string | undefined, speed: number): void
-	/** Drive the sustained ride voices from this frame's live contacts. */
+	/** Drive the sustained ride retriggers from this frame's live contacts. */
 	setRide(contacts: ContactEvent[]): void
 	/** Master mute (fades, doesn't cut). */
 	setMuted(muted: boolean): void
-	/** Tear down the audio graph and close the context. */
+	/** Tear down the piano and release audio resources. */
 	dispose(): void
 }
 
 /**
- * Lazily builds an AudioContext and per-kind voice graph on first use. Safe to
- * construct eagerly (nothing happens until resume()/the first sound). Returns a
- * no-op engine if the Web Audio API is unavailable.
+ * Builds the piano lazily on first resume() and streams its samples from the CDN
+ * (async; all sound is skipped until loaded). Returns a no-op engine when Web
+ * Audio / Tone is unavailable (SSR / unsupported browser).
  */
 export function createAudioEngine(): AudioEngine {
-	const Found =
-		typeof window !== 'undefined'
-			? window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-			: undefined
-	if (!Found) return noopEngine()
-	const Ctor: typeof AudioContext = Found
-
-	let ctx: AudioContext | null = null
-	let master: GainNode | null = null
-	let noiseBuffer: AudioBuffer | null = null
-	let muted = false
-	const rides = new Map<LineKind, RideVoice>()
-
-	function ensureContext(): AudioContext {
-		if (ctx) return ctx
-		ctx = new Ctor()
-		master = ctx.createGain()
-		master.gain.value = muted ? 0 : AUDIO.masterGain
-		master.connect(ctx.destination)
-		noiseBuffer = makeNoiseBuffer(ctx)
-		return ctx
+	if (typeof window === 'undefined' || typeof window.AudioContext === 'undefined') {
+		return noopEngine()
 	}
 
-	function getRide(kind: LineKind): RideVoice {
-		const existing = rides.get(kind)
-		if (existing) return existing
-		const c = ensureContext()
-		const recipe = KIND_VOICE[kind]
-		const gain = c.createGain()
-		gain.gain.value = 0
-		const filter = c.createBiquadFilter()
-		filter.type = recipe.filterType
-		filter.frequency.value = recipe.base
-		filter.Q.value = recipe.filterQ
-		filter.connect(gain)
-		gain.connect(master!)
+	let piano: Piano | null = null
+	let loaded = false
+	let muted = false
+	// Per-kind ride bookkeeping: the last note time (s, Tone context time) so we
+	// can throttle retriggers, and the currently-sounding note so we release it
+	// when the ride changes pitch or ends.
+	const ride = new Map<LineKind, { lastTime: number; note: string | null }>()
 
-		const voice: RideVoice = { gain, filter, base: recipe.base, pitchCents: recipe.pitchCents, active: false }
-		if (recipe.source === 'noise') {
-			const noise = c.createBufferSource()
-			noise.buffer = noiseBuffer!
-			noise.loop = true
-			noise.connect(filter)
-			noise.start()
-			voice.noise = noise
-		} else {
-			const osc = c.createOscillator()
-			osc.type = recipe.wave
-			osc.frequency.value = recipe.base
-			osc.connect(filter)
-			osc.start()
-			voice.osc = osc
-		}
-		rides.set(kind, voice)
-		return voice
+	function ensurePiano(): Piano {
+		if (piano) return piano
+		piano = new Piano({ velocities: AUDIO.velocities })
+		piano.toDestination()
+		piano.strings.value = muted ? AUDIO.mutedVolumeDb : AUDIO.masterVolumeDb
+		void piano.load().then(() => {
+			loaded = true
+		})
+		return piano
 	}
 
 	function resume() {
-		const c = ensureContext()
-		if (c.state === 'suspended') void c.resume()
+		ensurePiano()
+		// Tone gates audio behind a user gesture; resume on the Play click.
+		void Tone.start()
+	}
+
+	function speedFrac(speed: number): number {
+		return Math.min(1, Math.max(0, speed / AUDIO.fullSpeed))
 	}
 
 	function impact(kind: LineKind, shape: string | undefined, speed: number) {
-		if (kind === 'scenery') return
-		const c = ensureContext()
-		const recipe = KIND_VOICE[kind]
-		const now = c.currentTime
-		const shapeRatio = semitonesToRatio(AUDIO.shapeSemitones[shape ?? 'draw'] ?? 0)
-		// A louder hit for a faster entry, but always audible.
-		const speedFrac = Math.min(1, speed / AUDIO.rideFullSpeed)
-		const peak = AUDIO.impactGain * (0.5 + 0.5 * speedFrac)
-
-		const env = c.createGain()
-		env.gain.setValueAtTime(0, now)
-		env.gain.linearRampToValueAtTime(peak, now + 0.005)
-		env.gain.exponentialRampToValueAtTime(0.0001, now + AUDIO.impactDecay)
-		env.connect(master!)
-
-		if (recipe.source === 'noise') {
-			const noise = c.createBufferSource()
-			noise.buffer = noiseBuffer!
-			const filter = c.createBiquadFilter()
-			filter.type = recipe.filterType
-			filter.frequency.value = recipe.base * shapeRatio
-			filter.Q.value = recipe.filterQ
-			noise.connect(filter)
-			filter.connect(env)
-			noise.start(now)
-			noise.stop(now + AUDIO.impactDecay + 0.02)
-		} else {
-			const osc = c.createOscillator()
-			osc.type = waveForShape(recipe.wave, shape)
-			const f0 = recipe.base * shapeRatio
-			osc.frequency.setValueAtTime(f0, now)
-			// bounce gives a quick downward pitch drop for the "boing"; others hold.
-			if (kind === 'bounce') osc.frequency.exponentialRampToValueAtTime(f0 * 0.6, now + AUDIO.impactDecay)
-			osc.connect(env)
-			osc.start(now)
-			osc.stop(now + AUDIO.impactDecay + 0.02)
-		}
+		if (kind === 'scenery' || !loaded || !piano) return
+		const frac = speedFrac(speed)
+		const note = noteFor(kind, shape, frac)
+		const velocity = lerp(AUDIO.impactMinVel, AUDIO.impactMaxVel, frac)
+		// A struck note: key down now, release shortly after so it rings and decays
+		// like a real keypress rather than sustaining forever.
+		const now = Tone.now()
+		piano.keyDown({ note, velocity, time: now })
+		piano.keyUp({ note, time: now + 0.15 })
 	}
 
 	function setRide(contacts: ContactEvent[]) {
-		const c = ensureContext()
-		const now = c.currentTime
+		if (!loaded || !piano) return
+		const now = Tone.now()
+
 		// Collapse this frame's contacts to one entry per kind: keep the fastest
-		// (loudest) and its shape, since a sled touches at most 1-2 surfaces.
+		// (a sled touches at most 1-2 surfaces).
 		const byKind = new Map<LineKind, { speed: number; shape?: string }>()
 		for (const ev of contacts) {
 			if (ev.kind === 'scenery') continue
@@ -237,57 +184,51 @@ export function createAudioEngine(): AudioEngine {
 			if (!prev || ev.speed > prev.speed) byKind.set(ev.kind, { speed: ev.speed, shape: ev.shape })
 		}
 
-		// Ramp present kinds toward their speed-scaled target; silence the rest.
-		for (const [kind, recipe] of Object.entries(KIND_VOICE) as [LineKind, KindVoice][]) {
-			void recipe
+		// Retrigger a soft note for each present kind on its speed-scaled cadence;
+		// release and forget kinds no longer in contact.
+		for (const kind of Object.keys(KIND_NOTES) as LineKind[]) {
 			const hit = byKind.get(kind)
+			const state = ride.get(kind)
 			if (hit) {
-				const voice = getRide(kind)
-				const speedFrac = Math.min(1, hit.speed / AUDIO.rideFullSpeed)
-				const targetGain = AUDIO.rideMaxGain * speedFrac
-				voice.gain.gain.setTargetAtTime(targetGain, now, AUDIO.rampTime)
-				const shapeRatio = semitonesToRatio(AUDIO.shapeSemitones[hit.shape ?? 'draw'] ?? 0)
-				const pitchRatio = centsToRatio(voice.pitchCents * speedFrac)
-				const targetFreq = voice.base * shapeRatio * pitchRatio
-				const param = voice.osc ? voice.osc.frequency : voice.filter.frequency
-				param.setTargetAtTime(targetFreq, now, AUDIO.rampTime)
-				voice.active = true
-			} else {
-				const voice = rides.get(kind)
-				if (voice && voice.active) {
-					voice.gain.gain.setTargetAtTime(0, now, AUDIO.rampTime)
-					voice.active = false
+				const frac = speedFrac(hit.speed)
+				const interval = lerp(AUDIO.rideIntervalSlow, AUDIO.rideIntervalFast, frac)
+				if (!state || now - state.lastTime >= interval) {
+					// Release the previous ride note before striking the next.
+					if (state?.note) piano.keyUp({ note: state.note, time: now })
+					const note = noteFor(kind, hit.shape, frac)
+					const velocity = lerp(AUDIO.rideMinVel, AUDIO.rideMaxVel, frac)
+					piano.keyDown({ note, velocity, time: now })
+					piano.keyUp({ note, time: now + interval * 0.9 })
+					ride.set(kind, { lastTime: now, note })
 				}
+			} else if (state) {
+				if (state.note) piano.keyUp({ note: state.note, time: now })
+				ride.delete(kind)
 			}
 		}
 	}
 
 	function setMuted(next: boolean) {
 		muted = next
-		if (!ctx || !master) return
-		master.gain.setTargetAtTime(next ? 0 : AUDIO.masterGain, ctx.currentTime, AUDIO.muteRampTime)
+		if (!piano) return
+		const target = next ? AUDIO.mutedVolumeDb : AUDIO.masterVolumeDb
+		piano.strings.rampTo(target, AUDIO.muteRampTime)
 	}
 
 	function dispose() {
-		for (const voice of rides.values()) {
-			try {
-				voice.osc?.stop()
-				voice.noise?.stop()
-			} catch {
-				// already stopped
-			}
+		ride.clear()
+		if (piano) {
+			piano.stopAll()
+			piano.dispose()
 		}
-		rides.clear()
-		if (ctx) void ctx.close()
-		ctx = null
-		master = null
-		noiseBuffer = null
+		piano = null
+		loaded = false
 	}
 
 	return { resume, impact, setRide, setMuted, dispose }
 }
 
-/** Engine used when Web Audio is unavailable (SSR / unsupported browser). */
+/** Engine used when Web Audio / Tone is unavailable (SSR / unsupported browser). */
 function noopEngine(): AudioEngine {
 	return {
 		resume() {},

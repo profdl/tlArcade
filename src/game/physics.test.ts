@@ -8,6 +8,7 @@ import {
 	stepBody,
 	bodyCenter,
 	bodyVelocity,
+	bodyAngle,
 	type Body,
 	type Segment,
 	type ContactEvent,
@@ -446,7 +447,7 @@ describe('physics: multi-point body', () => {
 		runBody(body, [floor], 300)
 		// Every point sits at or above the floor (within the contact radius).
 		for (const p of body.points) {
-			expect(p.pos.y).toBeLessThanOrEqual(50 + PHYSICS.riderRadius)
+			expect(p.pos.y).toBeLessThanOrEqual(50 + PHYSICS.bodyRadius)
 		}
 		// And it has settled: near-zero vertical velocity, not still driving down.
 		expect(Math.abs(bodyVelocity(body, DT).y)).toBeLessThan(2)
@@ -479,7 +480,7 @@ describe('physics: multi-point body', () => {
 				// Contact = the body's lowest point reached the floor (the body's center
 				// rests ~half its height above the line, so test the lowest point).
 				const low = Math.max(...body.points.map((p) => p.pos.y))
-				if (!contacted && low > 50 - PHYSICS.riderRadius - 2) contacted = true
+				if (!contacted && low > 50 - PHYSICS.bodyRadius - 2) contacted = true
 				if (contacted) best = Math.min(best, bodyCenter(body).y)
 			}
 			return best
@@ -538,5 +539,76 @@ describe('physics: multi-point body', () => {
 	it('an ice downhill preserves more glide than a solid one', () => {
 		// Ice adds zero tangential drag, so the body coasts faster than on solid.
 		expect(slopeSpeed('ice')).toBeGreaterThan(slopeSpeed('solid'))
+	})
+})
+
+describe('physics: sled rig (upright + crash)', () => {
+	const runBody = (body: Body, segments: Segment[], steps: number) => {
+		for (let i = 0; i < steps; i++) stepBody(body, segments, DT)
+		return body
+	}
+
+	it('spawns upright: the mast sits above the runner base', () => {
+		const body = makeBody({ x: 0, y: 0 })
+		const midy = (body.points[0].pos.y + body.points[1].pos.y) / 2
+		// MAST (index 2) is above the base midpoint (smaller y = up in screen space).
+		expect(body.points[2].pos.y).toBeLessThan(midy)
+	})
+
+	it('rides a slope without tumbling: the runner tracks the slope angle', () => {
+		// On a ~27deg downhill the sled should settle to ride at roughly that angle,
+		// not flip end-over-end. Compare the runner facing to the slope direction.
+		const slope: Segment = { a: { x: -300, y: -150 }, b: { x: 300, y: 150 } }
+		const slopeAngle = Math.atan2(300, 600) // ~0.46 rad
+		const body = makeBody({ x: -200, y: -170 })
+		runBody(body, [slope], 200)
+		expect(body.crashed).toBe(false)
+		// Facing within ~20deg of the slope: it's riding it, not tumbling.
+		expect(Math.abs(bodyAngle(body) - slopeAngle)).toBeLessThan(0.35)
+	})
+
+	it('stays upright on flat ground (mast does not invert)', () => {
+		const floor: Segment = { a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 } }
+		const body = makeBody({ x: 0, y: -40 })
+		runBody(body, [floor], 300)
+		expect(body.crashed).toBe(false)
+		const midy = (body.points[0].pos.y + body.points[1].pos.y) / 2
+		expect(body.points[2].pos.y).toBeLessThan(midy) // mast still above
+	})
+
+	it('crashes (ragdolls) when launched off a ramp and over-rotates', () => {
+		// A steep UPWARD ramp flings the sled into the air; with no track under it
+		// the rig over-rotates past the crash tilt and latches crashed (ragdoll).
+		// (A flat-wall slam no longer crashes a body this size — the broad contact
+		// radius arrests it without spinning it out — so we exercise the tilt path,
+		// which is the realistic Line-Rider wipeout: over-rotating off a jump.)
+		const ramp: Segment = { a: { x: -600, y: 0 }, b: { x: -200, y: -300 } }
+		const body = makeBody({ x: -580, y: -20 })
+		// Upright while still climbing the ramp (before it launches off the lip).
+		runBody(body, [ramp], 15)
+		expect(body.crashed).toBe(false)
+		// After launching and tipping past vertical in the air, it latches crashed.
+		runBody(body, [ramp], 100)
+		expect(body.crashed).toBe(true)
+	})
+
+	it('a hard landing on a slope does not crash (settling spike is not a tumble)', () => {
+		// Dropping onto a slope snaps the runner from flat to slope-aligned in a frame
+		// or two — a brief spin spike. That transient must NOT latch a crash: only a
+		// sustained spin does. (Regression guard: it used to crash on the landing.)
+		const slope: Segment = { a: { x: -300, y: -150 }, b: { x: 300, y: 150 } }
+		const body = makeBody({ x: -200, y: -170 }) // spawns above the slope, free-falls onto it
+		runBody(body, [slope], 120)
+		expect(body.crashed).toBe(false)
+		// And it actually landed and is tracking the slope, not still falling.
+		const slopeAngle = Math.atan2(300, 600)
+		expect(Math.abs(bodyAngle(body) - slopeAngle)).toBeLessThan(0.3)
+	})
+
+	it('crash latches: once crashed it stays crashed', () => {
+		const body = makeBody({ x: 0, y: 0 })
+		body.crashed = true
+		runBody(body, [{ a: { x: -1000, y: 50 }, b: { x: 1000, y: 50 } }], 200)
+		expect(body.crashed).toBe(true)
 	})
 })

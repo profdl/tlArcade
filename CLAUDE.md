@@ -7,9 +7,10 @@ and update this file.
 ## What this is
 
 A [Line Rider](https://en.wikipedia.org/wiki/Line_Rider) clone on **tldraw v5**:
-draw track on the canvas, hit Play, watch a constraint-solved multi-point sled
-ride it under a hand-rolled Verlet physics sim. **Vite + React 19 + TypeScript**, no
-physics-engine dependency.
+draw track on the canvas, hit Play, watch a snail on a constraint-solved sled rig
+ride it under a hand-rolled Verlet physics sim — upright and tracking the slope,
+ragdolling on a hard crash. **Vite + React 19 + TypeScript**, no physics-engine
+dependency.
 
 ## Commands
 
@@ -42,20 +43,34 @@ version:
   rotated note's catch region matches its footprint, not its inflated AABB).
 - [src/game/checkpoints.ts](src/game/checkpoints.ts) — pure checkpoint hit-test
   (point-in-oriented-box, scored once per run). **Pure & framework-free.**
-- [src/game/physics.ts](src/game/physics.ts) — the sim. The sled is a multi-point
-  body (`makeBody`/`stepBody`); `step()` is the single-point primitive it reuses,
-  so both share one collision path (`resolveCollisions`). `PHYSICS` holds all
-  tunables. **Pure & framework-free** — keep it that way so the unit tests stay
-  simple. It reports surface contacts for audio by *pushing* `ContactEvent`s into
-  an optional sink (`step`/`stepBody`'s last arg); omit the sink and behavior is
-  byte-identical, so it makes no sound itself.
-- [src/game/audio.ts](src/game/audio.ts) — Web Audio surface sounds. **Pure of
-  React/tldraw**; the rAF loop is its only caller. Per-kind voices: a one-shot
-  `impact` on contact-enter and a sustained, speed-scaled `setRide` voice while
-  riding. All tunables in the `AUDIO` object.
+- [src/game/physics.ts](src/game/physics.ts) — the sim. The rider is a **sled
+  rig** (`makeBody`/`stepBody`): a runner base (`BACK`<->`FRONT`) plus a mast held
+  upright by a spring (`applyUpright`), so it rides upright and **tracks the
+  slope** (`bodyAngle`) like classic Line Rider instead of tumbling — until a hard
+  hit latches `body.crashed` (see `shouldCrash`) and the spring switches off so it
+  ragdolls. `step()` is the single-point primitive the rig reuses, so both share
+  one collision path (`resolveCollisions`). `PHYSICS` holds all tunables. **Pure &
+  framework-free** — keep it that way so the unit tests stay simple. It reports
+  surface contacts for audio by *pushing* `ContactEvent`s into an optional sink
+  (`step`/`stepBody`'s last arg); omit the sink and behavior is byte-identical, so
+  it makes no sound itself.
+- [src/game/audio.ts](src/game/audio.ts) — surface sounds, voiced with the
+  Salamander Grand piano via `@tonejs/piano` (on Tone.js). **Pure of
+  React/tldraw**; the rAF loop is its only caller, through the same
+  `AudioEngine` interface as before (`resume`/`impact`/`setRide`/`setMuted`/
+  `dispose`), so swapping the synth didn't touch `Rider`. A piano is struck, not
+  a drone, so surfaces are sonified as **notes**: `impact` strikes a note on
+  contact-enter; `setRide` retriggers a soft note on a speed-scaled cadence while
+  riding. Each `LineKind` owns a register + scale (`KIND_NOTES`); speed climbs
+  the scale. Samples **stream from the library's CDN (tambien.github.io) on first
+  play** and the browser caches them; `load()` is async and all sound is skipped
+  until it resolves. All tunables in the `AUDIO` object.
+- [src/game/SnailArt.tsx](src/game/SnailArt.tsx) — the snail character SVG,
+  normalized to a belly-centered, +x-facing local frame the rig places each frame.
 - [src/game/Rider.tsx](src/game/Rider.tsx) — fixed-timestep rAF loop; draws the
-  sled body as an SVG polygon, writing its screen-space geometry imperatively
-  each frame (no per-frame React render). Owns the audio engine: passes a reused
+  snail (`SnailArt`) as an SVG group, writing its transform (position from
+  `bodyCenter`, rotation from `bodyAngle`, scale from zoom) imperatively each
+  frame (no per-frame React render). Owns the audio engine: passes a reused
   contact sink into `stepBody`, does enter-detection (diffs this substep's
   contact keys vs. last) to fire impacts, and drives the ride voices.
 
