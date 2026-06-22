@@ -245,6 +245,71 @@ describe('physics: inside-corner collision (order-independent)', () => {
 		expect(a.prev.x).toBeCloseTo(b.prev.x, 9)
 		expect(a.prev.y).toBeCloseTo(b.prev.y, 9)
 	})
+
+	// The sum-of-deltas refactor must not gain energy at a corner: a point wedged
+	// into an inside corner under gravity must settle (not bounce/jitter/explode)
+	// over many steps. Guards against the "summing two segments' corrections
+	// double-counts an impulse" concern.
+	it('a point wedged in an inside corner settles (no energy gain over many steps)', () => {
+		const r = makeRider({ x: -2, y: -2 })
+		// Run long enough to reach steady state, then sample speed over a window.
+		for (let i = 0; i < 300; i++) step(r, [floor, wall], DT)
+		const before = velocity(r, DT)
+		for (let i = 0; i < 60; i++) step(r, [floor, wall], DT)
+		const after = velocity(r, DT)
+		// Settled: tiny residual speed, and not growing (energy bounded).
+		expect(Math.hypot(after.x, after.y)).toBeLessThan(2)
+		expect(Math.hypot(after.x, after.y)).toBeLessThanOrEqual(Math.hypot(before.x, before.y) + 1e-6)
+		// And it stays out of both surfaces (x <= ~0 against the wall, y <= ~0 on the floor),
+		// within the contact band.
+		expect(r.pos.x).toBeLessThan(PHYSICS.riderRadius + PHYSICS.contactSkin + 1e-6)
+		expect(r.pos.y).toBeLessThan(PHYSICS.riderRadius + PHYSICS.contactSkin + 1e-6)
+	})
+})
+
+describe('physics: single-contact equivalence (refactor safety)', () => {
+	// The sum-of-deltas refactor in resolveCollisions claims that for a SINGLE contact
+	// the accumulator equals the one segment's delta, so the resolved velocity is the
+	// same as the pre-refactor per-hit prev rewrite. Rather than hand-compute the
+	// 2-iteration solver's exact value (brittle), we lock the equivalence directly: a
+	// single floor segment must produce the IDENTICAL pos/prev as that floor placed in
+	// a list where the only OTHER segments are ones the point never contacts. If the
+	// accumulation were wrong, the presence of non-contacting segments (or the order)
+	// would perturb the single real contact's result. It must not.
+	const floor: Segment = { a: { x: -100, y: 0 }, b: { x: 100, y: 0 } }
+	const farAbove: Segment = { a: { x: -100, y: -500 }, b: { x: 100, y: -500 } } // never touched
+	const farBelow: Segment = { a: { x: -100, y: 500 }, b: { x: 100, y: 500 } } // never touched
+
+	const sliding = () => {
+		const r = makeRider({ x: 0, y: -PHYSICS.riderRadius })
+		r.prev = { x: -2, y: -PHYSICS.riderRadius - 2 } // moving +x (tangent), +y (into floor)
+		return r
+	}
+
+	it('normal velocity is removed and tangent is preserved (near-frictionless)', () => {
+		const r = sliding()
+		step(r, [floor], DT)
+		const v = velocity(r, DT)
+		expect(v.y).toBeLessThanOrEqual(1e-6) // not driving into the floor
+		expect(v.x).toBeGreaterThan(0) // tangent kept (lines are near-frictionless)
+	})
+
+	it('non-contacting segments and their order do not perturb the single contact', () => {
+		const base = sliding()
+		step(base, [floor], DT)
+		for (const segs of [
+			[farAbove, floor, farBelow],
+			[farBelow, farAbove, floor],
+			[floor, farAbove, farBelow],
+		]) {
+			const r = sliding()
+			step(r, segs, DT)
+			expect(r.pos.x).toBeCloseTo(base.pos.x, 9)
+			expect(r.pos.y).toBeCloseTo(base.pos.y, 9)
+			expect(r.prev.x).toBeCloseTo(base.prev.x, 9)
+			expect(r.prev.y).toBeCloseTo(base.prev.y, 9)
+		}
+	})
 })
 
 describe('physics: accelerate lines', () => {
