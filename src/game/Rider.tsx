@@ -1,21 +1,17 @@
 import { useEffect, useRef } from 'react'
-import { useEditor, toDomPrecision, type Editor } from 'tldraw'
+import { useEditor, toDomPrecision } from 'tldraw'
 import {
-	makeBody,
-	stepBody,
 	bodyCenter,
 	bodyVelocity,
 	bodyAngle,
-	bodyFacing,
 	PHYSICS,
-	type Body,
 	type ContactEvent,
-	type LineKind,
 } from './physics'
 import { SnailArt, SNAIL_CENTER_OFFSET, SNAIL_HALF_HEIGHT } from './SnailArt'
 import { makeSegmentsComputed, makeCheckpointsComputed, type TrackSegment } from './geometry'
-import { collectCheckpointHits, type Checkpoint } from './checkpoints'
-import { createAudioEngine } from './audio'
+import { RunController, type TrackSource } from './runController'
+import { RiderAudio } from './riderAudio'
+import { drawDebug } from './debugOverlay'
 import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom } from './state'
 
 const FIXED_DT = 1 / 120 // physics substep (s)
@@ -38,25 +34,6 @@ const FLIP_HYSTERESIS = 8
 // as the velocity jitters around zero.
 const FACING_FLIP_SPEED = 8
 
-// Debug overlay (Show Collisions): the stroke color used to draw each kind's
-// collision segments, roughly matching its draw-color legend so the overlay reads
-// against the track. The rig's contact circles use a separate accent below.
-// Typed Record<LineKind, …> (not Record<string, …>) so adding a new LineKind
-// without a debug color is a compile error — see CLAUDE.md's "Adding a line
-// behavior" checklist.
-const DEBUG_KIND_COLOR: Record<LineKind, string> = {
-	solid: '#1d1d1d',
-	accelerate: '#e03131',
-	brake: '#f76707',
-	bounce: '#ffc034',
-	sticky: '#ae3ec9',
-	ice: '#4dabf7',
-	oneway: '#4263eb',
-	scenery: '#2f9e44',
-}
-const DEBUG_SEGMENT_COLOR = '#1d1d1d'
-const DEBUG_RIG_COLOR = '#ff1493' // hot pink so the rig circles pop off the track
-
 // The sled overlay. Rendered via components.InFrontOfTheCanvas. A single rAF
 // loop runs continuously: while playing it advances the physics; in all states
 // it positions the sled by recomputing editor.pageToViewport() each frame, so
@@ -69,12 +46,10 @@ const DEBUG_RIG_COLOR = '#ff1493' // hot pink so the rig circles pop off the tra
 // toggling follow or play never remounts this component (which would reset the
 // rAF loop and snap the sled to the start mid-ride).
 //
-// The sled is a sled rig (see makeBody): a runner base (BACK<->FRONT) that rides
-// the track plus a mast held upright by a spring, so the snail tracks the slope
-// like classic Line Rider rather than tumbling — until a hard hit trips its
-// crash state and it ragdolls. We draw the snail character (SnailArt) in a group
-// placed at the runner midpoint, rotated by the runner angle, scaled by zoom.
-const SVG_NS = 'http://www.w3.org/2000/svg'
+// The lifecycle (run/reset/snapshot/scoring) lives in RunController, the audio
+// contact-diffing in RiderAudio, and the debug drawing in debugOverlay — this
+// component owns only the rAF orchestration plus the DOM-coupled snail transform
+// and camera follow.
 
 // Art<->physics drift guard. PHYSICS.bodyRadius is hand-tuned to land the rig's
 // collision surface on the snail's DRAWN belly (see the comment on bodyRadius in
@@ -97,91 +72,6 @@ if (import.meta.env?.DEV) {
 	}
 }
 
-// Reconcile `g`'s direct children to exactly `count` elements of `tag` (pool
-// reusable nodes, create/trim the delta). Pooling avoids thrashing the DOM every
-// frame on a busy track. Returns the live child NodeList for the caller to fill.
-function poolChildren(g: SVGGElement, tag: string, count: number): NodeListOf<ChildNode> {
-	while (g.childElementCount < count) g.appendChild(document.createElementNS(SVG_NS, tag))
-	while (g.childElementCount > count) g.removeChild(g.lastChild as ChildNode)
-	return g.childNodes
-}
-
-/**
- * Draw the collision debug overlay into `g`, imperatively (no React render in the
- * rAF loop, matching the snail draw). All geometry is computed in PAGE space and
- * mapped through pageToViewport so it tracks pan/zoom exactly like the sled.
- *
- * `g` holds three child groups, each pooling one element type so reconciliation
- * stays simple:
- *  - SEGMENT lines: one per collision segment, colored by kind. Drawn THICK and
- *    semi-transparent so they read as a highlight OVER the source stroke rather
- *    than hiding exactly under it (a pencil shape's segments trace the drawn line
- *    1:1, so a thin opaque line would be invisible — the bug this fixes).
- *  - VERTEX dots: one per segment endpoint, so you can see where the actual
- *    collision points sit along the polyline (each pencil/geo vertex).
- *  - RIG circles: one per sled-rig point at PHYSICS.bodyRadius — the real contact
- *    surface the sim uses, which is larger than the drawn snail.
- */
-function drawDebug(
-	groups: { segs: SVGGElement; verts: SVGGElement; rig: SVGGElement },
-	segments: TrackSegment[],
-	body: Body,
-	editor: Editor
-): void {
-	const zoom = editor.getZoomLevel()
-
-	// Segment lines: thick, semi-transparent, kind-colored highlight.
-	const segEls = poolChildren(groups.segs, 'line', segments.length)
-	for (let i = 0; i < segments.length; i++) {
-		const seg = segments[i]
-		const a = editor.pageToViewport(seg.a)
-		const b = editor.pageToViewport(seg.b)
-		const el = segEls[i] as SVGElement
-		el.setAttribute('x1', `${toDomPrecision(a.x)}`)
-		el.setAttribute('y1', `${toDomPrecision(a.y)}`)
-		el.setAttribute('x2', `${toDomPrecision(b.x)}`)
-		el.setAttribute('y2', `${toDomPrecision(b.y)}`)
-		el.setAttribute('stroke', DEBUG_KIND_COLOR[seg.kind] ?? DEBUG_SEGMENT_COLOR)
-		el.setAttribute('stroke-width', '4')
-		el.setAttribute('stroke-opacity', '0.45')
-		el.setAttribute('stroke-linecap', 'round')
-	}
-
-	// Vertex dots at each segment's start, plus the very last segment's end so the
-	// polyline's final point is marked too.
-	const vertEls = poolChildren(groups.verts, 'circle', segments.length > 0 ? segments.length + 1 : 0)
-	for (let i = 0; i < segments.length; i++) {
-		const v = editor.pageToViewport(segments[i].a)
-		const el = vertEls[i] as SVGElement
-		el.setAttribute('cx', `${toDomPrecision(v.x)}`)
-		el.setAttribute('cy', `${toDomPrecision(v.y)}`)
-		el.setAttribute('r', '2')
-		el.setAttribute('fill', DEBUG_KIND_COLOR[segments[i].kind] ?? DEBUG_SEGMENT_COLOR)
-	}
-	if (segments.length > 0) {
-		const last = segments[segments.length - 1]
-		const v = editor.pageToViewport(last.b)
-		const el = vertEls[segments.length] as SVGElement
-		el.setAttribute('cx', `${toDomPrecision(v.x)}`)
-		el.setAttribute('cy', `${toDomPrecision(v.y)}`)
-		el.setAttribute('r', '2')
-		el.setAttribute('fill', DEBUG_KIND_COLOR[last.kind] ?? DEBUG_SEGMENT_COLOR)
-	}
-
-	// Rig contact circles at the true body radius.
-	const rigEls = poolChildren(groups.rig, 'circle', body.points.length)
-	for (let i = 0; i < body.points.length; i++) {
-		const c = editor.pageToViewport(body.points[i].pos)
-		const el = rigEls[i] as SVGElement
-		el.setAttribute('cx', `${toDomPrecision(c.x)}`)
-		el.setAttribute('cy', `${toDomPrecision(c.y)}`)
-		el.setAttribute('r', `${toDomPrecision(PHYSICS.bodyRadius * zoom)}`)
-		el.setAttribute('fill', 'none')
-		el.setAttribute('stroke', DEBUG_RIG_COLOR)
-		el.setAttribute('stroke-width', '1.5')
-	}
-}
-
 export function Rider() {
 	const editor = useEditor()
 	const snailRef = useRef<SVGGElement | null>(null)
@@ -192,151 +82,83 @@ export function Rider() {
 	const debugSegsRef = useRef<SVGGElement | null>(null)
 	const debugVertsRef = useRef<SVGGElement | null>(null)
 	const debugRigRef = useRef<SVGGElement | null>(null)
-	const bodyRef = useRef<Body>(makeBody(startPointAtom.get()))
 
 	useEffect(() => {
 		let raf = 0
 		let last = performance.now()
 		let acc = 0
 		let frameCount = 0
+
 		// Reactive views of the track, bound to this editor: `.get()` recomputes
 		// only when the page's shapes change (tldraw memoizes by dependency), so the
 		// debug overlay can read live geometry every frame cheaply, and the gameplay
-		// snapshot is just a `.get()` at run start.
+		// snapshot is just a `.get()` at run start. Wrapped as a TrackSource so the
+		// (pure) RunController never imports tldraw.
 		const trackSegments = makeSegmentsComputed(editor)
 		const trackCheckpoints = makeCheckpointsComputed(editor)
-		// The gameplay snapshot the sim runs against: frozen at run start so a mid-run
-		// edit (shouldn't happen — the track is read-only while playing — but defends
-		// the invariant) can't change collision under the sled.
-		let segments = trackSegments.get()
-		let checkpoints: Checkpoint[] = trackCheckpoints.get()
-		// Ids collected this run; reset when a run begins so flags re-arm.
-		let collected = new Set<string>()
+		const track: TrackSource = {
+			segments: () => trackSegments.get(),
+			checkpoints: () => trackCheckpoints.get(),
+		}
 
-		// --- Audio -----------------------------------------------------------
-		// The pure sim reports contacts into `contacts`; we sonify them here. One
-		// reused array (cleared, never reallocated) keeps the 120 Hz substep loop
-		// allocation-free. `prevContactKeys` is the set of (kind|shape) surfaces the
-		// sled touched on the PREVIOUS substep; diffing finds NEW contacts to fire a
-		// one-shot impact for. `frameContacts` aggregates the substeps' contacts so
-		// the sustained ride voices read the whole frame, not just the last substep.
-		const engine = createAudioEngine()
+		const readInputs = () => ({
+			playing: playingAtom.get(),
+			start: startPointAtom.get(),
+			resetNonce: resetNonceAtom.get(),
+		})
+
+		const run = new RunController(track, readInputs())
+		const audio = new RiderAudio(mutedAtom.get())
+
+		// One reused contacts buffer keeps the 120 Hz substep loop allocation-free.
 		const contacts: ContactEvent[] = []
-		let prevContactKeys = new Set<string>()
-		let frameContacts: ContactEvent[] = []
-		let lastMuted = mutedAtom.get()
-		engine.setMuted(lastMuted)
-		const contactKey = (c: ContactEvent) => `${c.kind}|${c.shape ?? ''}`
 
-		// Re-snapshot collision geometry each time a run begins.
-		let wasPlaying = false
 		// Whether the snail is currently drawn shell-only (flipped). Tracked across
 		// frames so the swap can use hysteresis and only touch the DOM on a change.
 		let shellOnly = false
-		// Horizontal facing of the art: +1 as-authored, -1 mirrored. Tracked across
-		// frames so we only flip when the horizontal travel speed clears the dead-band,
-		// and hold otherwise. Reset to +1 with the body (see makeBody calls below).
-		let facingX: 1 | -1 = 1
-		// Re-seat the sled whenever the start point moves (immediate feedback even
-		// while stopped) or the Reset button bumps the nonce. Track the last-seen
-		// values so we only rebuild on change.
-		let lastStart = startPointAtom.get()
-		let lastReset = resetNonceAtom.get()
-
-		// --- Collision debug overlay -----------------------------------------
-		// When `showCollisionsAtom` is on we draw the physics' actual collision
-		// geometry into `debugRef`. While stopped we read the reactive `trackSegments`
-		// view (recomputes only when shapes change) so the overlay reflects track
-		// edits live without re-walking the page every frame. While playing we draw
-		// the same frozen `segments` the sim is running against, so the overlay
-		// matches what the sled actually hits. The rig circles are the body points
-		// drawn at PHYSICS.bodyRadius — the real contact surface, which is larger
-		// than the visible snail. We build the DOM once and mutate it; toggling off
-		// just hides the group.
+		// Whether the debug overlay group is currently shown; only touch the DOM on
+		// a change.
 		let debugWasOn = false
 
 		const tick = (now: number) => {
-			const start = startPointAtom.get()
-			const reset = resetNonceAtom.get()
-			if (start !== lastStart || reset !== lastReset) {
-				lastStart = start
-				lastReset = reset
-				bodyRef.current = makeBody(start)
-				facingX = 1 // fresh body spawns facing +x; don't inherit last run's facing
-				// Clear last run's telemetry so the panel reads 0 after a reset.
+			const inputs = readInputs()
+
+			// Reconcile lifecycle: re-seat on start/reset change, snapshot on play edge.
+			const { reseated, runStarted } = run.sync(inputs)
+			if (reseated) statsAtom.set({ distance: 0, speed: 0 })
+			if (runStarted) {
+				scoreAtom.set({ collected: 0, total: run.currentCheckpoints.length })
 				statsAtom.set({ distance: 0, speed: 0 })
-			}
-
-			// Mirror the mute atom into the engine on change (cheap; only on toggle).
-			const muted = mutedAtom.get()
-			if (muted !== lastMuted) {
-				lastMuted = muted
-				engine.setMuted(muted)
-			}
-
-			const isPlaying = playingAtom.get()
-			if (isPlaying && !wasPlaying) {
-				// Run begins: re-seat the sled at the start and re-snapshot the track.
-				bodyRef.current = makeBody(start)
-				facingX = 1 // fresh body spawns facing +x; don't inherit last run's facing
-				segments = trackSegments.get()
-				checkpoints = trackCheckpoints.get()
-				collected = new Set<string>()
-				scoreAtom.set({ collected: 0, total: checkpoints.length })
-				statsAtom.set({ distance: 0, speed: 0 }) // clear last run's readout immediately
-				// Audio: resume the context on this user-gesture-initiated run and
-				// clear any stale contact state so impacts re-arm.
-				engine.resume()
-				prevContactKeys = new Set<string>()
+				audio.beginRun()
 				last = now
 				acc = 0
 				frameCount = 0 // restart stats cadence so the first run frame samples predictably
 			}
-			wasPlaying = isPlaying
 
+			audio.setMuted(mutedAtom.get())
+
+			const isPlaying = inputs.playing
 			if (isPlaying) {
 				let frame = (now - last) / 1000
 				last = now
 				if (frame > 0.05) frame = 0.05 // avoid spiral-of-death after tab blur
 				acc += frame
 				let scored = false
-				frameContacts = []
+				audio.beginFrame()
 				while (acc >= FIXED_DT) {
-					contacts.length = 0 // reuse the buffer; sim fills it this substep
-					stepBody(bodyRef.current, segments, FIXED_DT, contacts)
-
-					// Audio: fire a one-shot for any surface newly touched this substep
-					// (a key absent from the previous substep's set), then carry this
-					// substep's contacts into the frame aggregate for the ride voices.
-					const substepKeys = new Set<string>()
-					for (const c of contacts) {
-						const key = contactKey(c)
-						if (!substepKeys.has(key)) {
-							substepKeys.add(key)
-							if (!prevContactKeys.has(key)) engine.impact(c.kind, c.shape, c.speed)
-							frameContacts.push(c)
-						}
-					}
-					prevContactKeys = substepKeys
-
-					// Test checkpoints against the body center per substep so a fast
-					// sled can't tunnel past a flag between rendered frames.
-					// collectCheckpointHits mutates `collected` so each flag scores once.
-					if (checkpoints.length > 0) {
-						const c = bodyCenter(bodyRef.current)
-						const hits = collectCheckpointHits(c, checkpoints, collected)
-						if (hits.length > 0) scored = true
-					}
+					const res = run.stepFixed(FIXED_DT, contacts)
+					audio.onSubstep(res.contacts)
+					if (res.scored) scored = true
 					acc -= FIXED_DT
 				}
-				if (scored) scoreAtom.set({ collected: collected.size, total: checkpoints.length })
+				if (scored) scoreAtom.set({ collected: run.collectedCount, total: run.currentCheckpoints.length })
 				// Drive the sustained ride voices from this frame's aggregated contacts
 				// (empty when airborne -> voices fade out).
-				engine.setRide(frameContacts)
+				audio.endFrame()
 				if (++frameCount % STATS_EVERY === 0) {
-					const c = bodyCenter(bodyRef.current)
-					const d = Math.hypot(c.x - start.x, c.y - start.y)
-					const v = bodyVelocity(bodyRef.current, FIXED_DT)
+					const c = bodyCenter(run.currentBody)
+					const d = Math.hypot(c.x - inputs.start.x, c.y - inputs.start.y)
+					const v = bodyVelocity(run.currentBody, FIXED_DT)
 					statsAtom.set({ distance: d, speed: Math.hypot(v.x, v.y) })
 				}
 
@@ -347,7 +169,7 @@ export function Rider() {
 				// stack; the camera move must not be an undoable edit.
 				if (followAtom.get()) {
 					const center = editor.getViewportPageBounds().center
-					const c = bodyCenter(bodyRef.current)
+					const c = bodyCenter(run.currentBody)
 					const dx = c.x - center.x
 					const dy = c.y - center.y
 					if (Math.hypot(dx, dy) > 1) {
@@ -360,12 +182,7 @@ export function Rider() {
 				}
 			} else {
 				last = now // keep timebase fresh while paused
-				// Silence sustained voices and drop contact state while stopped, so a
-				// new run re-arms impacts and nothing hums when not riding.
-				if (prevContactKeys.size > 0) {
-					engine.setRide([])
-					prevContactKeys = new Set<string>()
-				}
+				audio.stop() // silence sustained voices; re-arm impacts for the next run
 			}
 
 			// Position the sled. pageToViewport reads live camera + screenBounds and
@@ -376,14 +193,13 @@ export function Rider() {
 			// to the window. Correct under pan/zoom/resize in every state.
 			// Start marker: a crosshair pinned to the spawn point in page space, so
 			// the player can see where the sled will drop from. Hidden during a run
-			// (the sled itself shows where you are). Positioned with pageToViewport
-			// like the sled, so it tracks pan/zoom.
+			// (the sled itself shows where you are).
 			const startG = startRef.current
 			if (startG) {
 				if (isPlaying) {
 					startG.setAttribute('opacity', '0')
 				} else {
-					const s = editor.pageToViewport(start)
+					const s = editor.pageToViewport(inputs.start)
 					startG.setAttribute('opacity', '1')
 					startG.setAttribute('transform', `translate(${toDomPrecision(s.x)},${toDomPrecision(s.y)})`)
 				}
@@ -404,23 +220,20 @@ export function Rider() {
 			// so it preserves angles); the zoom is applied as an explicit scale here.
 			const snail = snailRef.current
 			if (snail) {
-				const body = bodyRef.current
+				const body = run.currentBody
 				const center = editor.pageToViewport(bodyCenter(body))
 				const angle = bodyAngle(body)
 				const angleDeg = (angle * 180) / Math.PI
 				const zoom = editor.getZoomLevel()
 
 				// Mirror the art so its head leads the direction of HORIZONTAL travel.
-				// `bodyFacing` flips on the sign of the runner's horizontal velocity
+				// The controller flips on the sign of the runner's horizontal velocity
 				// (mast excluded — its upright-spring wobble would otherwise flip the
 				// facing at low speed), corrected for the runner's 180° ambiguity so a
 				// tumble that lands FRONT-on-the-left still faces travel rather than
 				// latching backward. It holds the last value inside a dead-band so a
-				// slow/stationary snail doesn't flicker. Don't reorient while crashed —
-				// a ragdolling snail has no meaningful "forward".
-				if (!body.crashed) {
-					facingX = bodyFacing(body, FIXED_DT, FACING_FLIP_SPEED, facingX)
-				}
+				// slow/stationary snail doesn't flicker, and holds while crashed.
+				const facingX = run.updateFacing(FIXED_DT, FACING_FLIP_SPEED)
 
 				snail.setAttribute(
 					'transform',
@@ -470,8 +283,8 @@ export function Rider() {
 					// While playing, mirror the sim's frozen snapshot; while stopped, read
 					// the reactive view so edits to the track show up live. `.get()` only
 					// recomputes when shapes actually change, so this is cheap per frame.
-					const debugSegs: TrackSegment[] = isPlaying ? segments : trackSegments.get()
-					drawDebug({ segs: segsG, verts: vertsG, rig: rigG }, debugSegs, bodyRef.current, editor)
+					const debugSegs: TrackSegment[] = isPlaying ? run.currentSegments : trackSegments.get()
+					drawDebug({ segs: segsG, verts: vertsG, rig: rigG }, debugSegs, run.currentBody, editor)
 				}
 			}
 
@@ -480,7 +293,7 @@ export function Rider() {
 		raf = requestAnimationFrame(tick)
 		return () => {
 			cancelAnimationFrame(raf)
-			engine.dispose()
+			audio.dispose()
 		}
 	}, [editor])
 
