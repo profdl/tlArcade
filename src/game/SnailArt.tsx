@@ -12,36 +12,15 @@
 //
 // The rig (Rider) then just translates this to the runner midpoint and rotates
 // it by the runner angle — the art needs no per-frame knowledge of the physics.
+//
+// The placed-size geometry (SRC box, SCALE, the belly-origin translate, and the
+// SNAIL_HALF_HEIGHT / SNAIL_CENTER_OFFSET the rig reads) lives in the pure
+// snailMetrics module so the framework-free physics sim can import it too — that's
+// how PHYSICS.bodyRadius is derived from this art instead of hand-tuned. We
+// re-export the two the rig consumes so its import site is unchanged.
 
-// Source art box (from snail.svg's viewBox).
-const SRC = { x: 498.21846771077793, y: 286.65631950196723, w: 69.45903235230732, h: 54.1944535310243 }
-
-// Target on-canvas size of the snail, in page px. Comfortably larger than the
-// runner base so the character reads, while its belly aligns to the track line.
-const SNAIL_LEN = 64
-
-// Uniform scale that maps the source width to the target length, then the
-// translate that puts the belly-midpoint at the local origin. The art's belly
-// sits along the BOTTOM of its box (max y); its mid-x is the box center.
-const SCALE = SNAIL_LEN / SRC.w
-// After scaling, shift so (mid-x, bottom) -> (0,0). We also lift the art by a
-// hair (BELLY_LIFT) so the rounded belly kisses the line rather than sinking in.
-const BELLY_LIFT = 3
-const TX = -(SRC.x + SRC.w / 2)
-const TY = -(SRC.y + SRC.h)
-
-// Vertical distance (in placed page px) from the art's belly-origin UP to the
-// visual center of the snail's box. The art box is SRC.h tall and scaled by
-// SCALE; its center sits half a box-height above the bottom (the belly), minus
-// the small BELLY_LIFT we already raised the art by. The rig uses this to center
-// the whole graphic on a point (e.g. the start marker) rather than its belly.
-export const SNAIL_CENTER_OFFSET = (SRC.h / 2) * SCALE - BELLY_LIFT * SCALE
-
-// Half the snail's drawn height, in placed page px. With the graphic centered on
-// the rig center, the visible belly sits this far BELOW the center. Physics sizes
-// the rig's collision reach to this so the body stops at the snail's silhouette
-// instead of letting the art sink through lines (see PHYSICS.riderRadius).
-export const SNAIL_HALF_HEIGHT = (SRC.h / 2) * SCALE
+import { SCALE, TX, TY, BELLY_LIFT } from './snailMetrics'
+export { SNAIL_CENTER_OFFSET, SNAIL_HALF_HEIGHT } from './snailMetrics'
 
 /**
  * The snail, drawn in a local frame centered on its belly-midpoint and facing

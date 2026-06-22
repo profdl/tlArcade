@@ -2,6 +2,27 @@
 // collides against a set of static line segments. Uses Verlet integration
 // (position-based) which is stable and simple for this kind of sim.
 
+// The drawn snail's placed half-height, from the PURE art-geometry module (no
+// React/TSX — importing it keeps this file framework-free, so the unit tests stay
+// simple). Used to DERIVE PHYSICS.bodyRadius below instead of hand-tuning it.
+import { SNAIL_HALF_HEIGHT } from './snailMetrics'
+
+// Height of the mast point above the runner base midpoint, px. Pulled out of the
+// PHYSICS object so bodyRadius can be derived from it (a member can't reference a
+// sibling member during the object literal's own initialization).
+const SLED_MAST = 14
+
+// The rig's collision radius, derived so its contact surface lands on the snail's
+// DRAWN belly rather than being a magic number kept in sync by hand. The graphic
+// is centered on the rig center; its visible belly sits SNAIL_HALF_HEIGHT below
+// center, and the runner line sits SLED_MAST/3 below center, so the radius that
+// reaches the belly from the runner is SNAIL_HALF_HEIGHT - SLED_MAST/3 (≈20.3).
+// Deriving it removes both the magic literal and the old drift-warning in Rider:
+// the art and the physics can no longer disagree. A bigger radius RAISES the
+// tunneling threshold (2*r/FIXED_DT) so it stays safe against tunneling; it rounds
+// corners a touch more, fine for a body this size.
+const BODY_RADIUS = SNAIL_HALF_HEIGHT - SLED_MAST / 3
+
 export interface Vec2 {
 	x: number
 	y: number
@@ -77,18 +98,11 @@ export const PHYSICS = {
 	// be dramatic) felt fine. See the slope probe in the fix that set this.
 	surfaceFriction: 0.004,
 	riderRadius: 6, // collision radius of a single sled point (the step() primitive)
-	// Collision radius used for the multi-point sled BODY. The drawn snail is much
-	// larger than a 6px point and is centered on the rig center, so a tiny radius
-	// lets the visible art sink through lines on contact. We grow the body's contact
-	// surface to reach the snail's DRAWN silhouette: it's centered on the rig center
-	// with a visible half-height of ~24.97px (SnailArt.SNAIL_HALF_HEIGHT) and the
-	// runner line sits sledMast/3 below center, so the radius that lands the contact
-	// surface on the visible belly is ~24.97 - 14/3 ≈ 20.3. Kept in sync by hand
-	// (physics stays free of the TSX art module). Only the body uses this; the
-	// single-point step() keeps riderRadius, so its tests/feel are unchanged. A
-	// bigger radius RAISES the tunneling threshold (2*r/FIXED_DT) so it's safe
-	// against tunneling; it rounds corners a touch more, fine for a body this size.
-	bodyRadius: 20,
+	// Collision radius of the multi-point sled BODY, DERIVED from the snail art so
+	// the rig's contact surface lands on the drawn belly (see BODY_RADIUS above).
+	// Only the body uses this; the single-point step() keeps riderRadius, so its
+	// tests/feel are unchanged.
+	bodyRadius: BODY_RADIUS,
 	contactSkin: 0.75, // band beyond riderRadius still treated as "riding" the line
 	maxSpeed: 4000, // clamp to avoid tunneling/explosions
 	accelerateBoost: 2400, // px/s^2 tangential acceleration added along 'accelerate' lines
@@ -111,7 +125,7 @@ export const PHYSICS = {
 	// rigid runner snags edges a small body rolls over. Don't grow this without
 	// re-checking corner snagging.
 	sledRunner: 11, // half-length of the runner base (front<->back), px
-	sledMast: 14, // height of the mast point above the base midpoint, px
+	sledMast: SLED_MAST, // height of the mast point above the base midpoint, px (see SLED_MAST)
 	// Upright restoring spring: each step we rotate the mast a fraction of the way
 	// back toward "above the runner, opposing gravity". 0 = no righting (free
 	// tumble), 1 = snaps upright instantly. Soft enough to pivot OVER bumps/corners

@@ -4,10 +4,9 @@ import {
 	bodyCenter,
 	bodyVelocity,
 	bodyAngle,
-	PHYSICS,
 	type ContactEvent,
 } from './physics'
-import { SnailArt, SNAIL_CENTER_OFFSET, SNAIL_HALF_HEIGHT } from './SnailArt'
+import { SnailArt, SNAIL_CENTER_OFFSET } from './SnailArt'
 import { makeSegmentsComputed, makeCheckpointsComputed, type TrackSegment } from './geometry'
 import { RunController, type TrackSource } from './runController'
 import { RiderAudio } from './riderAudio'
@@ -50,27 +49,10 @@ const FACING_FLIP_SPEED = 8
 // contact-diffing in RiderAudio, and the debug drawing in debugOverlay — this
 // component owns only the rAF orchestration plus the DOM-coupled snail transform
 // and camera follow.
-
-// Art<->physics drift guard. PHYSICS.bodyRadius is hand-tuned to land the rig's
-// collision surface on the snail's DRAWN belly (see the comment on bodyRadius in
-// physics.ts): the runner line sits ~sledMast/3 below the rig center, and the
-// belly is SNAIL_HALF_HEIGHT below center, so the radius that reaches the belly
-// is ~SNAIL_HALF_HEIGHT - sledMast/3. That ties a pure-physics constant to the
-// TSX art module by hand. Rider is the only place that imports both, so we
-// verify the relationship here: if SnailArt's SNAIL_LEN ever changes (which
-// drives SNAIL_HALF_HEIGHT), this warns instead of silently letting the snail
-// sink through or float above the track. Generous tolerance — it's a sanity
-// check on gross drift, not the exact tuning.
-if (import.meta.env?.DEV) {
-	const expected = SNAIL_HALF_HEIGHT - PHYSICS.sledMast / 3
-	if (Math.abs(expected - PHYSICS.bodyRadius) > 4) {
-		console.warn(
-			`[line-rider] PHYSICS.bodyRadius (${PHYSICS.bodyRadius}) drifted from the snail art ` +
-				`(SNAIL_HALF_HEIGHT - sledMast/3 = ${expected.toFixed(2)}). ` +
-				`Re-check PHYSICS.bodyRadius in physics.ts against SnailArt.`
-		)
-	}
-}
+//
+// (The old art<->physics drift guard that lived here is gone: PHYSICS.bodyRadius
+// is now DERIVED from the snail art's SNAIL_HALF_HEIGHT in physics.ts, so the two
+// can't disagree and there's nothing to warn about.)
 
 export function Rider() {
 	const editor = useEditor()
