@@ -95,7 +95,7 @@ export class Referee {
 				case 'seedDeck':
 					return this.seedDeck(sessionId, requestId, req.containerId, req.values)
 				case 'shuffle':
-					return await this.shuffle(requestId, req.containerId)
+					return await this.shuffle(sessionId, requestId, req.containerId)
 				case 'draw':
 					return await this.draw(sessionId, requestId, req.containerId, req.cardId, req.to, false)
 				case 'drawRandom':
@@ -148,6 +148,19 @@ export class Referee {
 			if (seat.activeSessions.has(sessionId)) return seatId
 		}
 		return null
+	}
+
+	/**
+	 * May this session operate on `containerId`'s hidden contents at all?
+	 * Gating is by OWNERSHIP, not visibility: an OWNED deck is a player's private
+	 * pile — only that seat may shuffle/draw from it, REGARDLESS of where a draw
+	 * is sent (so you can't deal a card out of someone's private deck onto the
+	 * table to read it). An UNOWNED deck is a shared draw pile open to all — even
+	 * a face-down (`hidden`) one, which is just a communal face-down stack.
+	 */
+	private mayAccessDeck(sessionId: SessionId, containerId: string): boolean {
+		const owner = (this.room.getRecord(containerId)?.props?.owner as SeatId | null | undefined) ?? null
+		return !owner || owner === this.seatOf(sessionId)
 	}
 
 	// ── DICE (§5.3) ──────────────────────────────────────────────────────────────
@@ -339,9 +352,16 @@ export class Referee {
 	}
 
 	/** Permute the hidden order with the server CSPRNG. No client learns it. */
-	private async shuffle(requestId: string, containerId: string): Promise<RefereeResponse> {
+	private async shuffle(
+		sessionId: SessionId,
+		requestId: string,
+		containerId: string
+	): Promise<RefereeResponse> {
 		const deck = this.decks.get(containerId)
 		if (!deck) return this.fail(requestId, `No deck for ${containerId}`)
+		if (!this.mayAccessDeck(sessionId, containerId)) {
+			return this.fail(requestId, 'Container is owned by another seat')
+		}
 		// Fisher–Yates with the fair RNG.
 		for (let i = deck.length - 1; i > 0; i--) {
 			const j = this.rollFair(i + 1)
@@ -367,9 +387,15 @@ export class Referee {
 		const deck = this.decks.get(containerId)
 		if (!deck || deck.length === 0) return this.fail(requestId, `Deck ${containerId} is empty`)
 
-		// AUTHORIZATION: drawing INTO a hand may only target your OWN seat (you
-		// can't deal cards into another player's hand). Drawing to the table is a
-		// public action any player may take (dealing the top card face-up).
+		// AUTHORIZATION (1): you may only draw FROM a private (hidden/ownerOnly)
+		// deck if you own it — even when drawing to the table. Otherwise anyone
+		// could pull a card out of your private pile onto the table to read it.
+		// A public deck is a shared draw pile, open to all.
+		if (!this.mayAccessDeck(sessionId, containerId)) {
+			return this.fail(requestId, 'Container is owned by another seat')
+		}
+		// AUTHORIZATION (2): drawing INTO a hand may only target your OWN seat —
+		// you can't deal cards into another player's hand.
 		if (to !== 'table' && to !== this.seatOf(sessionId)) {
 			return this.fail(requestId, 'Can only draw into your own hand')
 		}

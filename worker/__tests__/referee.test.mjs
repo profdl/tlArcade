@@ -136,3 +136,21 @@ console.log('cannot draw into a seat you do not occupy:', !drawOther.ok, '|', dr
 stored['shape:tc'] = { id: 'shape:tc', type: 'card', props: { state: 'faceDown', revealedValue: null, secretRef: null, owner: null } }
 const drawTable = await ref.handleRequest('sessX', 'drawT', { action: 'draw', containerId: 'shape:deck3', cardId: 'shape:tc', to: 'table' })
 console.log('any player may draw to the table:', drawTable.ok)
+
+// Authorization: an OWNED deck (seatA's private pile) may not be drawn FROM by a
+// non-owner, even to the table — prevents reading someone's private deck.
+stored['shape:privdeck'] = { id: 'shape:privdeck', type: 'container', props: { visibility: 'ownerOnly', owner: 'seatA', count: 0, layout: 'stack' } }
+await ref.handleRequest('sess1', 'seedPriv', { action: 'seedDeck', containerId: 'shape:privdeck', values: ['secret-card'] })
+stored['shape:steal'] = { id: 'shape:steal', type: 'card', props: { state: 'faceDown', revealedValue: null, secretRef: null, owner: null } }
+const stealToTable = await ref.handleRequest('sessX', 'steal', { action: 'draw', containerId: 'shape:privdeck', cardId: 'shape:steal', to: 'table' })
+const stealLeak = JSON.stringify(stored['shape:steal']).includes('secret-card')
+console.log('non-owner cannot draw a private deck to the table:', !stealToTable.ok, '| no value leaked to store:', !stealLeak)
+
+// non-owner cannot shuffle someone's private deck either.
+const stealShuffle = await ref.handleRequest('sessX', 'stealShuf', { action: 'shuffle', containerId: 'shape:privdeck' })
+console.log('non-owner cannot shuffle a private deck:', !stealShuffle.ok)
+
+// the owner (sess1 in seatA) CAN draw from their own private deck.
+stored['shape:own'] = { id: 'shape:own', type: 'card', props: { state: 'faceDown', revealedValue: null, secretRef: null, owner: null } }
+const ownDraw = await ref.handleRequest('sess1', 'ownDraw', { action: 'draw', containerId: 'shape:privdeck', cardId: 'shape:own', to: 'seatA' })
+console.log('owner can draw from their own private deck:', ownDraw.ok)
