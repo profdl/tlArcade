@@ -454,7 +454,7 @@ All referee-backed actions show a brief pending state until the authoritative re
 | **1. Easy shapes** | Prove the shape pattern with zero secrecy | Token (incl. stack/split), Tracker. No referee. | ✅ done |
 | **2. Referee skeleton + seats** | Stand up the DO + RPC channel + identity | `claimSeat` (guest + user proofs), `roll` action end-to-end → the **Die** works fairly. Seats land here because the first private reveal (Phase 3) already needs them. | ✅ done |
 | **3. Secrets** | Redaction boundary + private reveals | **Card** (table reveal via store + owner-only via private push, addressed by `SeatId`), `stashSecret`/`reveal`, server-only secret store | ✅ done |
-| **4. Containment** | Spatial binding subsystem | **Container** public mode: bind/unbind, layouts | next |
+| **4. Containment** | Spatial binding subsystem | **Container** public mode: `containment` binding + drop-detect, autoGrid/stack/fan layouts. Membership runs on drop (not per-frame) via `registerOperationCompleteHandler`, guarded against the after-change flush re-entering. | ✅ done |
 | **5. Hidden containers** | Secrecy + authority on containers | shuffle / draw / drawRandom, hidden & ownerOnly bags, decks |
 | **6. Grid** | Snapping subsystem + overlay | Square + hex grids, strict/loose snapping |
 | **7. Polish** | Animations, presence | spin/flip animations, presence cursors, pending-action states |

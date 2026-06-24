@@ -13,8 +13,10 @@
  * Everything else (registration with <Tldraw>, the toolbar button, the menu)
  * reads from these arrays, so this is the only wiring you touch.
  */
-import { TLAnyShapeUtilConstructor, TLStateNodeConstructor } from 'tldraw'
+import { TLAnyBindingUtilConstructor, TLAnyShapeUtilConstructor, TLStateNodeConstructor } from 'tldraw'
+import { ContainmentBindingUtil } from '../containment/ContainmentBinding'
 import { CardShapeUtil } from './CardShape'
+import { ContainerShapeUtil } from './ContainerShape'
 import { DieShapeUtil } from './DieShape'
 import { TokenShapeUtil } from './TokenShape'
 import { TrackerShapeUtil } from './TrackerShape'
@@ -28,7 +30,18 @@ export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
 	TrackerShapeUtil,
 	DieShapeUtil,
 	CardShapeUtil,
+	ContainerShapeUtil,
 	// ← add your `<Your>ShapeUtil` here
+]
+
+/**
+ * Custom bindings (relationships between shapes). The containment binding links
+ * a Container to the pieces inside it. Registered with `<Tldraw bindingUtils>`
+ * and the synced schema, same as shapes.
+ */
+export const gameBindingUtils: TLAnyBindingUtilConstructor[] = [
+	ContainmentBindingUtil,
+	// ← add your `<Your>BindingUtil` here
 ]
 
 /**

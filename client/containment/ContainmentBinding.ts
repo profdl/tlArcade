@@ -25,7 +25,7 @@ export class ContainmentBindingUtil extends BindingUtil<ContainmentBinding> {
 		return { index: 0 }
 	}
 
-	// When the binding is removed (item dragged out / deleted), nothing else to
-	// clean up — the item is a normal shape again. The container re-lays-out via
-	// the side-effect handler.
+	// tldraw auto-deletes bindings whose shapes are deleted, so there's no manual
+	// cleanup here. Re-packing the container after a child leaves/dies is handled
+	// in registerContainment (its delete + move handlers), not in the binding.
 }

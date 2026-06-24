@@ -86,3 +86,8 @@ export const gameShapeSchemas = {
 	container: { props: containerShapeValidators },
 	// ← add your shape's `{ props: <validators> }` here
 }
+
+/** Binding schemas the SYNC SERVER registers (must match client binding utils). */
+export const gameBindingSchemas = {
+	containment: { props: { index: T.number } },
+}

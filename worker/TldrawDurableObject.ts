@@ -6,13 +6,13 @@ import {
 } from '@tldraw/sync-core'
 import {
 	createTLSchema,
-	// defaultBindingSchemas,
+	defaultBindingSchemas,
 	defaultShapeSchemas,
 	TLRecord,
 } from '@tldraw/tlschema'
 import { DurableObject } from 'cloudflare:workers'
 import { AutoRouter, error, IRequest } from 'itty-router'
-import { gameShapeSchemas } from '../shared/shape-schemas'
+import { gameBindingSchemas, gameShapeSchemas } from '../shared/shape-schemas'
 import { isRefereeEnvelope, RefereeEnvelope } from '../shared/referee-protocol'
 import { Referee } from './Referee'
 
@@ -21,7 +21,7 @@ import { Referee } from './Referee'
 // the two stay in lockstep — a mismatch makes synced custom shapes fail to load.
 const schema = createTLSchema({
 	shapes: { ...defaultShapeSchemas, ...gameShapeSchemas },
-	// bindings: { ...defaultBindingSchemas },
+	bindings: { ...defaultBindingSchemas, ...gameBindingSchemas },
 })
 
 interface SocketAttachment {

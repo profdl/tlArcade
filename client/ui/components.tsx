@@ -39,7 +39,14 @@ function GameMainMenu() {
 					label="Add token"
 					icon="plus"
 					readonlyOk={false}
-					onSelect={() => addTokenAtCenter(editor)}
+					onSelect={() => addAtCenter(editor, 'token', 24)}
+				/>
+				<TldrawUiMenuItem
+					id="add-container"
+					label="Add container"
+					icon="plus"
+					readonlyOk={false}
+					onSelect={() => addAtCenter(editor, 'container', 130, 80)}
 				/>
 				<TldrawUiMenuItem
 					id="reset-board"
@@ -56,16 +63,10 @@ function GameMainMenu() {
 	)
 }
 
-/** Drop a token in the middle of the current viewport. */
-function addTokenAtCenter(editor: Editor) {
+/** Drop a shape of `type` centred in the viewport (props default via getDefaultProps). */
+function addAtCenter(editor: Editor, type: 'token' | 'container', halfW: number, halfH = halfW) {
 	const center = editor.getViewportPageBounds().center
-	editor.createShape({
-		id: createShapeId(),
-		type: 'token',
-		x: center.x - 24,
-		y: center.y - 24,
-		// props are optional — getDefaultProps() fills the rest.
-	})
+	editor.createShape({ id: createShapeId(), type, x: center.x - halfW, y: center.y - halfH })
 }
 
 /** Delete every shape on the current page. */

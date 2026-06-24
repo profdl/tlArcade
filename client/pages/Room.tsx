@@ -4,8 +4,9 @@ import { useParams } from 'react-router-dom'
 import { Tldraw } from 'tldraw'
 import { getBookmarkPreview } from '../getBookmarkPreview'
 import { multiplayerAssetStore } from '../multiplayerAssetStore'
+import { registerContainment } from '../containment/registerContainment'
 import { onRefereePrivateMessage } from '../referee/privateReveals'
-import { gameShapeUtils, gameTools } from '../shapes/registry'
+import { gameBindingUtils, gameShapeUtils, gameTools } from '../shapes/registry'
 import { createGameComponents } from '../ui/components'
 
 export function Room() {
@@ -20,8 +21,9 @@ export function Room() {
 		uri: `${window.location.origin}/api/connect/${roomId}`,
 		// ...and how to handle static assets like images & videos
 		assets: multiplayerAssetStore,
-		// ...and our custom game shapes, so the synced schema knows about them.
+		// ...and our custom game shapes + bindings, so the synced schema knows them.
 		shapeUtils: gameShapeUtils,
+		bindingUtils: gameBindingUtils,
 		// the ONLY client-bound referee channel: private (owner-only) reveals are
 		// pushed here (public results arrive via normal store sync). See SPEC §3.4.
 		onCustomMessageReceived: onRefereePrivateMessage,
@@ -36,8 +38,9 @@ export function Room() {
 				// we can pass the connected store into the Tldraw component which will handle
 				// loading states & enable multiplayer UX like cursors & a presence menu
 				store={store}
-				// the same custom shapes + tools must also be given to the editor for rendering
+				// the same custom shapes + bindings + tools must also be given to the editor
 				shapeUtils={gameShapeUtils}
+				bindingUtils={gameBindingUtils}
 				tools={gameTools}
 				// custom UI (main menu, context menu, ...) — see client/ui/components.tsx
 				components={components}
@@ -45,6 +48,8 @@ export function Room() {
 				onMount={(editor) => {
 					// when the editor is ready, we need to register our bookmark unfurling service
 					editor.registerExternalAssetHandler('url', getBookmarkPreview)
+					// enable drop-into-container behaviour (SPEC §4.2)
+					return registerContainment(editor)
 				}}
 			/>
 		</RoomWrapper>
