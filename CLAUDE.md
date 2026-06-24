@@ -24,18 +24,31 @@ identity (seats). See `SPEC.md` for the full design — it is the source of trut
 
 ```
 client/                 React + Vite front-end
-  pages/Room.tsx        ← mounts <Tldraw>; registers custom shapes + tools here
+  pages/Room.tsx        ← mounts <Tldraw>; registers shapes/bindings/tools/components,
+                          the referee receive channel, and editor behaviours
   shapes/               ← ONE FILE PER CUSTOM SHAPE (the main thing interns add)
-    registry.ts         ← the only file you edit to register a shape/tool
+    registry.ts         ← the only file you edit to register a shape/binding/tool
     TokenShape.tsx      ← reference example: simplest shape (public state)
     TrackerShape.tsx    ← reference example: shape with value/clamp math
+    DieShape.tsx        ← reference example: a referee-backed (server-random) shape
+    CardShape.tsx       ← reference example: a SECRET-bearing shape (redaction)
+    ContainerShape.tsx  ← deck/bag/hand (containment + hidden contents)
+    GridShape.tsx       ← a snapping surface + backdrop (no state, no referee)
+    _TEMPLATE.shape.tsx.txt  ← copy this to start a new shape
+  containment/          ← the "drop a piece into a container" subsystem (a binding
+                          + a drop-time side-effect). See SPEC §4.2.
+  grid/                 ← pure grid geometry (square/hex) + the snap behaviour
+  referee/              ← client side of the referee: useReferee (HTTP send) +
+                          privateReveals (owner-only receive channel)
   tools/                ← custom toolbar tools (StateNode subclasses), if any
-  ui/                   ← custom menu items, inspector panel (UI overrides)
+  ui/                   ← custom menu items + context menu (UI overrides)
 worker/                 Cloudflare Worker (the back-end)
-  TldrawDurableObject.ts  ← the sync room; intercepts referee RPCs
-  Referee.ts            ← server-authoritative logic (dice, seats, secrets)
+  TldrawDurableObject.ts  ← the sync room + the POST /api/referee route
+  Referee.ts            ← server-authoritative logic (dice, seats, secrets, decks)
+  __tests__/referee.test.mjs  ← framework-free referee tests (run via `yarn test`)
 shared/                 Code imported by BOTH client and worker
-  shape-schemas.ts      ← prop validators (ONE source of truth for client+server)
+  shape-schemas.ts      ← prop validators (ONE source of truth for client+server),
+                          plus gameBindingSchemas
   referee-protocol.ts   ← the client↔referee wire contract
 SPEC.md                 The architecture spec. Read it for the "why".
 ```
@@ -44,7 +57,12 @@ SPEC.md                 The architecture spec. Read it for the "why".
 
 - `yarn dev` — runs client + worker locally (Vite + wrangler).
 - `npx tsc --noEmit -p tsconfig.json` — typecheck everything. **Always run this
-  after a change.** Zero errors is the bar.
+  after a change, BEFORE committing.** Zero errors is the bar.
+- `yarn test` — runs the framework-free referee + grid-geometry tests. Add a case
+  here whenever you add a referee action or geometry function (they need no editor
+  or DOM, so they run under plain `node --experimental-strip-types`). NOTE: this
+  runner can't handle TS *parameter properties* (`constructor(private x)`) — use a
+  plain field + assignment in any code you want testable this way.
 - `npx vite build` — verify the client bundles.
 
 ---
@@ -93,7 +111,26 @@ These are the things your training data probably gets wrong. The repo is on
    sync document is visible to every client. Dice rolls, shuffles, and
    face-down values are computed by `worker/Referee.ts` and only their redacted
    results are written back. Do NOT put a hidden value in `shape.props`. See
-   `SPEC.md` §1–§3.
+   `SPEC.md` §1–§3, and `CardShape.tsx` for the worked redaction example.
+
+6. **Bindings (shape↔shape links) augment a *different* map and register
+   alongside shapes.** A `BindingUtil` needs `declare module 'tldraw' { interface
+   TLGlobalBindingPropsMap { mybinding: Props } }`, goes in `gameBindingUtils`
+   (registry.ts), is passed to `useSync({ bindingUtils })` AND `<Tldraw
+   bindingUtils>`, and its schema goes in `gameBindingSchemas` (shared) →
+   `createTLSchema({ bindings })`. tldraw auto-deletes a binding when either of
+   its shapes is deleted. See `client/containment/` for the worked example.
+
+7. **Editor-wide drag/drop behaviour belongs in a side-effect, run on DROP not
+   per-frame.** `editor.sideEffects.registerAfterChangeHandler` fires on every
+   committed change in a *deferred flush loop*, so naive "re-layout on change"
+   recurses (your writes re-enter the handler). The pattern that works
+   (see `client/containment/registerContainment.ts` and `client/grid/
+   registerSnapping.ts`): collect ids cheaply in the change handler; do the real
+   work once in `registerOperationCompleteHandler`; skip while
+   `editor.isIn('select.translating')`; wrap writes in `editor.run(fn, { history:
+   'ignore' })`; keep a re-entry guard. Register from `<Tldraw onMount>` and
+   return the disposer.
 
 ---
 
