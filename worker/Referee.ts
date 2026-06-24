@@ -53,6 +53,12 @@ export class Referee {
 	private readonly seats = new Map<SeatId, Seat>()
 	/** Idempotency: requestIds we've already processed (§3.6). */
 	private readonly handledRequests = new Set<string>()
+	/**
+	 * SERVER-ONLY secret state (SPEC §2.1). Maps a card id to its hidden value.
+	 * This NEVER leaves the referee except through an authorized reveal. The
+	 * synced store only ever holds the opaque key (`secretRef`), never the value.
+	 */
+	private readonly secrets = new Map<string, string>()
 
 	private readonly room: RoomBridge
 	constructor(room: RoomBridge) {
@@ -76,12 +82,14 @@ export class Referee {
 					return await this.claimSeat(sessionId, requestId, req.seatId, req.identity)
 				case 'roll':
 					return await this.roll(requestId, req.dieId)
+				case 'stashSecret':
+					return await this.stashSecret(sessionId, requestId, req.cardId, req.value, req.owner)
+				case 'reveal':
+					return await this.reveal(sessionId, requestId, req.cardId, req.to)
 				case 'shuffle':
 				case 'draw':
 				case 'drawRandom':
-				case 'flip':
-				case 'reveal':
-					// Phases 3–5 (SPEC §3.3, §5.2, §5.5). Shape is defined; logic pending.
+					// Phases 4–5 (SPEC §5.5). Shape is defined; logic pending.
 					return this.notImplemented(requestId, req.action)
 				default:
 					return this.fail(requestId, `Unknown action`)
@@ -98,10 +106,14 @@ export class Referee {
 		seatId: SeatId,
 		identity: IdentityProof
 	): Promise<RefereeResponse> {
-		// TODO(Phase 3+): verify the IdentityProof. For a 'user' proof, validate the
-		// token against your auth (JWT signature / session lookup). For a 'guest'
-		// proof, check the (guestId, secret) pair. For now we accept any well-formed
-		// proof so the seat plumbing is exercisable end-to-end.
+		// ⚠️ SECURITY TODO (before any real deployment): the IdentityProof is NOT
+		// verified yet. For a 'user' proof, validate the token against your auth
+		// (JWT signature / session lookup); for a 'guest' proof, check the
+		// (guestId, secret) pair against first-claim. Until this lands, ANY client
+		// can claim an unoccupied seat and thus receive its owner-only private
+		// reveals — the seat/activeSessions gating is only as strong as this check.
+		// Tracked as SPEC §8.1. We currently accept any well-formed proof so the
+		// seat plumbing is exercisable end-to-end.
 		const existing = this.seats.get(seatId)
 		if (existing && !identitiesMatch(existing.identity, identity)) {
 			return this.fail(requestId, 'Seat already taken by another player')
@@ -119,6 +131,14 @@ export class Referee {
 	/** Forget a session when its socket closes (called by the DO). */
 	dropSession(sessionId: SessionId) {
 		for (const seat of this.seats.values()) seat.activeSessions.delete(sessionId)
+	}
+
+	/** Which seat (if any) this session currently occupies. */
+	private seatOf(sessionId: SessionId): SeatId | null {
+		for (const [seatId, seat] of this.seats) {
+			if (seat.activeSessions.has(sessionId)) return seatId
+		}
+		return null
 	}
 
 	// ── DICE (§5.3) ──────────────────────────────────────────────────────────────
@@ -152,6 +172,132 @@ export class Referee {
 			x = buf[0]
 		} while (x >= limit)
 		return x % n
+	}
+
+	// ── CARDS / SECRETS (§2.2, §5.2) ─────────────────────────────────────────────
+
+	/**
+	 * Take custody of a card's hidden value. The value goes into server-only
+	 * `secrets`; the store keeps only the opaque `secretRef`. If `owner` is given,
+	 * push the value privately to that seat now (an owner-only card in a hand).
+	 */
+	private async stashSecret(
+		sessionId: SessionId,
+		requestId: string,
+		cardId: string,
+		value: string,
+		owner?: SeatId
+	): Promise<RefereeResponse> {
+		const callerSeat = this.seatOf(sessionId)
+		const card = this.room.getRecord(cardId)
+
+		// AUTHORIZATION (defense in depth): you may not stash a secret for a card
+		// already owned by a DIFFERENT seat (no overwriting another player's card),
+		// and you may not assign ownership to a seat other than your own.
+		// NOTE: this assumes the caller's seat is trustworthy — which holds only
+		// once claimSeat verifies the IdentityProof (the pre-deploy TODO above).
+		const existingOwner = (card?.props?.owner as SeatId | null | undefined) ?? null
+		if (existingOwner && existingOwner !== callerSeat) {
+			return this.fail(requestId, 'Card is owned by another seat')
+		}
+		if (owner && owner !== callerSeat) {
+			return this.fail(requestId, 'Cannot assign a secret to another seat')
+		}
+
+		const secretRef = `secret:${cardId}`
+		this.secrets.set(secretRef, value)
+
+		await this.room.updateStore((store) => {
+			const card = store.get(cardId)
+			if (card) {
+				store.put({
+					...card,
+					props: {
+						...card.props,
+						state: 'faceDown',
+						revealedValue: null, // never leak the value into the store
+						secretRef,
+						owner: owner ?? null,
+					},
+				})
+			}
+		})
+
+		// Owner-only: deliver the value privately so only the owner can see it.
+		if (owner) this.pushPrivateReveal(owner, cardId, value)
+
+		this.handledRequests.add(requestId)
+		return { kind: 'referee', requestId, ok: true }
+	}
+
+	/**
+	 * Reveal a stashed secret. `to: 'table'` writes the value publicly into the
+	 * store for everyone. `to: <seat>` pushes it privately to that seat only; the
+	 * store stays redacted, so no other client (or devtools) sees it.
+	 */
+	private async reveal(
+		sessionId: SessionId,
+		requestId: string,
+		cardId: string,
+		to: 'table' | SeatId
+	): Promise<RefereeResponse> {
+		const secretRef = `secret:${cardId}`
+		const value = this.secrets.get(secretRef)
+		if (value === undefined) return this.fail(requestId, `No secret for ${cardId}`)
+
+		// AUTHORIZATION: an OWNED card may only be revealed by its owner (you can't
+		// flip another player's hand onto the table, nor peek it into your own).
+		// An unowned table card is public — anyone may flip it. (Same trust caveat
+		// as stashSecret: only as strong as claimSeat verification.)
+		const callerSeat = this.seatOf(sessionId)
+		const owner = (this.room.getRecord(cardId)?.props?.owner as SeatId | null | undefined) ?? null
+		if (owner && owner !== callerSeat) {
+			return this.fail(requestId, 'Card is owned by another seat')
+		}
+
+		if (to === 'table') {
+			this.secrets.delete(secretRef) // it's public now; no need to keep it hidden
+			await this.room.updateStore((store) => {
+				const card = store.get(cardId)
+				if (card) {
+					store.put({
+						...card,
+						props: {
+							...card.props,
+							state: 'faceUp',
+							revealedValue: value,
+							secretRef: null,
+							owner: null,
+						},
+					})
+				}
+			})
+			this.handledRequests.add(requestId)
+			return { kind: 'referee', requestId, ok: true }
+		}
+
+		// Reveal to a single seat — private push only, store untouched. The value
+		// is delivered ONLY through pushPrivateReveal (gated to the seat's
+		// occupants). It must NOT appear in this HTTP response: the response goes
+		// to whoever made the POST, whose sessionId is unauthenticated and need not
+		// own the seat. Returning the value here would be a redaction-boundary leak.
+		this.pushPrivateReveal(to, cardId, value)
+		this.handledRequests.add(requestId)
+		return { kind: 'referee', requestId, ok: true }
+	}
+
+	/** Send a value to every live session occupying `seat` (SPEC §3.4). */
+	private pushPrivateReveal(seat: SeatId, cardId: string, value: string) {
+		const occupants = this.seats.get(seat)?.activeSessions
+		if (!occupants) return
+		for (const sessionId of occupants) {
+			this.room.sendToSession(sessionId, {
+				kind: 'referee',
+				requestId: '',
+				ok: true,
+				result: { type: 'privateReveal', cardId, value },
+			})
+		}
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────────

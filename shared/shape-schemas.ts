@@ -52,9 +52,37 @@ export const dieShapeValidators = {
  * ShapeUtil's `static props`. Keep this list in sync with
  * `client/shapes/registry.ts`.
  */
+export const cardShapeValidators = {
+	w: T.number,
+	h: T.number,
+	aspect: T.literalEnum('poker', 'square', 'tarot'),
+	state: T.literalEnum('faceUp', 'faceDown'),
+	// card-back appearance (shown while face-down)
+	backColor: T.string,
+	// PUBLIC face value — only set when the card is face-up & public. Null = hidden.
+	revealedValue: T.nullable(T.string),
+	// opaque referee handle while hidden; resolves to the real value server-side.
+	// NEVER holds the value itself — that would leak it to every client.
+	secretRef: T.nullable(T.string),
+	// seat that privately owns this card (owner-only hands). Null = on the table.
+	owner: T.nullable(T.string),
+}
+
+export const containerShapeValidators = {
+	w: T.number,
+	h: T.number,
+	label: T.string,
+	// Phase 4 implements 'public'. 'hidden'/'ownerOnly' are Phase 5 (referee-backed).
+	visibility: T.literalEnum('public', 'hidden', 'ownerOnly'),
+	owner: T.nullable(T.string), // SeatId for ownerOnly (Phase 5)
+	layout: T.literalEnum('autoGrid', 'stack', 'fan'),
+}
+
 export const gameShapeSchemas = {
 	token: { props: tokenShapeValidators },
 	tracker: { props: trackerShapeValidators },
 	die: { props: dieShapeValidators },
+	card: { props: cardShapeValidators },
+	container: { props: containerShapeValidators },
 	// ← add your shape's `{ props: <validators> }` here
 }

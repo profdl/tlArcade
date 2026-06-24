@@ -38,7 +38,11 @@ export type RefereeRequest =
 	| { action: 'shuffle'; containerId: ShapeId }
 	| { action: 'draw'; containerId: ShapeId; toSeat: SeatId }
 	| { action: 'drawRandom'; containerId: ShapeId; toSeat: SeatId }
-	| { action: 'flip'; cardId: ShapeId }
+	// Hand the referee a card's hidden value. The value goes into server-only
+	// state; the store keeps just the opaque secretRef. (SPEC §2.2, §5.2)
+	| { action: 'stashSecret'; cardId: ShapeId; value: string; owner?: SeatId }
+	// Reveal a stashed secret: to the whole table (writes revealedValue publicly)
+	// or to one seat (pushes the value privately; store stays redacted).
 	| { action: 'reveal'; cardId: ShapeId; to: 'table' | SeatId }
 
 /** Every request carries an idempotency key so a referee restart can dedupe (§3.6). */

@@ -1395,7 +1395,7 @@
     "@tldraw/editor" "5.1.1"
     "@tldraw/utils" "5.1.1"
 
-"@tldraw/editor@5.1.1":
+"@tldraw/editor@5.1.1", "@tldraw/editor@^5.1.1":
   version "5.1.1"
   resolved "https://registry.yarnpkg.com/@tldraw/editor/-/editor-5.1.1.tgz#63ec3ebe2dcbe63affbb341dbed2e7f1adaa2f3e"
   integrity sha512-TyIpxJBWHPkOvaviy05Yjnf9pYbBLFib000IxJkeLVv8fkBhFBaQNYyIc93uJwsPxaAdNYhNUye3XxBDSj8fYQ==

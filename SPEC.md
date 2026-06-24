@@ -124,12 +124,22 @@ Two Durable Objects per room, or one DO with two responsibilities:
 
 ### 3.2 The RPC channel
 
-Clients talk to the referee over a **side channel**, not by editing the store:
+Clients talk to the referee over a **side channel**, not by editing the store.
 
-- Reuse the existing sync WebSocket with a custom message envelope (`{ kind: 'referee', action, payload }`) that the worker intercepts before handing store ops to the sync room, **or**
-- Open a second WebSocket to the referee DO.
-
-Recommendation: **single WebSocket, custom envelope.** Fewer connections, simpler auth, the referee already needs to be in the message path to write results.
+> **Implementation note (corrects the original recommendation):** the
+> `@tldraw/sync` socket turns out to be **one-way for custom messages**
+> (server→client only — `TLSyncClient` exposes no public send). So a single
+> WebSocket cannot carry client→referee RPCs. The shipped design splits the
+> transport:
+> - **client → referee:** HTTP `POST /api/referee/:roomId` to the room's DO,
+>   carrying the `RefereeEnvelope` plus the client's sync `sessionId` (which is
+>   `TAB_ID` from `@tldraw/editor` — what `useSync` uses on its socket).
+> - **referee → client (public):** written into the store via `updateStore`;
+>   arrives through normal sync.
+> - **referee → client (private):** `room.sendCustomMessage(sessionId, …)`,
+>   received via `useSync({ onCustomMessageReceived })`.
+>
+> This is less code than a second WebSocket and needs no socket interception.
 
 ### 3.3 Referee actions (the authoritative API)
 
@@ -438,13 +448,13 @@ All referee-backed actions show a brief pending state until the authoritative re
 
 ## 7. Build phases
 
-| Phase | Goal | Ships |
-|---|---|---|
-| **0. Scaffold** | Fresh v5 app + sync | `useSyncDemo` room, empty canvas, custom-shape registration plumbing |
-| **1. Easy shapes** | Prove the shape/inspector pattern with zero secrecy | Token (incl. stack/split), Tracker. No referee. |
-| **2. Referee skeleton + seats** | Stand up the DO + RPC channel + identity | `claimSeat` (guest + user proofs), `roll` action end-to-end → the **Die** works fairly. Seats land here because the first private reveal (Phase 3) already needs them. |
-| **3. Secrets** | Redaction boundary + private reveals | **Card** flip (table + owner-only, addressed by `SeatId`), `secretRef` resolution |
-| **4. Containment** | Spatial binding subsystem | **Container** public mode: bind/unbind, layouts |
+| Phase | Goal | Ships | Status |
+|---|---|---|---|
+| **0. Scaffold** | Fresh v5 app + sync | tldraw-sync-cloudflare base, room routing, custom-shape registration plumbing | ✅ done |
+| **1. Easy shapes** | Prove the shape pattern with zero secrecy | Token (incl. stack/split), Tracker. No referee. | ✅ done |
+| **2. Referee skeleton + seats** | Stand up the DO + RPC channel + identity | `claimSeat` (guest + user proofs), `roll` action end-to-end → the **Die** works fairly. Seats land here because the first private reveal (Phase 3) already needs them. | ✅ done |
+| **3. Secrets** | Redaction boundary + private reveals | **Card** (table reveal via store + owner-only via private push, addressed by `SeatId`), `stashSecret`/`reveal`, server-only secret store | ✅ done |
+| **4. Containment** | Spatial binding subsystem | **Container** public mode: bind/unbind, layouts | next |
 | **5. Hidden containers** | Secrecy + authority on containers | shuffle / draw / drawRandom, hidden & ownerOnly bags, decks |
 | **6. Grid** | Snapping subsystem + overlay | Square + hex grids, strict/loose snapping |
 | **7. Polish** | Animations, presence | spin/flip animations, presence cursors, pending-action states |

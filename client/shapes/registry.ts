@@ -14,6 +14,7 @@
  * reads from these arrays, so this is the only wiring you touch.
  */
 import { TLAnyShapeUtilConstructor, TLStateNodeConstructor } from 'tldraw'
+import { CardShapeUtil } from './CardShape'
 import { DieShapeUtil } from './DieShape'
 import { TokenShapeUtil } from './TokenShape'
 import { TrackerShapeUtil } from './TrackerShape'
@@ -26,6 +27,7 @@ export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
 	TokenShapeUtil,
 	TrackerShapeUtil,
 	DieShapeUtil,
+	CardShapeUtil,
 	// ← add your `<Your>ShapeUtil` here
 ]
 

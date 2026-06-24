@@ -21,6 +21,7 @@ import {
 	useEditor,
 	useValue,
 } from 'tldraw'
+import { CardShape } from '../shapes/CardShape'
 import { DieShape } from '../shapes/DieShape'
 import { useReferee } from '../referee/useReferee'
 
@@ -81,27 +82,39 @@ function makeGameContextMenu(roomId: string | undefined) {
 		const editor = useEditor()
 		const sendToReferee = useReferee(roomId)
 
-		// Reactively read the single selected die, if any.
-		const selectedDie = useValue<DieShape | null>(
-			'selectedDie',
-			() => {
-				const shape = editor.getOnlySelectedShape()
-				return shape?.type === 'die' ? (shape as DieShape) : null
-			},
+		// Reactively read the single selected game shape, if any.
+		const selected = useValue(
+			'selectedGameShape',
+			() => editor.getOnlySelectedShape(),
 			[editor]
 		)
+		const selectedDie = selected?.type === 'die' ? (selected as DieShape) : null
+		const selectedCard = selected?.type === 'card' ? (selected as CardShape) : null
 
 		return (
 			<DefaultContextMenu>
-				{selectedDie && (
+				{(selectedDie || selectedCard) && (
 					<TldrawUiMenuGroup id="game">
-						<TldrawUiMenuItem
-							id="roll-die"
-							label="Roll"
-							icon="undo"
-							readonlyOk={false}
-							onSelect={() => rollDie(editor, selectedDie, sendToReferee)}
-						/>
+						{selectedDie && (
+							<TldrawUiMenuItem
+								id="roll-die"
+								label="Roll"
+								icon="undo"
+								readonlyOk={false}
+								onSelect={() => rollDie(editor, selectedDie, sendToReferee)}
+							/>
+						)}
+						{selectedCard?.props.secretRef && (
+							<TldrawUiMenuItem
+								id="reveal-card"
+								label="Reveal to table"
+								icon="external-link"
+								readonlyOk={false}
+								onSelect={() => {
+								void sendToReferee({ action: 'reveal', cardId: selectedCard.id, to: 'table' })
+							}}
+							/>
+						)}
 					</TldrawUiMenuGroup>
 				)}
 				<DefaultContextMenuContent />

@@ -152,10 +152,23 @@ const components: TLComponents = { MainMenu: CustomMainMenu }
 
 1. Add the action to `RefereeRequest` in `shared/referee-protocol.ts`.
 2. Handle it in `worker/Referee.ts` → `handleRequest` switch. Use
-   `this.room.updateStore(...)` for public results, `this.room.sendToSession(...)`
+   `this.room.updateStore(...)` for public results, `this.room.pushPrivateReveal(seat, ...)`
    for private (owner-only) reveals. Owns the RNG via `crypto.getRandomValues`.
-3. On the client, send a `RefereeEnvelope` over the sync socket (helper TBD in
-   `client/` — see `SPEC.md` §3.2). Never compute the result client-side.
+   Add the case to the framework-free test in `worker/__tests__/referee.test.mjs`
+   and run `yarn test`.
+3. On the client, call `useReferee(roomId)` and `await send({ action: ... })`.
+
+**TRANSPORT (important):** the `@tldraw/sync` socket is ONE-WAY for custom
+messages (server→client only). So:
+- **client → referee** goes over HTTP `POST /api/referee/:roomId`
+  (`client/referee/useReferee.ts` — it sends `sessionId: TAB_ID` so the referee
+  can address private pushes back to this exact socket).
+- **public results** (e.g. a dice value) come back through normal store sync —
+  the referee writes them with `updateStore`, the client just re-renders.
+- **private results** (owner-only reveals) are pushed via the room's
+  `sendCustomMessage` and received in `client/referee/privateReveals.ts`
+  (`useSync({ onCustomMessageReceived })`). They are held in a reactive `atom`
+  and rendered locally — NEVER written to the store. See `SPEC.md` §3.2, §3.4.
 
 ---
 

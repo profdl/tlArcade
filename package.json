@@ -16,6 +16,7 @@
 		"test": "node --experimental-strip-types worker/__tests__/referee.test.mjs"
 	},
 	"dependencies": {
+		"@tldraw/editor": "^5.1.1",
 		"@tldraw/sync": "^5.1.1",
 		"@tldraw/sync-core": "^5.1.1",
 		"@tldraw/tlschema": "^5.1.1",

@@ -11,11 +11,14 @@
  * results (owner-only reveals) are pushed via `onCustomMessageReceived`
  * (wired in Room.tsx).
  */
+import { TAB_ID } from '@tldraw/editor'
 import { useCallback } from 'react'
 import { RefereeRequest, RefereeResponse } from '../../shared/referee-protocol'
 
-/** A stable per-tab id used to address private reveals back to this client. */
-const sessionId = crypto.randomUUID()
+// The SYNC session id. `useSync` uses `TAB_ID` (from @tldraw/editor) as the
+// sessionId on its socket, so by sending the same value the referee can address
+// a private reveal back to THIS client's socket via room.sendCustomMessage.
+const sessionId = TAB_ID
 
 export function useReferee(roomId: string | undefined) {
 	return useCallback(
