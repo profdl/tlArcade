@@ -12,10 +12,26 @@ import {
 } from '@tldraw/tlschema'
 import { DurableObject } from 'cloudflare:workers'
 import { AutoRouter, error, IRequest } from 'itty-router'
+import { gameShapeSchemas } from '../shared/shape-schemas'
+import { isRefereeEnvelope, RefereeEnvelope } from '../shared/referee-protocol'
+import { Referee } from './Referee'
 
-// add custom shapes and bindings here if needed:
+/** Parse a string message as a referee envelope, or null if it isn't one. */
+function tryParseRefereeEnvelope(message: string): RefereeEnvelope | null {
+	if (!message.includes('"referee"')) return null // cheap pre-check before JSON.parse
+	try {
+		const parsed = JSON.parse(message)
+		return isRefereeEnvelope(parsed) ? parsed : null
+	} catch {
+		return null
+	}
+}
+
+// The server's schema MUST match the client's (which is built from `shapeUtils`
+// in useSync). We register our custom game shapes from the shared schema map so
+// the two stay in lockstep — a mismatch makes synced custom shapes fail to load.
 const schema = createTLSchema({
-	shapes: { ...defaultShapeSchemas },
+	shapes: { ...defaultShapeSchemas, ...gameShapeSchemas },
 	// bindings: { ...defaultBindingSchemas },
 })
 
@@ -35,6 +51,8 @@ export class TldrawDurableObject extends DurableObject {
 	private room: TLSocketRoom<TLRecord, void> | null = null
 	/** Map sessionId → ws so onSessionSnapshot can serialize to the right socket. */
 	private readonly sessionIdToWs = new Map<string, WebSocket>()
+	/** The server-authoritative referee for this room (SPEC §3). Lazily created. */
+	private referee: Referee | null = null
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env)
@@ -81,6 +99,21 @@ export class TldrawDurableObject extends DurableObject {
 		return this.room
 	}
 
+	// Build the referee on first use, bridging it to this room's store + sockets
+	// (SPEC §3.1–§3.4). The bridge is the only coupling between the framework-free
+	// Referee class and the Cloudflare/TLSocketRoom machinery.
+	private getReferee(): Referee {
+		if (!this.referee) {
+			const room = this.getOrCreateRoom()
+			this.referee = new Referee({
+				updateStore: (fn) => room.updateStore(fn as never),
+				getRecord: (id) => room.getRecord(id as never) as never,
+				sendToSession: (sessionId, data) => room.sendCustomMessage(sessionId, data as never),
+			})
+		}
+		return this.referee
+	}
+
 	private readonly router = AutoRouter({ catch: (e) => error(e) }).get(
 		'/api/connect/:roomId',
 		(request) => this.handleConnect(request)
@@ -125,6 +158,23 @@ export class TldrawDurableObject extends DurableObject {
 		if (!sessionId) return
 
 		this.sessionIdToWs.set(sessionId, ws)
+
+		// INTERCEPT REFEREE RPCs (SPEC §3.2): referee envelopes travel over the same
+		// WebSocket but are NOT store edits — peek the message and route accordingly.
+		if (typeof message === 'string') {
+			const envelope = tryParseRefereeEnvelope(message)
+			if (envelope) {
+				const response = await this.getReferee().handleRequest(
+					sessionId as never,
+					envelope.requestId,
+					envelope.request
+				)
+				ws.send(JSON.stringify(response))
+				return
+			}
+		}
+
+		// Otherwise it's a normal sync message — hand it to the room as before.
 		this.getOrCreateRoom().handleSocketMessage(sessionId, message)
 	}
 
@@ -141,6 +191,8 @@ export class TldrawDurableObject extends DurableObject {
 		if (!attachment?.sessionId) return
 
 		this.sessionIdToWs.delete(attachment.sessionId)
+		// Let the referee forget this session's seat occupancy (SPEC §3.6, §3.7).
+		this.referee?.dropSession(attachment.sessionId as never)
 
 		const room = this.getOrCreateRoom()
 

@@ -1,0 +1,89 @@
+/**
+ * SHAPE TEMPLATE — copy me to create a new custom shape.
+ * ======================================================
+ * This file is `.txt` on purpose so it is NOT compiled. To use it:
+ *
+ *   1. Copy to `client/shapes/<Name>Shape.tsx` (real .tsx extension).
+ *   2. Find-and-replace `Template` → `<Name>` and `template` → `<name>`
+ *      (the lowercase string is the shape's `type` id).
+ *   3. Edit the props, validators, getDefaultProps, and component() render.
+ *   4. Add the validators to `shared/shape-schemas.ts` + `gameShapeSchemas`.
+ *   5. Add `<Name>ShapeUtil` to `gameShapeUtils` in `client/shapes/registry.ts`.
+ *   6. `npx tsc --noEmit` until clean.
+ *
+ * See CLAUDE.md → "tldraw v5 GOTCHAS" for why each piece below is required.
+ */
+import {
+	Geometry2d,
+	HTMLContainer,
+	Rectangle2d,
+	RecordProps,
+	ShapeUtil,
+	TLBaseShape,
+	TLResizeInfo,
+	resizeBox,
+} from 'tldraw'
+// import { templateShapeValidators } from '../../shared/shape-schemas'  // add there too
+
+// 1) PROPS — the public, synced state. No secrets here (use the Referee for those).
+export type TemplateShapeProps = {
+	w: number
+	h: number
+	// ...your props
+}
+
+export type TemplateShape = TLBaseShape<'template', TemplateShapeProps>
+
+// 2) REGISTER THE TYPE (required — TLShape is a closed union in v5)
+declare module 'tldraw' {
+	interface TLGlobalShapePropsMap {
+		template: TemplateShapeProps
+	}
+}
+
+// 3) VALIDATORS — ideally import these from shared/shape-schemas.ts so the sync
+//    server uses the identical set. Inlined here only to keep the template
+//    self-contained; move them to shared/ when you wire it up.
+import { T } from '@tldraw/validate'
+const templateShapeProps = {
+	w: T.number,
+	h: T.number,
+} as RecordProps<TemplateShape>
+
+// 4) THE UTIL
+export class TemplateShapeUtil extends ShapeUtil<TemplateShape> {
+	static override type = 'template' as const
+	static override props = templateShapeProps
+
+	getDefaultProps(): TemplateShape['props'] {
+		return { w: 100, h: 100 }
+	}
+
+	getGeometry(shape: TemplateShape): Geometry2d {
+		return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true })
+	}
+
+	override canResize() {
+		return true
+	}
+	override onResize(shape: TemplateShape, info: TLResizeInfo<TemplateShape>) {
+		return resizeBox(shape, info)
+	}
+
+	component(shape: TemplateShape) {
+		const { w, h } = shape.props
+		return (
+			<HTMLContainer style={{ width: w, height: h, pointerEvents: 'all' }}>
+				{/* your render */}
+				<div style={{ width: '100%', height: '100%', background: '#dee2e6', borderRadius: 8 }} />
+			</HTMLContainer>
+		)
+	}
+
+	// v5: selection outline is a Path2D, not JSX.
+	getIndicatorPath(shape: TemplateShape) {
+		const path = new Path2D()
+		path.roundRect(0, 0, shape.props.w, shape.props.h, 8)
+		return path
+	}
+}
