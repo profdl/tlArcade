@@ -80,12 +80,21 @@ export const containerShapeValidators = {
 	count: T.positiveInteger,
 }
 
+export const gridShapeValidators = {
+	w: T.number,
+	h: T.number,
+	type: T.literalEnum('square', 'hexFlat', 'hexPointy'),
+	cellSize: T.positiveInteger,
+	snap: T.literalEnum('strict', 'loose', 'none'),
+}
+
 export const gameShapeSchemas = {
 	token: { props: tokenShapeValidators },
 	tracker: { props: trackerShapeValidators },
 	die: { props: dieShapeValidators },
 	card: { props: cardShapeValidators },
 	container: { props: containerShapeValidators },
+	grid: { props: gridShapeValidators },
 	// ← add your shape's `{ props: <validators> }` here
 }
 

@@ -18,6 +18,7 @@ import { ContainmentBindingUtil } from '../containment/ContainmentBinding'
 import { CardShapeUtil } from './CardShape'
 import { ContainerShapeUtil } from './ContainerShape'
 import { DieShapeUtil } from './DieShape'
+import { GridShapeUtil } from './GridShape'
 import { TokenShapeUtil } from './TokenShape'
 import { TrackerShapeUtil } from './TrackerShape'
 
@@ -31,6 +32,7 @@ export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
 	DieShapeUtil,
 	CardShapeUtil,
 	ContainerShapeUtil,
+	GridShapeUtil,
 	// ← add your `<Your>ShapeUtil` here
 ]
 

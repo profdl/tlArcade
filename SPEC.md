@@ -456,8 +456,8 @@ All referee-backed actions show a brief pending state until the authoritative re
 | **3. Secrets** | Redaction boundary + private reveals | **Card** (table reveal via store + owner-only via private push, addressed by `SeatId`), `stashSecret`/`reveal`, server-only secret store | ✅ done |
 | **4. Containment** | Spatial binding subsystem | **Container** public mode: `containment` binding + drop-detect, autoGrid/stack/fan layouts. Membership runs on drop (not per-frame) via `registerOperationCompleteHandler`, guarded against the after-change flush re-entering. | ✅ done |
 | **5. Hidden containers** | Secrecy + authority on containers | `seedDeck`/`shuffle`/`draw`/`drawRandom`: server-held ordered deck (order unknowable to all clients), draw pops onto a client-created card → table (public) or seat (owner-only private). hidden/ownerOnly render. | ✅ done |
-| **6. Grid** | Snapping subsystem + overlay | Square + hex grids, strict/loose snapping | next |
-| **7. Polish** | Animations, presence | spin/flip animations, presence cursors, pending-action states | |
+| **6. Grid** | Snapping subsystem + overlay | **Grid** overlay (square / flat-hex / pointy-hex), pure tested axial geometry; strict snap clamps a dropped piece to the nearest cell centre via the same drop-time side-effect as containment. | ✅ done |
+| **7. Polish** | Animations, presence | spin/flip animations, presence cursors, pending-action states, loose-snap guides | next |
 
 Rationale for the order: each phase unlocks the next *capability tier* (public → fair-random + identity → secret → spatial → secret-spatial), so you never build a hard shape before its substrate exists. The Die is deliberately first-secret-adjacent because it's the smallest test of the whole referee loop; seats ride along in Phase 2 because the very next phase's owner-only reveal can't address a recipient without them.
 

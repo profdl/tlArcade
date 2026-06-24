@@ -50,6 +50,13 @@ function GameMainMenu() {
 					onSelect={() => addAtCenter(editor, 'container', 130, 80)}
 				/>
 				<TldrawUiMenuItem
+					id="add-grid"
+					label="Add grid"
+					icon="plus"
+					readonlyOk={false}
+					onSelect={() => addAtCenter(editor, 'grid', 200)}
+				/>
+				<TldrawUiMenuItem
 					id="reset-board"
 					label="Clear board"
 					icon="trash"
@@ -65,9 +72,12 @@ function GameMainMenu() {
 }
 
 /** Drop a shape of `type` centred in the viewport (props default via getDefaultProps). */
-function addAtCenter(editor: Editor, type: 'token' | 'container', halfW: number, halfH = halfW) {
+function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid', halfW: number, halfH = halfW) {
 	const center = editor.getViewportPageBounds().center
-	editor.createShape({ id: createShapeId(), type, x: center.x - halfW, y: center.y - halfH })
+	const id = createShapeId()
+	editor.createShape({ id, type, x: center.x - halfW, y: center.y - halfH })
+	// A grid is a backdrop — keep it beneath the pieces.
+	if (type === 'grid') editor.sendToBack([id])
 }
 
 /** Delete every shape on the current page. */
