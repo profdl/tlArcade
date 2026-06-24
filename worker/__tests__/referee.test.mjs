@@ -91,3 +91,32 @@ console.log('cannot reveal a card owned by another seat:', !revealOther.ok, '|',
 // the owner (sess1 in seatA) CAN reveal its own card.
 const revealOwn = await ref.handleRequest('sess1', 'roOwn', { action: 'reveal', cardId: 'shape:card2', to: 'table' })
 console.log('owner can reveal own card:', revealOwn.ok)
+
+// ── Phase 5: decks / shuffle / draw ───────────────────────────────────────────
+stored['shape:deck1'] = { id: 'shape:deck1', type: 'container', props: { visibility: 'hidden', owner: null, count: 0, layout: 'stack' } }
+const cards52 = Array.from({ length: 52 }, (_, i) => `card-${i}`)
+await ref.handleRequest('sess1', 'seed1', { action: 'seedDeck', containerId: 'shape:deck1', values: cards52 })
+console.log('seedDeck publishes count, NOT contents:', stored['shape:deck1'].props.count === 52, '| no card value in store:', !JSON.stringify(stored['shape:deck1']).includes('card-0'))
+
+// shuffle then draw all 52 to the table → we must get all 52 distinct values, none lost/duped.
+await ref.handleRequest('sess1', 'shuf1', { action: 'shuffle', containerId: 'shape:deck1' })
+const drawn = new Set()
+for (let i = 0; i < 52; i++) {
+  stored[`shape:drawn${i}`] = { id: `shape:drawn${i}`, type: 'card', props: { state: 'faceDown', revealedValue: null, secretRef: null, owner: null } }
+  await ref.handleRequest('sess1', `draw${i}`, { action: 'draw', containerId: 'shape:deck1', cardId: `shape:drawn${i}`, to: 'table' })
+  drawn.add(stored[`shape:drawn${i}`].props.revealedValue)
+}
+console.log('drew all 52 distinct cards (shuffle preserves the multiset):', drawn.size === 52)
+console.log('deck now empty:', stored['shape:deck1'].props.count === 0)
+const overdraw = await ref.handleRequest('sess1', 'over', { action: 'draw', containerId: 'shape:deck1', cardId: 'shape:x', to: 'table' })
+console.log('drawing from empty deck fails cleanly:', !overdraw.ok)
+
+// owner-only draw: value goes to the seat privately, NOT into the store.
+stored['shape:deck2'] = { id: 'shape:deck2', type: 'container', props: { visibility: 'ownerOnly', owner: 'seatA', count: 0, layout: 'fan' } }
+await ref.handleRequest('sess1', 'seed2', { action: 'seedDeck', containerId: 'shape:deck2', values: ['HIDDEN-CARD'] })
+sent.length = 0
+stored['shape:hand1'] = { id: 'shape:hand1', type: 'card', props: { state: 'faceDown', revealedValue: null, secretRef: null, owner: null } }
+await ref.handleRequest('sess1', 'drawHand', { action: 'draw', containerId: 'shape:deck2', cardId: 'shape:hand1', to: 'seatA' })
+const handLeak = JSON.stringify(stored['shape:hand1']).includes('HIDDEN-CARD')
+const handPush = sent.some(s => JSON.stringify(s.data).includes('HIDDEN-CARD'))
+console.log('owner-only draw keeps value OUT of store:', !handLeak, '| pushes privately to owner:', handPush, '| card owner=seatA:', stored['shape:hand1'].props.owner === 'seatA')

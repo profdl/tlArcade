@@ -72,10 +72,12 @@ export const containerShapeValidators = {
 	w: T.number,
 	h: T.number,
 	label: T.string,
-	// Phase 4 implements 'public'. 'hidden'/'ownerOnly' are Phase 5 (referee-backed).
 	visibility: T.literalEnum('public', 'hidden', 'ownerOnly'),
-	owner: T.nullable(T.string), // SeatId for ownerOnly (Phase 5)
+	owner: T.nullable(T.string), // SeatId for ownerOnly
 	layout: T.literalEnum('autoGrid', 'stack', 'fan'),
+	// public count of hidden contents (a deck/bag seeded via the referee).
+	// 0 for a plain public container that just holds visible pieces.
+	count: T.positiveInteger,
 }
 
 export const gameShapeSchemas = {

@@ -22,6 +22,7 @@ import {
 	useValue,
 } from 'tldraw'
 import { CardShape } from '../shapes/CardShape'
+import { ContainerShape } from '../shapes/ContainerShape'
 import { DieShape } from '../shapes/DieShape'
 import { useReferee } from '../referee/useReferee'
 
@@ -91,10 +92,12 @@ function makeGameContextMenu(roomId: string | undefined) {
 		)
 		const selectedDie = selected?.type === 'die' ? (selected as DieShape) : null
 		const selectedCard = selected?.type === 'card' ? (selected as CardShape) : null
+		const selectedContainer = selected?.type === 'container' ? (selected as ContainerShape) : null
+		const deck = selectedContainer && selectedContainer.props.count > 0 ? selectedContainer : null
 
 		return (
 			<DefaultContextMenu>
-				{(selectedDie || selectedCard) && (
+				{(selectedDie || selectedCard || deck) && (
 					<TldrawUiMenuGroup id="game">
 						{selectedDie && (
 							<TldrawUiMenuItem
@@ -112,9 +115,29 @@ function makeGameContextMenu(roomId: string | undefined) {
 								icon="external-link"
 								readonlyOk={false}
 								onSelect={() => {
-								void sendToReferee({ action: 'reveal', cardId: selectedCard.id, to: 'table' })
-							}}
+									void sendToReferee({ action: 'reveal', cardId: selectedCard.id, to: 'table' })
+								}}
 							/>
+						)}
+						{deck && (
+							<>
+								<TldrawUiMenuItem
+									id="shuffle-deck"
+									label="Shuffle"
+									icon="undo"
+									readonlyOk={false}
+									onSelect={() => {
+										void sendToReferee({ action: 'shuffle', containerId: deck.id })
+									}}
+								/>
+								<TldrawUiMenuItem
+									id="draw-card"
+									label="Draw to table"
+									icon="external-link"
+									readonlyOk={false}
+									onSelect={() => drawFromDeck(editor, deck, sendToReferee)}
+								/>
+							</>
 						)}
 					</TldrawUiMenuGroup>
 				)}
@@ -137,6 +160,34 @@ async function rollDie(
 	if (!res.ok) {
 		editor.updateShape<DieShape>({ id: die.id, type: 'die', props: { rolling: false } })
 	}
+}
+
+/**
+ * Draw the top card from a deck to the table. The CLIENT creates the empty card
+ * (it owns placement/indexes); the REFEREE decides which hidden value lands on
+ * it (and decrements the deck's public count). See SPEC §5.5.
+ */
+async function drawFromDeck(
+	editor: Editor,
+	deck: ContainerShape,
+	sendToReferee: ReturnType<typeof useReferee>
+) {
+	const bounds = editor.getShapePageBounds(deck.id)
+	const cardId = createShapeId()
+	editor.createShape<CardShape>({
+		id: cardId,
+		type: 'card',
+		x: (bounds?.maxX ?? deck.x) + 16,
+		y: bounds?.y ?? deck.y,
+	})
+	const res = await sendToReferee({
+		action: 'draw',
+		containerId: deck.id,
+		cardId,
+		to: 'table',
+	})
+	// If the deck was empty / the draw failed, remove the placeholder card.
+	if (!res.ok) editor.deleteShape(cardId)
 }
 
 /**

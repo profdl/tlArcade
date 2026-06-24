@@ -35,9 +35,17 @@ export type IdentityProof =
 export type RefereeRequest =
 	| { action: 'claimSeat'; seatId: SeatId; identity: IdentityProof }
 	| { action: 'roll'; dieId: ShapeId }
+	// Give the referee a container's hidden contents (a deck/bag of values). The
+	// values live server-side; the store sees only the public count. (SPEC §5.5)
+	| { action: 'seedDeck'; containerId: ShapeId; values: string[] }
+	// Permute the hidden order with the server RNG — no client learns it.
 	| { action: 'shuffle'; containerId: ShapeId }
-	| { action: 'draw'; containerId: ShapeId; toSeat: SeatId }
-	| { action: 'drawRandom'; containerId: ShapeId; toSeat: SeatId }
+	// Pop the TOP hidden item onto a pre-created card shape (`cardId`), delivered
+	// to a seat (private, face-down owned) or the table (public, face-up). The
+	// CLIENT creates the empty card; the referee decides which hidden value lands.
+	| { action: 'draw'; containerId: ShapeId; cardId: ShapeId; to: 'table' | SeatId }
+	// As `draw`, but pops a RANDOM index (referee RNG) instead of the top.
+	| { action: 'drawRandom'; containerId: ShapeId; cardId: ShapeId; to: 'table' | SeatId }
 	// Hand the referee a card's hidden value. The value goes into server-only
 	// state; the store keeps just the opaque secretRef. (SPEC §2.2, §5.2)
 	| { action: 'stashSecret'; cardId: ShapeId; value: string; owner?: SeatId }

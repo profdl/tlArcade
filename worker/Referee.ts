@@ -59,6 +59,12 @@ export class Referee {
 	 * synced store only ever holds the opaque key (`secretRef`), never the value.
 	 */
 	private readonly secrets = new Map<string, string>()
+	/**
+	 * SERVER-ONLY ordered deck/bag contents, keyed by container id. The ORDER is
+	 * unknowable to every client (that's the point of a server shuffle). The store
+	 * only ever holds the public count. (SPEC §5.5)
+	 */
+	private readonly decks = new Map<string, string[]>()
 
 	private readonly room: RoomBridge
 	constructor(room: RoomBridge) {
@@ -86,11 +92,14 @@ export class Referee {
 					return await this.stashSecret(sessionId, requestId, req.cardId, req.value, req.owner)
 				case 'reveal':
 					return await this.reveal(sessionId, requestId, req.cardId, req.to)
+				case 'seedDeck':
+					return this.seedDeck(requestId, req.containerId, req.values)
 				case 'shuffle':
+					return await this.shuffle(requestId, req.containerId)
 				case 'draw':
+					return await this.draw(requestId, req.containerId, req.cardId, req.to, false)
 				case 'drawRandom':
-					// Phases 4–5 (SPEC §5.5). Shape is defined; logic pending.
-					return this.notImplemented(requestId, req.action)
+					return await this.draw(requestId, req.containerId, req.cardId, req.to, true)
 				default:
 					return this.fail(requestId, `Unknown action`)
 			}
@@ -300,10 +309,78 @@ export class Referee {
 		}
 	}
 
-	// ── helpers ──────────────────────────────────────────────────────────────────
-	private notImplemented(requestId: string, action: string): RefereeResponse {
-		return this.fail(requestId, `Action '${action}' not implemented yet (see SPEC §3.3)`)
+	// ── DECKS / BAGS (§5.5) ───────────────────────────────────────────────────────
+
+	/** Take custody of a container's hidden contents; publish only the count. */
+	private seedDeck(requestId: string, containerId: string, values: string[]): RefereeResponse {
+		this.decks.set(containerId, [...values])
+		void this.room.updateStore((store) => {
+			const c = store.get(containerId)
+			if (c) store.put({ ...c, props: { ...c.props, count: values.length } })
+		})
+		this.handledRequests.add(requestId)
+		return { kind: 'referee', requestId, ok: true }
 	}
+
+	/** Permute the hidden order with the server CSPRNG. No client learns it. */
+	private async shuffle(requestId: string, containerId: string): Promise<RefereeResponse> {
+		const deck = this.decks.get(containerId)
+		if (!deck) return this.fail(requestId, `No deck for ${containerId}`)
+		// Fisher–Yates with the fair RNG.
+		for (let i = deck.length - 1; i > 0; i--) {
+			const j = this.rollFair(i + 1)
+			;[deck[i], deck[j]] = [deck[j], deck[i]]
+		}
+		this.handledRequests.add(requestId)
+		return { kind: 'referee', requestId, ok: true }
+	}
+
+	/**
+	 * Pop one hidden item from a deck onto a pre-created card (`cardId`). To a
+	 * seat → owner-only (private push, store redacted). To the table → public.
+	 * `random` pops a random index instead of the top.
+	 */
+	private async draw(
+		requestId: string,
+		containerId: string,
+		cardId: string,
+		to: 'table' | SeatId,
+		random: boolean
+	): Promise<RefereeResponse> {
+		const deck = this.decks.get(containerId)
+		if (!deck || deck.length === 0) return this.fail(requestId, `Deck ${containerId} is empty`)
+
+		const idx = random ? this.rollFair(deck.length) : deck.length - 1
+		const [value] = deck.splice(idx, 1)
+
+		await this.room.updateStore((store) => {
+			const container = store.get(containerId)
+			if (container) store.put({ ...container, props: { ...container.props, count: deck.length } })
+
+			const card = store.get(cardId)
+			if (!card) return
+			if (to === 'table') {
+				store.put({
+					...card,
+					props: { ...card.props, state: 'faceUp', revealedValue: value, secretRef: null, owner: null },
+				})
+			} else {
+				// owner-only: store stays redacted; value goes out privately below.
+				this.secrets.set(`secret:${cardId}`, value)
+				store.put({
+					...card,
+					props: { ...card.props, state: 'faceDown', revealedValue: null, secretRef: `secret:${cardId}`, owner: to },
+				})
+			}
+		})
+
+		if (to !== 'table') this.pushPrivateReveal(to, cardId, value)
+
+		this.handledRequests.add(requestId)
+		return { kind: 'referee', requestId, ok: true }
+	}
+
+	// ── helpers ──────────────────────────────────────────────────────────────────
 	private fail(requestId: string, error: string): RefereeResponse {
 		return { kind: 'referee', requestId, ok: false, error }
 	}
