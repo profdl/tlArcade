@@ -120,3 +120,19 @@ await ref.handleRequest('sess1', 'drawHand', { action: 'draw', containerId: 'sha
 const handLeak = JSON.stringify(stored['shape:hand1']).includes('HIDDEN-CARD')
 const handPush = sent.some(s => JSON.stringify(s.data).includes('HIDDEN-CARD'))
 console.log('owner-only draw keeps value OUT of store:', !handLeak, '| pushes privately to owner:', handPush, '| card owner=seatA:', stored['shape:hand1'].props.owner === 'seatA')
+
+// Authorization on deck actions (defense in depth):
+// re-seeding an existing deck is rejected (no mid-game clobber).
+const reseed = await ref.handleRequest('sess1', 'reseed', { action: 'seedDeck', containerId: 'shape:deck1', values: ['x'] })
+console.log('cannot re-seed an existing deck:', !reseed.ok, '|', reseed.ok ? '' : reseed.error)
+
+// drawing into ANOTHER seat's hand is rejected (sessX occupies no seat / not seatA).
+stored['shape:deck3'] = { id: 'shape:deck3', type: 'container', props: { visibility: 'hidden', owner: null, count: 0, layout: 'stack' } }
+await ref.handleRequest('sess1', 'seed3', { action: 'seedDeck', containerId: 'shape:deck3', values: ['a','b'] })
+const drawOther = await ref.handleRequest('sessX', 'drawO', { action: 'draw', containerId: 'shape:deck3', cardId: 'shape:c', to: 'seatA' })
+console.log('cannot draw into a seat you do not occupy:', !drawOther.ok, '|', drawOther.ok ? '' : drawOther.error)
+
+// drawing to the TABLE is allowed for any player (public deal).
+stored['shape:tc'] = { id: 'shape:tc', type: 'card', props: { state: 'faceDown', revealedValue: null, secretRef: null, owner: null } }
+const drawTable = await ref.handleRequest('sessX', 'drawT', { action: 'draw', containerId: 'shape:deck3', cardId: 'shape:tc', to: 'table' })
+console.log('any player may draw to the table:', drawTable.ok)

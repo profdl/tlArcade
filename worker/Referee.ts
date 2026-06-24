@@ -93,13 +93,13 @@ export class Referee {
 				case 'reveal':
 					return await this.reveal(sessionId, requestId, req.cardId, req.to)
 				case 'seedDeck':
-					return this.seedDeck(requestId, req.containerId, req.values)
+					return this.seedDeck(sessionId, requestId, req.containerId, req.values)
 				case 'shuffle':
 					return await this.shuffle(requestId, req.containerId)
 				case 'draw':
-					return await this.draw(requestId, req.containerId, req.cardId, req.to, false)
+					return await this.draw(sessionId, requestId, req.containerId, req.cardId, req.to, false)
 				case 'drawRandom':
-					return await this.draw(requestId, req.containerId, req.cardId, req.to, true)
+					return await this.draw(sessionId, requestId, req.containerId, req.cardId, req.to, true)
 				default:
 					return this.fail(requestId, `Unknown action`)
 			}
@@ -312,7 +312,23 @@ export class Referee {
 	// ── DECKS / BAGS (§5.5) ───────────────────────────────────────────────────────
 
 	/** Take custody of a container's hidden contents; publish only the count. */
-	private seedDeck(requestId: string, containerId: string, values: string[]): RefereeResponse {
+	private seedDeck(
+		sessionId: SessionId,
+		requestId: string,
+		containerId: string,
+		values: string[]
+	): RefereeResponse {
+		// AUTHORIZATION: initial seed only (no clobbering a deck mid-game), and if
+		// the container is owned, only its owner may seed it. (Trust caveat: only
+		// as strong as claimSeat verification — see the TODO there.)
+		if (this.decks.has(containerId)) {
+			return this.fail(requestId, 'Deck already seeded')
+		}
+		const owner = (this.room.getRecord(containerId)?.props?.owner as SeatId | null | undefined) ?? null
+		if (owner && owner !== this.seatOf(sessionId)) {
+			return this.fail(requestId, 'Container is owned by another seat')
+		}
+
 		this.decks.set(containerId, [...values])
 		void this.room.updateStore((store) => {
 			const c = store.get(containerId)
@@ -341,6 +357,7 @@ export class Referee {
 	 * `random` pops a random index instead of the top.
 	 */
 	private async draw(
+		sessionId: SessionId,
 		requestId: string,
 		containerId: string,
 		cardId: string,
@@ -349,6 +366,13 @@ export class Referee {
 	): Promise<RefereeResponse> {
 		const deck = this.decks.get(containerId)
 		if (!deck || deck.length === 0) return this.fail(requestId, `Deck ${containerId} is empty`)
+
+		// AUTHORIZATION: drawing INTO a hand may only target your OWN seat (you
+		// can't deal cards into another player's hand). Drawing to the table is a
+		// public action any player may take (dealing the top card face-up).
+		if (to !== 'table' && to !== this.seatOf(sessionId)) {
+			return this.fail(requestId, 'Can only draw into your own hand')
+		}
 
 		const idx = random ? this.rollFair(deck.length) : deck.length - 1
 		const [value] = deck.splice(idx, 1)
