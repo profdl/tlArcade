@@ -10,6 +10,8 @@
  */
 import {
 	createShapeId,
+	DefaultContextMenu,
+	DefaultContextMenuContent,
 	DefaultMainMenu,
 	DefaultMainMenuContent,
 	Editor,
@@ -17,7 +19,10 @@ import {
 	TldrawUiMenuGroup,
 	TldrawUiMenuItem,
 	useEditor,
+	useValue,
 } from 'tldraw'
+import { DieShape } from '../shapes/DieShape'
+import { useReferee } from '../referee/useReferee'
 
 function GameMainMenu() {
 	// `useEditor()` is how a UI component reaches the editor. Close over it in the
@@ -68,10 +73,66 @@ function clearBoard(editor: Editor) {
 	if (ids.length) editor.deleteShapes(ids)
 }
 
+// ── CONTEXT MENU: per-shape game actions (SPEC §6.2) ─────────────────────────
+// Built as a factory because the referee call needs the roomId. The "Roll"
+// action only appears when a single die is selected.
+function makeGameContextMenu(roomId: string | undefined) {
+	return function GameContextMenu() {
+		const editor = useEditor()
+		const sendToReferee = useReferee(roomId)
+
+		// Reactively read the single selected die, if any.
+		const selectedDie = useValue<DieShape | null>(
+			'selectedDie',
+			() => {
+				const shape = editor.getOnlySelectedShape()
+				return shape?.type === 'die' ? (shape as DieShape) : null
+			},
+			[editor]
+		)
+
+		return (
+			<DefaultContextMenu>
+				{selectedDie && (
+					<TldrawUiMenuGroup id="game">
+						<TldrawUiMenuItem
+							id="roll-die"
+							label="Roll"
+							icon="undo"
+							readonlyOk={false}
+							onSelect={() => rollDie(editor, selectedDie, sendToReferee)}
+						/>
+					</TldrawUiMenuGroup>
+				)}
+				<DefaultContextMenuContent />
+			</DefaultContextMenu>
+		)
+	}
+}
+
+/** Optimistically spin, ask the referee for the authoritative value; the result
+ *  lands via store sync (the referee writes value + rolling:false). */
+async function rollDie(
+	editor: Editor,
+	die: DieShape,
+	sendToReferee: ReturnType<typeof useReferee>
+) {
+	editor.updateShape<DieShape>({ id: die.id, type: 'die', props: { rolling: true } })
+	const res = await sendToReferee({ action: 'roll', dieId: die.id })
+	// On failure, clear the local spin (success arrives through sync).
+	if (!res.ok) {
+		editor.updateShape<DieShape>({ id: die.id, type: 'die', props: { rolling: false } })
+	}
+}
+
 /**
- * The components map handed to <Tldraw components={gameComponents}>. Add more
- * keys (ContextMenu, Toolbar, StylePanel, ...) here to customize other UI.
+ * Build the components map handed to <Tldraw components={...}>. A factory because
+ * referee-backed actions need the roomId. Add more keys (Toolbar, StylePanel,
+ * ...) here to customize other UI.
  */
-export const gameComponents: TLComponents = {
-	MainMenu: GameMainMenu,
+export function createGameComponents(roomId: string | undefined): TLComponents {
+	return {
+		MainMenu: GameMainMenu,
+		ContextMenu: makeGameContextMenu(roomId),
+	}
 }

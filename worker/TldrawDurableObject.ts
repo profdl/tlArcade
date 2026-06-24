@@ -16,17 +16,6 @@ import { gameShapeSchemas } from '../shared/shape-schemas'
 import { isRefereeEnvelope, RefereeEnvelope } from '../shared/referee-protocol'
 import { Referee } from './Referee'
 
-/** Parse a string message as a referee envelope, or null if it isn't one. */
-function tryParseRefereeEnvelope(message: string): RefereeEnvelope | null {
-	if (!message.includes('"referee"')) return null // cheap pre-check before JSON.parse
-	try {
-		const parsed = JSON.parse(message)
-		return isRefereeEnvelope(parsed) ? parsed : null
-	} catch {
-		return null
-	}
-}
-
 // The server's schema MUST match the client's (which is built from `shapeUtils`
 // in useSync). We register our custom game shapes from the shared schema map so
 // the two stay in lockstep — a mismatch makes synced custom shapes fail to load.
@@ -114,10 +103,27 @@ export class TldrawDurableObject extends DurableObject {
 		return this.referee
 	}
 
-	private readonly router = AutoRouter({ catch: (e) => error(e) }).get(
-		'/api/connect/:roomId',
-		(request) => this.handleConnect(request)
-	)
+	private readonly router = AutoRouter({ catch: (e) => error(e) })
+		.get('/api/connect/:roomId', (request) => this.handleConnect(request))
+		// Referee RPCs come in over HTTP, not the sync socket: the sync socket is
+		// one-way for custom messages (server→client only). Results are written to
+		// the store (public) or pushed via sendCustomMessage (private). See SPEC §3.2.
+		.post('/api/referee/:roomId', (request) => this.handleReferee(request))
+
+	private async handleReferee(request: IRequest) {
+		const envelope = (await request.json()) as RefereeEnvelope & { sessionId?: string }
+		if (!isRefereeEnvelope(envelope) || !envelope.sessionId) {
+			return error(400, 'Bad referee envelope')
+		}
+		const response = await this.getReferee().handleRequest(
+			envelope.sessionId as never,
+			envelope.requestId,
+			envelope.request
+		)
+		return new Response(JSON.stringify(response), {
+			headers: { 'content-type': 'application/json' },
+		})
+	}
 
 	// Entry point for all requests to the Durable Object
 	fetch(request: Request): Response | Promise<Response> {
@@ -158,23 +164,8 @@ export class TldrawDurableObject extends DurableObject {
 		if (!sessionId) return
 
 		this.sessionIdToWs.set(sessionId, ws)
-
-		// INTERCEPT REFEREE RPCs (SPEC §3.2): referee envelopes travel over the same
-		// WebSocket but are NOT store edits — peek the message and route accordingly.
-		if (typeof message === 'string') {
-			const envelope = tryParseRefereeEnvelope(message)
-			if (envelope) {
-				const response = await this.getReferee().handleRequest(
-					sessionId as never,
-					envelope.requestId,
-					envelope.request
-				)
-				ws.send(JSON.stringify(response))
-				return
-			}
-		}
-
-		// Otherwise it's a normal sync message — hand it to the room as before.
+		// Referee RPCs arrive over HTTP (see handleReferee), not here — this is
+		// only the normal sync message path.
 		this.getOrCreateRoom().handleSocketMessage(sessionId, message)
 	}
 

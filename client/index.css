@@ -86,3 +86,9 @@ body {
 	position: relative;
 	flex: 1;
 }
+
+/* Die roll spin animation (DieShape) */
+@keyframes die-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}

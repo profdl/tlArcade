@@ -19,7 +19,7 @@
  * `shuffle`/`draw`/`flip`/`reveal` are stubbed with the correct shape and TODOs
  * pointing at SPEC sections (built in Phases 3–5).
  */
-import {
+import type {
 	IdentityProof,
 	RefereeRequest,
 	RefereeResponse,
@@ -54,7 +54,10 @@ export class Referee {
 	/** Idempotency: requestIds we've already processed (§3.6). */
 	private readonly handledRequests = new Set<string>()
 
-	constructor(private readonly room: RoomBridge) {}
+	private readonly room: RoomBridge
+	constructor(room: RoomBridge) {
+		this.room = room
+	}
 
 	// ── ENTRY POINT ────────────────────────────────────────────────────────────
 	async handleRequest(

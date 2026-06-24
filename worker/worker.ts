@@ -20,6 +20,14 @@ const router = AutoRouter<IRequest, [env: Env, ctx: ExecutionContext]>({
 		return room.fetch(request.url, { headers: request.headers, body: request.body })
 	})
 
+	// referee RPCs (dice/shuffle/secrets) are POSTed to the same room's DO.
+	// Forward the whole request so method + body are preserved.
+	.post('/api/referee/:roomId', (request, env) => {
+		const id = env.TLDRAW_DURABLE_OBJECT.idFromName(request.params.roomId)
+		const room = env.TLDRAW_DURABLE_OBJECT.get(id)
+		return room.fetch(request as unknown as Request)
+	})
+
 	// assets can be uploaded to the bucket under /uploads:
 	.post('/api/uploads/:uploadId', handleAssetUpload)
 

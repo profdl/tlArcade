@@ -33,6 +33,20 @@ export const trackerShapeValidators = {
 	value: T.number,
 }
 
+export const dieShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// number of faces the referee rolls over (d6 → 6). For custom dice this is
+	// customFaces.length; for standard dice it's the die size.
+	faceCount: T.positiveInteger,
+	// custom face labels, e.g. ['+','+','-','-','',''] for a Fate die. Empty = numeric.
+	customFaces: T.arrayOf(T.string),
+	// the current top face, as a 0-based index into the faces.
+	value: T.number,
+	// drives the local spin animation while a roll is in flight.
+	rolling: T.boolean,
+}
+
 /**
  * The map the SYNC SERVER uses. Each entry's `props` must match the client
  * ShapeUtil's `static props`. Keep this list in sync with
@@ -41,5 +55,6 @@ export const trackerShapeValidators = {
 export const gameShapeSchemas = {
 	token: { props: tokenShapeValidators },
 	tracker: { props: trackerShapeValidators },
+	die: { props: dieShapeValidators },
 	// ← add your shape's `{ props: <validators> }` here
 }

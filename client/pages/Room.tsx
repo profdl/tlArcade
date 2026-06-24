@@ -1,11 +1,12 @@
 import { useSync } from '@tldraw/sync'
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Tldraw } from 'tldraw'
 import { getBookmarkPreview } from '../getBookmarkPreview'
 import { multiplayerAssetStore } from '../multiplayerAssetStore'
+import { onRefereePrivateMessage } from '../referee/privateReveals'
 import { gameShapeUtils, gameTools } from '../shapes/registry'
-import { gameComponents } from '../ui/components'
+import { createGameComponents } from '../ui/components'
 
 export function Room() {
 	const { roomId } = useParams<{ roomId: string }>()
@@ -21,7 +22,13 @@ export function Room() {
 		assets: multiplayerAssetStore,
 		// ...and our custom game shapes, so the synced schema knows about them.
 		shapeUtils: gameShapeUtils,
+		// the ONLY client-bound referee channel: private (owner-only) reveals are
+		// pushed here (public results arrive via normal store sync). See SPEC §3.4.
+		onCustomMessageReceived: onRefereePrivateMessage,
 	})
+
+	// Components carry the roomId so referee-backed actions can reach the server.
+	const components = useMemo(() => createGameComponents(roomId), [roomId])
 
 	return (
 		<RoomWrapper roomId={roomId}>
@@ -32,8 +39,8 @@ export function Room() {
 				// the same custom shapes + tools must also be given to the editor for rendering
 				shapeUtils={gameShapeUtils}
 				tools={gameTools}
-				// custom UI (main menu, etc.) — see client/ui/components.tsx
-				components={gameComponents}
+				// custom UI (main menu, context menu, ...) — see client/ui/components.tsx
+				components={components}
 				options={{ deepLinks: true }}
 				onMount={(editor) => {
 					// when the editor is ready, we need to register our bookmark unfurling service
