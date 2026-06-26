@@ -41,6 +41,7 @@ import {
 import { useEffect, useMemo, useRef } from 'react'
 import { creatureShapeValidators } from '../../shared/shape-schemas'
 import { creatureClock, subscribeCreatureClock, tailBeat } from '../creature/clock'
+import { tankUnder } from '../creature/registerSwimming'
 
 // ── 1. THE SHAPE TYPE ────────────────────────────────────────────────────────
 // Everything here is PUBLIC and synced. There are no secrets and no referee —
@@ -146,10 +147,12 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// NOT during React render, which would double-run under Strict Mode.
 	//
 	//  • clock — QUANTIZED to ~30 steps/sec so sub-frame ticks reuse the same value
-	//    and the path memo doesn't recompute every frame. While culled (off-screen)
-	//    we return the LAST value unchanged, so useValue stops re-rendering it and it
-	//    resumes mid-stride when scrolled back (no snap to t=0). We quantize the RAW
-	//    clock (not clock*speed) because tailBeat() applies its own speed-scaling.
+	//    and the path memo doesn't recompute every frame. We HOLD the last value
+	//    unchanged (so useValue stops re-rendering, the body freezes mid-stride and
+	//    resumes there) in two cases: while culled (off-screen), and while the
+	//    creature is NOT inside a geo "tank" — a creature alone on the canvas sits
+	//    still until dropped into a shape. We quantize the RAW clock (not clock*speed)
+	//    because tailBeat() applies its own speed-scaling.
 	//  • bank — lean into turns. Measured as angular velocity over CLOCK time (rad÷s),
 	//    not per-render: `rotation` (synced) only changes on ticks the creature
 	//    turned, so a per-render delta would flicker for one frame. The lean EASES
@@ -159,7 +162,10 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	const { clock, bank } = useValue(
 		'creatureMotion',
 		() => {
-			if (editor.getCulledShapes().has(shape.id)) {
+			// Frozen when off-screen OR not in a tank → hold the last clock value so the
+			// body stops animating (and resumes mid-stride when it moves back / is dropped
+			// into a shape). tankUnder() re-runs reactively as the creature's x/y change.
+			if (editor.getCulledShapes().has(shape.id) || !tankUnder(editor, shape.id)) {
 				return { clock: acc.current.tick / 30, bank: acc.current.bank }
 			}
 			const a = acc.current
@@ -198,29 +204,34 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// the forward thrust are in lockstep (the propulsion illusion). See clock.ts.
 	const beat = tailBeat(clock, seed, speed).phase
 
-	// The outline points; recomputed only when the quantized beat or bank changes.
-	const outline = useMemo(
-		() => creatureOutline(w, h, seed, beat, bank),
+	// The two fish parts, recomputed only when the quantized beat or bank changes:
+	// the body silhouette (head → tapered peduncle) and the forked caudal (tail)
+	// fin that flicks with the beat. The eye is a fixed point near the head.
+	const fish = useMemo(
+		() => creatureFish(w, h, seed, beat, bank),
 		[w, h, seed, beat, bank]
 	)
 
-	// 'draw' → run the outline through perfect-freehand for the hand-drawn wobble
-	// (the same pipeline DrawShapeUtil uses). Other dash values render a clean
-	// path with the matching strokeDasharray. fill applies in both cases.
+	// 'draw' → run each outline through perfect-freehand for the hand-drawn wobble
+	// (the same pipeline DrawShapeUtil uses). Other dash values render clean paths
+	// with the matching strokeDasharray. fill applies to the closed shapes.
 	const isDraw = dash === 'draw'
-	const d = useMemo(() => {
+	const closedPath = (pts: { x: number; y: number }[]) => {
 		if (isDraw) {
-			const pts = getStrokePoints(outline, { size: strokeWidth, streamline: 0.4, last: true })
-			return getSvgPathFromStrokePoints(pts, true)
+			const sp = getStrokePoints(pts, { size: strokeWidth, streamline: 0.4, last: true })
+			return getSvgPathFromStrokePoints(sp, true)
 		}
-		return polygonPath(outline)
-	}, [outline, isDraw, strokeWidth])
+		return polygonPath(pts)
+	}
+	const bodyD = useMemo(() => closedPath(fish.body), [fish.body, isDraw, strokeWidth])
+	const tailD = useMemo(() => closedPath(fish.tail), [fish.tail, isDraw, strokeWidth])
 
 	return (
 		<HTMLContainer style={{ width: w, height: h, pointerEvents: 'all' }}>
 			<svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
+				{/* tail sits behind the body so its base tucks under it */}
 				<path
-					d={d}
+					d={tailD}
 					fill={fillColor}
 					stroke={stroke}
 					strokeWidth={strokeWidth}
@@ -228,6 +239,17 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 					strokeLinecap="round"
 					strokeLinejoin="round"
 				/>
+				<path
+					d={bodyD}
+					fill={fillColor}
+					stroke={stroke}
+					strokeWidth={strokeWidth}
+					strokeDasharray={dashArray(dash, strokeWidth)}
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				/>
+				{/* eye */}
+				<circle cx={fish.eye.x} cy={fish.eye.y} r={Math.max(1.2, strokeWidth * 0.9)} fill={stroke} />
 			</svg>
 		</HTMLContainer>
 	)
@@ -262,47 +284,75 @@ function dashArray(dash: TLDefaultDashStyle, sw: number): string | undefined {
 }
 
 // ── 5. THE FORMULA (the #つぶやきProcessing bit) ──────────────────────────────
-// A fish outline is just the spine ± a tapered radius. We walk the TOP edge
-// head→tail, then the BOTTOM edge back tail→head, returning one CLOSED ring of
-// points — which we then either join into a plain path or feed to perfect-
-// freehand. No string-building here; the consumer decides the rendering.
+// A minimal fish: its spine ± a tapered body radius, a rounded head pinching to
+// a narrow caudal peduncle, a FORKED tail fin that flicks with the beat, and one
+// eye. We build the body and tail as their own rings of points so the consumer
+// can render (and freehand-wobble) them independently.
 //
 //   sway   = travelling sine wave (the swim; flows head→tail, grows toward tail)
-//   radius = sin(π·u) teardrop  (0 at head & tail, fattest in the middle)
+//   radius = head-heavy teardrop  (round at the head, pinched at the tail-base)
 //   beat   = tail-beat PHASE from tailBeat() — shared with the movement loop so
 //            the visible flick drives the forward thrust (the propulsion look)
 //   bank   = -1..1 turn lean; curves the whole spine toward the turn direction
 
-const SEGMENTS = 24
+const SEGMENTS = 28
 
-function creatureOutline(w: number, h: number, seed: number, beat: number, bank: number): { x: number; y: number }[] {
-	// The body fills the box edge-to-edge (tiny inset so the stroke isn't clipped),
-	// so the selection bounds hug the silhouette with almost no padding. The
-	// vertical amplitudes are tuned so the worst case (full sway + radius + a hard
-	// banked turn) stays inside the box rather than poking out of the now-tight
-	// bounds.
-	const x0 = w * 0.04
-	const len = w * 0.92
+type Pt = { x: number; y: number }
+type Fish = {
+	body: Pt[]
+	tail: Pt[]
+	eye: Pt
+}
+
+function creatureFish(w: number, h: number, seed: number, beat: number, bank: number): Fish {
+	// The body spans head (x0) → tail-base (peduncle). We leave room on the right
+	// for the caudal fin, and a tiny inset elsewhere so strokes/fins aren't clipped.
+	const x0 = w * 0.06
+	const xPed = w * 0.78 // where the body pinches to the tail-base (caudal peduncle)
+	const len = xPed - x0
 	const cy = h * 0.5
 	const freq = 2.2 + seed * 1.5
 
-	// spine point + body half-height at parameter u (0 = head, 1 = tail). The
-	// travelling sine is driven by the SHARED beat phase; `bank` adds a steady
-	// sideways curve (∝ u²) so the body leans into turns, head leading.
-	//   sway 0.10 + bank 0.18 + radius 0.20  →  ≤ 0.48·h from centre (fits in box)
-	const spine = (u: number) =>
-		cy + h * 0.1 * u * Math.sin(freq * u - beat) + bank * h * 0.18 * u * u
-	const radius = (u: number) => h * 0.2 * Math.sin(Math.PI * u)
+	// spine point at u∈[0,1] along the body. Travelling sine = swim; bank ∝ u² so
+	// the body leans into turns with the head leading. Amplitude kept small so the
+	// silhouette stays inside the now head-heavy box.
+	const spine = (u: number) => cy + h * 0.08 * u * Math.sin(freq * u - beat) + bank * h * 0.16 * u * u
 
-	const top: { x: number; y: number }[] = []
-	const bottom: { x: number; y: number }[] = []
+	// HEAD-HEAVY teardrop: fat and round near the head (u≈0.18), pinching to a thin
+	// peduncle at the tail-base (u=1). This is what separates a fish from a leaf.
+	const radius = (u: number) => {
+		const fat = Math.pow(Math.sin(Math.PI * Math.min(1, u * 0.62 + 0.06)), 0.8)
+		return h * 0.34 * fat * (1 - 0.78 * u)
+	}
+
+	const top: Pt[] = []
+	const bottom: Pt[] = []
 	for (let i = 0; i <= SEGMENTS; i++) {
 		const u = i / SEGMENTS
 		const x = x0 + u * len
 		top.push({ x, y: spine(u) - radius(u) })
 		bottom.unshift({ x, y: spine(u) + radius(u) }) // return edge, reversed
 	}
-	return [...top, ...bottom]
+	const body = [...top, ...bottom]
+
+	// CAUDAL (tail) fin: a forked triangle hinged at the peduncle. It swings with
+	// the beat (and reaches further at the fork tips) for the swish.
+	const pedY = spine(1)
+	const pedR = radius(1)
+	const swing = h * 0.16 * Math.sin(beat)
+	const finX = w * 0.97
+	const tail: Pt[] = [
+		{ x: xPed, y: pedY - pedR }, // top of peduncle
+		{ x: finX, y: pedY - h * 0.3 + swing }, // upper fork tip
+		{ x: w * 0.86, y: pedY + swing * 0.5 }, // inner notch (the fork)
+		{ x: finX, y: pedY + h * 0.3 + swing }, // lower fork tip
+		{ x: xPed, y: pedY + pedR }, // bottom of peduncle
+	]
+
+	// EYE, near the head.
+	const eye = { x: x0 + 0.1 * len, y: spine(0.1) - radius(0.1) * 0.25 }
+
+	return { body, tail, eye }
 }
 
 /** Join a ring of points into a closed straight-segment SVG path (2-dp coords). */

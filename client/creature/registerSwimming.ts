@@ -228,8 +228,11 @@ function clamp(n: number, lo: number, hi: number): number {
  * Returns the tank's page-space AABB. Wall avoidance + clamping use this axis-
  * aligned box, so a ROTATED tank contains the creature in its bounding box, not
  * its true rotated outline — fine for the expected case (axis-aligned rectangles).
+ *
+ * Also imported by CreatureShape.tsx, which only needs the truthiness (in a tank
+ * → animate; alone on the canvas → freeze).
  */
-function tankUnder(editor: Editor, id: TLShapeId) {
+export function tankUnder(editor: Editor, id: TLShapeId) {
 	const bounds = editor.getShapePageBounds(id)
 	if (!bounds) return undefined
 	const tank = editor.getShapeAtPoint(bounds.center, {
