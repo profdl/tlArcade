@@ -64,13 +64,17 @@ function geometry(w: number, h: number, seed: number): CreatureGeometry {
 		return pts
 	}
 
-	// The body chain: three equal circle segments, head → thorax → gaster.
+	// The body chain: three equal circle segments. ORDER SETS THE Z-STACK — the renderer
+	// nests segments in array order and paints earlier ones FIRST (so later = on top). We
+	// want the gaster (butt) BELOW the thorax, so list gaster → thorax → head: gaster paints
+	// at the bottom, then the thorax over it, then the head on top. (Body is rigid — amp 0,
+	// no dots — so segment index carries no animation meaning here; only paint order.)
 	const body: Chain = {
-		segments: [circle(headCx, bodyR), circle(thoraxCx, bodyR), circle(gasterCx, bodyR)],
+		segments: [circle(gasterCx, bodyR), circle(thoraxCx, bodyR), circle(headCx, bodyR)],
 		joints: [
-			{ x: headCx, y: cy },
-			{ x: thoraxCx, y: cy },
 			{ x: gasterCx, y: cy },
+			{ x: thoraxCx, y: cy },
+			{ x: headCx, y: cy },
 		],
 		role: 'spine',
 		amp: 0, // rigid — the legs do the walking, the body just translates
