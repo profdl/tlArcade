@@ -33,6 +33,7 @@
  * Mount once from <Tldraw onMount> alongside the others; it returns a disposer.
  */
 import { Editor, TLShapeId, Vec } from 'tldraw'
+import { GridShape } from '../shapes/GridShape'
 
 /** Friction as velocity retained per millisecond (≈0.993/ms ≈ 0.9 per 16ms frame). */
 const FRICTION_PER_MS = 0.993
@@ -70,8 +71,19 @@ export function registerPhysics(editor: Editor): () => void {
 		if (speed < STOP_SPEED) return // a gentle place, not a throw
 		if (speed > MAX_SPEED) v = v.mul(MAX_SPEED / speed)
 
-		// The selected shapes that just got dropped are the ones to launch.
-		for (const id of editor.getSelectedShapeIds()) moving.set(id, v.clone())
+		// The selected shapes that just got dropped are the ones to launch — but
+		// not every shape should fly:
+		//   • LOCKED shapes are pinned by the user; honour that.
+		//   • GRID shapes are fixed snapping surfaces (the "table"), not game
+		//     pieces — flinging the backdrop would send everything sailing.
+		//   • a piece dropped over a `snap:'strict'` grid is owned by the snapper
+		//     (registerSnapping), which clamps it to a cell on this same drop. If
+		//     we also launched it, the two behaviours would fight — snap clamps,
+		//     physics glides it back off the cell. Let the snap win.
+		for (const id of editor.getSelectedShapeIds()) {
+			if (!isThrowable(editor, id)) continue
+			moving.set(id, v.clone())
+		}
 	})
 
 	// ── INTEGRATE ON THE EDITOR'S OWN TICK ────────────────────────────────────
@@ -146,6 +158,31 @@ export function registerPhysics(editor: Editor): () => void {
 	}
 }
 
+/**
+ * Can this shape be flicked? No for locked shapes, no for the grid backdrop, and
+ * no for a piece sitting over a `snap:'strict'` grid (the snapper owns it this
+ * drop — see the launch loop). The strict-grid test mirrors registerSnapping's
+ * own `gridUnder` (native `getShapeAtPoint`), so the two stay in agreement
+ * without sharing code.
+ */
+function isThrowable(editor: Editor, id: TLShapeId): boolean {
+	const shape = editor.getShape(id)
+	if (!shape || shape.type === 'grid') return false
+	if (editor.isShapeOrAncestorLocked(id)) return false
+
+	const bounds = editor.getShapePageBounds(id)
+	if (!bounds) return false
+	const grid = editor.getShapeAtPoint(bounds.center, {
+		filter: (s) => s.type === 'grid',
+		hitInside: true,
+	}) as GridShape | undefined
+	// Only 'strict' grids actually clamp on drop; 'loose'/'none' leave the piece
+	// free, so a throw over those is fine.
+	if (grid?.props.snap === 'strict') return false
+
+	return true
+}
+
 /*
  * WHERE THIS GOES NEXT (not built yet — this is the prototype):
  *   • Walls: DONE — shapes bounce off the visible viewport edges (RESTITUTION).
@@ -158,5 +195,7 @@ export function registerPhysics(editor: Editor): () => void {
  *     Durable Object owns the simulation and writes authoritative positions —
  *     removes per-client drift, but needs a tick on the server + protocol msgs.
  *   • Opt-in per shape: gate on a `physics: boolean` prop so only some shapes
- *     are throwable (right now EVERY shape is).
+ *     are throwable. Today `isThrowable()` excludes locked shapes, the grid
+ *     backdrop, and pieces over a strict grid — but every OTHER shape flies. A
+ *     prop would make it opt-in instead of opt-out.
  */
