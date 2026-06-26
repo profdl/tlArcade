@@ -20,6 +20,11 @@ export function registerSnapping(editor: Editor): () => void {
 
 	const offChange = editor.sideEffects.registerAfterChangeHandler('shape', (prev, next) => {
 		if (busy || next.type === 'grid') return
+		// Creatures swim continuously (a write every tick) and never snap to a grid —
+		// skipping them here avoids running a gridUnder hit-test per creature per
+		// frame, which was a dominant cost with many creatures roaming. See the swim
+		// loop perf notes.
+		if (next.type === 'creature') return
 		if (prev.x !== next.x || prev.y !== next.y) moved.add(next.id)
 	})
 

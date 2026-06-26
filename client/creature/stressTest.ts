@@ -27,9 +27,6 @@ const TIERS = [10, 50, 100, 150, 200, 300, 500, 750, 1000]
 const SETTLE_MS = 1200
 /** ms to sample FPS at each tier. */
 const SAMPLE_MS = 2500
-/** FPS at/above this = "smooth"; below HALF of refresh = "wall". */
-const SMOOTH_FPS = 55
-const USABLE_FPS = 30
 
 type TierResult = { count: number; meanFps: number; worstFps: number; frameMs: number }
 
@@ -72,28 +69,11 @@ function spawnTank(editor: Editor): { id: TLShapeId; minX: number; minY: number;
 	return { id, minX, minY, w, h }
 }
 
-/** Run the ramp. Logs progress + a final table to the console. */
-export async function runCreatureStressTest(editor: Editor) {
-	// Clean slate so prior shapes don't skew the numbers.
-	const existing = Array.from(editor.getCurrentPageShapeIds())
-	if (existing.length) editor.deleteShapes(existing)
-
-	const tank = spawnTank(editor)
-	editor.setCurrentTool('select')
-
-	// eslint-disable-next-line no-console
-	console.log(
-		`%c[creature stress] ramp ${TIERS.join(' → ')} in a ${Math.round(tank.w)}×${Math.round(tank.h)} tank`,
-		'font-weight:bold'
-	)
-	// eslint-disable-next-line no-console
-	console.log('refresh ceiling ≈', Math.round(await refreshRate()), 'Hz (your monitor caps FPS at this)')
-
+/** One ramp pass: spawn up to each tier and sample FPS. Returns per-tier results. */
+async function rampPass(editor: Editor, tank: ReturnType<typeof spawnTank>, label: string): Promise<TierResult[]> {
 	const results: TierResult[] = []
 	let current = 0
 	for (const target of TIERS) {
-		// Spawn the delta to reach `target`, scattered across the tank interior so
-		// they're all on-screen and roaming (not piled at one point / off-screen).
 		const ids: { id: TLShapeId; x: number; y: number }[] = []
 		for (let i = current; i < target; i++) {
 			const fx = 0.06 + 0.88 * pseudo(i * 2 + 1)
@@ -117,30 +97,77 @@ export async function runCreatureStressTest(editor: Editor) {
 		results.push({ count: target, meanFps, worstFps, frameMs })
 		// eslint-disable-next-line no-console
 		console.log(
-			`  ${String(target).padStart(4)} creatures  →  ${meanFps.toFixed(0).padStart(3)} fps mean   ` +
+			`  [${label}] ${String(target).padStart(4)} creatures  →  ${meanFps.toFixed(0).padStart(3)} fps mean   ` +
 				`${worstFps.toFixed(0).padStart(3)} fps worst-5%   ${frameMs.toFixed(1)} ms/frame`
 		)
 	}
+	return results
+}
 
-	// eslint-disable-next-line no-console
-	console.table(
-		results.map((r) => ({
-			creatures: r.count,
-			'mean fps': Math.round(r.meanFps),
-			'worst 5% fps': Math.round(r.worstFps),
-			'ms/frame': r.frameMs.toFixed(1),
-		}))
-	)
+/**
+ * Run the ramp TWICE — once with the swim loop ON (full), once with it OFF
+ * (render-only, via window.__SWIM_OFF). Comparing the two isolates whether the
+ * per-tick O(N) swim work or the rendering is the scaling bottleneck: if FPS jumps
+ * a lot with swim OFF, the swim loop is the cost; if it barely moves, rendering is.
+ * Prints a side-by-side delta table.
+ */
+export async function runCreatureStressTest(editor: Editor) {
+	// Clean slate so prior shapes don't skew the numbers.
+	const existing = Array.from(editor.getCurrentPageShapeIds())
+	if (existing.length) editor.deleteShapes(existing)
 
-	const lastSmooth = [...results].reverse().find((r) => r.worstFps >= SMOOTH_FPS)?.count ?? 0
-	const lastUsable = [...results].reverse().find((r) => r.worstFps >= USABLE_FPS)?.count ?? 0
+	const tank = spawnTank(editor)
+	editor.setCurrentTool('select')
+
 	// eslint-disable-next-line no-console
 	console.log(
-		`%c[creature stress] smooth (≥${SMOOTH_FPS}fps worst) up to ${lastSmooth} · ` +
-			`usable (≥${USABLE_FPS}fps worst) up to ${lastUsable}`,
-		'font-weight:bold;color:#2a7'
+		`%c[creature stress] A/B ramp ${TIERS.join(' → ')} in a ${Math.round(tank.w)}×${Math.round(tank.h)} tank`,
+		'font-weight:bold'
 	)
-	return results
+	// eslint-disable-next-line no-console
+	console.log('refresh ceiling ≈', Math.round(await refreshRate()), 'Hz (your monitor caps FPS at this)')
+
+	// PASS 1: full (swim on).
+	window.__SWIM_OFF = false
+	// eslint-disable-next-line no-console
+	console.log('%c— PASS 1: FULL (swim loop ON) —', 'font-weight:bold')
+	const full = await rampPass(editor, tank, 'full')
+
+	// Reset population for a clean second pass.
+	const mid = Array.from(editor.getCurrentPageShapeIds()).filter((id) => id !== tank.id)
+	if (mid.length) editor.deleteShapes(mid)
+	await wait(SETTLE_MS)
+
+	// PASS 2: render-only (swim off).
+	window.__SWIM_OFF = true
+	// eslint-disable-next-line no-console
+	console.log('%c— PASS 2: RENDER-ONLY (swim loop OFF) —', 'font-weight:bold')
+	const renderOnly = await rampPass(editor, tank, 'rndr')
+	window.__SWIM_OFF = false // restore
+
+	// Side-by-side delta.
+	// eslint-disable-next-line no-console
+	console.table(
+		TIERS.map((count, i) => {
+			const f = full[i]
+			const r = renderOnly[i]
+			return {
+				creatures: count,
+				'FULL mean': Math.round(f.meanFps),
+				'FULL ms': f.frameMs.toFixed(1),
+				'RENDER-ONLY mean': Math.round(r.meanFps),
+				'RENDER-ONLY ms': r.frameMs.toFixed(1),
+				'swim cost ms/frame': (f.frameMs - r.frameMs).toFixed(1),
+			}
+		})
+	)
+
+	const verdict =
+		'If RENDER-ONLY is much faster than FULL, the swim loop (O(N) hit-tests/tick) is the ' +
+		'bottleneck — cheap to fix. If they track closely, rendering is the wall — needs the overlay.'
+	// eslint-disable-next-line no-console
+	console.log(`%c[creature stress] ${verdict}`, 'font-weight:bold;color:#2a7')
+	return { full, renderOnly }
 }
 
 /** Stable pseudo-random in [0,1) from an integer — scatter without Math.random. */

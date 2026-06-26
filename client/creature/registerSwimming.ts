@@ -36,7 +36,7 @@
  * Mount once from <Tldraw onMount> alongside the other behaviours; returns a
  * disposer.
  */
-import { Editor, TLShapeId, Vec } from 'tldraw'
+import { Box, Editor, TLShapeId, Vec } from 'tldraw'
 import { creatureClock, positionWriteHz, tailBeat } from './clock'
 import { CreatureShape } from '../shapes/CreatureShape'
 
@@ -86,8 +86,34 @@ const DRAG_RESYNC_DIST = 8
  *              a centre-pivot rotate).
  *   speed    — the EASED forward speed (px/ms), low-passed toward the tail-beat
  *              target so the per-stroke surge reads as a smooth swell, not a jerk.
+ *   tankId / tankBounds — CACHED tank membership. The tank a creature is in almost
+ *              never changes frame-to-frame, but the hit-test to find it
+ *              (getShapeAtPoint) is the swim loop's dominant per-tick cost at scale
+ *              (~50ms/frame at 200 creatures — see the stress test). So we cache it
+ *              and only re-run the hit-test when the creature leaves the cached
+ *              tank's bounds (a cheap AABB check) or the tank disappears.
  */
-type SwimState = { heading: number; wander: number; cx: number; cy: number; speed: number }
+type SwimState = {
+	heading: number
+	wander: number
+	cx: number
+	cy: number
+	speed: number
+	tankId: TLShapeId | null
+	tankBounds: Box | null
+}
+
+/**
+ * TEMP dev escape hatch: set `window.__SWIM_OFF = true` (or via the stress test)
+ * to disable the swim loop entirely, so a profiling run measures ONLY the render
+ * cost. Lets us tell whether the per-tick O(N) hit-tests in this loop, or the
+ * rendering, is the scaling bottleneck. Remove with the stress harness.
+ */
+declare global {
+	interface Window {
+		__SWIM_OFF?: boolean
+	}
+}
 
 export function registerSwimming(editor: Editor): () => void {
 	let busy = false
@@ -99,6 +125,7 @@ export function registerSwimming(editor: Editor): () => void {
 
 	const onTick = (elapsedMs: number) => {
 		if (busy || elapsedMs <= 0) return
+		if (typeof window !== 'undefined' && window.__SWIM_OFF) return // profiling: render-only
 		// Never integrate while the pointer is down — writing positions under a live
 		// drag breaks hit-testing and the pointer-up release (same gate as physics).
 		if (editor.inputs.getIsPointing()) return
@@ -161,9 +188,6 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 	const bounds = editor.getShapePageBounds(creature.id)
 	if (!bounds) return
 
-	const tank = tankUnder(editor, creature.id)
-	if (!tank) return // not in a tank → no roaming (it still undulates in place)
-
 	// Lazily seed this creature's heading + centre from its current synced state,
 	// so we begin integrating from where (and how) the shape actually is. CRUCIAL:
 	// the heading must come from the creature's CURRENT rotation, not from its
@@ -180,6 +204,8 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 			cx: bounds.center.x,
 			cy: bounds.center.y,
 			speed: 0, // eases up from rest on the first strokes
+			tankId: null,
+			tankBounds: null,
 		}
 		all.set(creature.id, s)
 	} else {
@@ -193,6 +219,28 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 			s.heading = creature.rotation - Math.PI
 		}
 	}
+
+	// RESOLVE THE TANK, cached. The expensive part — getShapeAtPoint — is the swim
+	// loop's dominant per-tick cost at scale, but the tank rarely changes. So: if the
+	// centre is still inside the cached tank's bounds AND that tank still exists,
+	// reuse the cached bounds (a cheap AABB check). Only fall back to the hit-test on
+	// a cache miss (first run, or the creature swam/was dragged out of its tank).
+	let tank = s.tankBounds
+	const inCached =
+		tank !== null && s.tankId !== null && tank.containsPoint(bounds.center) && !!editor.getShape(s.tankId)
+	if (!inCached) {
+		const found = tankUnderWithId(editor, creature.id)
+		if (!found) {
+			// Left every tank → drop the cache and stop roaming (still undulates).
+			s.tankId = null
+			s.tankBounds = null
+			return
+		}
+		s.tankId = found.id
+		s.tankBounds = found.bounds
+		tank = found.bounds
+	}
+	if (!tank) return // not in a tank → no roaming (it still undulates in place)
 
 	// Meander: nudge the heading by a smooth, slowly-varying amount. Using the
 	// wander phase (advanced each tick) keeps turns gentle and frame-rate-stable.
@@ -279,6 +327,14 @@ function clamp(n: number, lo: number, hi: number): number {
  * → animate; alone on the canvas → freeze).
  */
 export function tankUnder(editor: Editor, id: TLShapeId) {
+	return tankUnderWithId(editor, id)?.bounds
+}
+
+/**
+ * Like tankUnder but also returns the tank's id, so the swim loop can CACHE which
+ * tank a creature is in and skip this hit-test on subsequent ticks (see SwimState).
+ */
+function tankUnderWithId(editor: Editor, id: TLShapeId): { id: TLShapeId; bounds: Box } | undefined {
 	const bounds = editor.getShapePageBounds(id)
 	if (!bounds) return undefined
 	const tank = editor.getShapeAtPoint(bounds.center, {
@@ -286,7 +342,9 @@ export function tankUnder(editor: Editor, id: TLShapeId) {
 		hitInside: true,
 	})
 	if (!tank) return undefined
-	return editor.getShapePageBounds(tank.id)
+	const tankBounds = editor.getShapePageBounds(tank.id)
+	if (!tankBounds) return undefined
+	return { id: tank.id, bounds: tankBounds }
 }
 
 /**

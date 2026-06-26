@@ -31,6 +31,11 @@ export function registerContainment(editor: Editor): () => void {
 
 	const offChange = editor.sideEffects.registerAfterChangeHandler('shape', (prev, next) => {
 		if (busy || next.type === 'container') return
+		// Creatures swim continuously (a write every tick) and are never container
+		// members — skipping them avoids a containerUnder hit-test + binding lookup
+		// per creature per frame, a dominant cost with many creatures roaming. A
+		// creature's "container" is its geo tank, handled by the swim loop, not here.
+		if (next.type === 'creature') return
 		if (prev.x !== next.x || prev.y !== next.y) movedPieces.add(next.id)
 	})
 
