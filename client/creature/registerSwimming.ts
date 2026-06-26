@@ -85,10 +85,21 @@ const JELLY_SPEED_EASE = 0.02
 const JELLY_SINK = 0.054
 /** How sharply the heading meanders, in radians/ms. Gentle — barely curving. */
 const TURN_RATE = 0.0004
-/** How firmly the creature steers away from a wall, in radians/ms at full depth. */
-const AVOID_RATE = 0.004
-/** Start steering away once the body is within this fraction of the tank from a wall. */
-const AVOID_MARGIN = 0.22
+/**
+ * How firmly the creature steers away from a wall, in radians/ms at full depth. Tuned
+ * UP from the original gentle 0.004: at the old rate a creature aimed straight at a wall
+ * turned only ~7°/write, so it could reach the wall and sit pinned by the confinement
+ * clamp (heading still into the wall) for many ticks before curving off — the "stuck on
+ * walls" symptom. At 0.012 a fully-cornered creature reverses course in a few writes,
+ * so it peels off the wall promptly instead of grinding along it.
+ */
+const AVOID_RATE = 0.012
+/**
+ * Start steering away once the body is within this fraction of the LOCAL room from a wall.
+ * Widened from 0.22 so the curve-away begins earlier and the creature rarely reaches the
+ * wall at all — the steering has more runway to bend the heading before contact.
+ */
+const AVOID_MARGIN = 0.32
 /**
  * Cap dt so a tab-switch stall can't teleport a creature across its tank. Must be
  * ≥ the longest position-write THROTTLE interval (1000 / slowest positionWriteHz =
@@ -115,12 +126,21 @@ const DRAG_RESYNC_DIST = 8
  *              a centre-pivot rotate).
  *   speed    — the EASED forward speed (px/ms), low-passed toward the tail-beat
  *              target so the per-stroke surge reads as a smooth swell, not a jerk.
- *   tankId / tankBounds — CACHED tank membership. The tank a creature is in almost
- *              never changes frame-to-frame, but the hit-test to find it
- *              (getShapeAtPoint) is the swim loop's dominant per-tick cost at scale
- *              (~50ms/frame at 200 creatures — see the stress test). So we cache it
- *              and only re-run the hit-test when the creature leaves the cached
- *              tank's bounds (a cheap AABB check) or the tank disappears.
+ *   tank — CACHED tank membership. The tank a creature is in almost never changes
+ *              frame-to-frame, but the hit-test to find it (getShapeAtPoint) is the
+ *              swim loop's dominant per-tick cost at scale (~50ms/frame at 200
+ *              creatures — see the stress test). So we cache the whole CLUSTER and
+ *              only re-run the hit-test when the creature leaves the cluster (a cheap
+ *              per-box AABB check) or its seed shape disappears.
+ *
+ * A "tank" is no longer a single geo shape: it's a CLUSTER — the connected set of
+ * touching native geo shapes (see resolveCluster). Touching shapes share their
+ * navigation space, so a creature roams freely from one into the next and users can
+ * build multi-room levels by abutting rectangles. The cluster is modelled as the
+ * list of its members' page-space AABBs (`boxes`) plus their combined outer AABB
+ * (`union`, used only for the cheap cache check). Confinement and wall-avoidance run
+ * against the box LIST, so the creature is held inside the non-convex union and the
+ * seams where boxes meet are NOT treated as walls.
  */
 type SwimState = {
 	heading: number
@@ -128,8 +148,20 @@ type SwimState = {
 	cx: number
 	cy: number
 	speed: number
-	tankId: TLShapeId | null
-	tankBounds: Box | null
+	tank: Cluster | null
+}
+
+/**
+ * A tank cluster: the connected component of touching geo shapes a creature lives in.
+ *   seedId — one member's id, used only to revalidate the cache (still exists?).
+ *   boxes  — every member's page-space AABB. Confinement + avoidance iterate these.
+ *   union  — the combined outer AABB of all boxes; a fast pre-filter for the cache
+ *            check (a point outside the union is outside every box).
+ */
+type Cluster = {
+	seedId: TLShapeId
+	boxes: Box[]
+	union: Box
 }
 
 /**
@@ -233,8 +265,7 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 			cx: bounds.center.x,
 			cy: bounds.center.y,
 			speed: 0, // eases up from rest on the first strokes
-			tankId: null,
-			tankBounds: null,
+			tank: null,
 		}
 		all.set(creature.id, s)
 	} else {
@@ -249,25 +280,23 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 		}
 	}
 
-	// RESOLVE THE TANK, cached. The expensive part — getShapeAtPoint — is the swim
-	// loop's dominant per-tick cost at scale, but the tank rarely changes. So: if the
-	// centre is still inside the cached tank's bounds AND that tank still exists,
-	// reuse the cached bounds (a cheap AABB check). Only fall back to the hit-test on
-	// a cache miss (first run, or the creature swam/was dragged out of its tank).
-	let tank = s.tankBounds
-	const inCached =
-		tank !== null && s.tankId !== null && tank.containsPoint(bounds.center) && !!editor.getShape(s.tankId)
+	// RESOLVE THE TANK CLUSTER, cached. The expensive part — getShapeAtPoint plus the
+	// connected-component walk — is the swim loop's dominant per-tick cost at scale, but
+	// the cluster rarely changes. So: if the centre is still inside the cached cluster
+	// (any member box) AND its seed shape still exists, reuse it (a cheap per-box AABB
+	// check). Only fall back to the hit-test + cluster walk on a miss (first run, or the
+	// creature swam/was dragged out of the cluster).
+	let tank = s.tank
+	const inCached = tank !== null && clusterContains(tank, bounds.center) && !!editor.getShape(tank.seedId)
 	if (!inCached) {
-		const found = tankUnderWithId(editor, creature.id)
+		const found = resolveCluster(editor, creature.id)
 		if (!found) {
 			// Left every tank → drop the cache and stop roaming (still undulates).
-			s.tankId = null
-			s.tankBounds = null
+			s.tank = null
 			return
 		}
-		s.tankId = found.id
-		s.tankBounds = found.bounds
-		tank = found.bounds
+		s.tank = found
+		tank = found
 	}
 	if (!tank) return // not in a tank → no roaming (it still undulates in place)
 
@@ -279,18 +308,31 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 	// WALL AVOIDANCE (not bounce): as the body's centre nears a wall, steer the
 	// heading toward the tank interior — gently when just inside the margin, more
 	// firmly the closer it gets. The creature curves away before reaching the edge.
-	const margin = Math.min(tank.width, tank.height) * AVOID_MARGIN
+	//
+	// CLUSTER-AWARE: a creature should steer away from the OUTER boundary of the whole
+	// connected region, never from a seam where two rooms meet. The earlier "pick one home
+	// box and skip walls that touch a neighbour" approach mis-fired in the overlap zone —
+	// it would treat a real outer wall as open (because the *other* box sat past it on a
+	// different side) and suppress the steering, so the creature ran into the wall and got
+	// hard-clamped ("hits and stops"). Instead we measure, in each of the four directions,
+	// the distance from the centre to the cluster's outer boundary along that axis
+	// (clusterClearance): how far the creature could travel that way before leaving the
+	// UNION of rooms. A seam contributes a large clearance (the next room continues), so it
+	// produces no push; only a true outer edge is near, so only it steers. Margin scales to
+	// the local room so rooms of any size steer naturally.
+	const home = boxContaining(tank, s.cx, s.cy) ?? nearestBox(tank, s.cx, s.cy)
+	const margin = Math.min(home.width, home.height) * AVOID_MARGIN
 	let ax = 0
 	let ay = 0
 	if (margin > 0) {
-		const dxL = s.cx - tank.minX // distance to each wall
-		const dxR = tank.maxX - s.cx
-		const dyT = s.cy - tank.minY
-		const dyB = tank.maxY - s.cy
-		if (dxL < margin) ax += 1 - dxL / margin // too close to LEFT → push right
-		if (dxR < margin) ax -= 1 - dxR / margin // too close to RIGHT → push left
-		if (dyT < margin) ay += 1 - dyT / margin // too close to TOP → push down
-		if (dyB < margin) ay -= 1 - dyB / margin // too close to BOTTOM → push up
+		const dxL = clusterClearance(tank, s.cx, s.cy, -1, 0) // room to the LEFT
+		const dxR = clusterClearance(tank, s.cx, s.cy, 1, 0) // room to the RIGHT
+		const dyT = clusterClearance(tank, s.cx, s.cy, 0, -1) // room UP
+		const dyB = clusterClearance(tank, s.cx, s.cy, 0, 1) // room DOWN
+		if (dxL < margin) ax += 1 - dxL / margin // little room left → push right
+		if (dxR < margin) ax -= 1 - dxR / margin // little room right → push left
+		if (dyT < margin) ay += 1 - dyT / margin // little room up → push down
+		if (dyB < margin) ay -= 1 - dyB / margin // little room down → push up
 	}
 	if (ax !== 0 || ay !== 0) {
 		// Rotate `heading` toward the away-direction by an amount scaled to depth.
@@ -342,10 +384,17 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 		s.cx += Math.cos(s.heading) * s.speed * dt
 		s.cy += Math.sin(s.heading) * s.speed * dt
 	}
+	// CONFINE to the cluster. The union of touching boxes is non-convex, so we can't
+	// clamp to one AABB. confineToCluster projects the centre back inside whichever box
+	// it's in (or nearest, when a step crossed a seam) — so the creature is held inside
+	// the whole multi-room region but can pass freely between abutting rooms. We inset by
+	// the half-extents so the BODY stays inside, but only as far as each box allows (a
+	// narrow room never insets past its own centre), matching the old single-tank clamp.
 	const halfW = creature.props.w / 2
 	const halfH = creature.props.h / 2
-	s.cx = clamp(s.cx, tank.minX + halfW, Math.max(tank.minX + halfW, tank.maxX - halfW))
-	s.cy = clamp(s.cy, tank.minY + halfH, Math.max(tank.minY + halfH, tank.maxY - halfH))
+	const confined = confineToCluster(tank, s.cx, s.cy, halfW, halfH)
+	s.cx = confined.x
+	s.cy = confined.y
 
 	// FACE THE HEADING (per-kind). The body is drawn head-LEFT in local space
 	// (forward = −x), so heading + π points the head along travel. A crab adds a
@@ -425,6 +474,190 @@ function tankUnderWithId(editor: Editor, id: TLShapeId): { id: TLShapeId; bounds
 	const tankBounds = editor.getShapePageBounds(tank.id)
 	if (!tankBounds) return undefined
 	return { id: tank.id, bounds: tankBounds }
+}
+
+// ── TANK CLUSTERS: navigation spanning touching geo shapes ─────────────────────
+/**
+ * Two geo boxes are "touching" — and so share a tank — when their AABBs overlap OR
+ * abut within this slack (page px). Slack absorbs the sub-pixel gap from snapping /
+ * rounding when a user butts two rectangles edge-to-edge, so a hairline seam still
+ * reads as one connected level instead of trapping the creature on one side.
+ */
+const TOUCH_SLACK = 2
+
+/** Do two page-space AABBs overlap or abut within TOUCH_SLACK (→ same cluster)? */
+function boxesTouch(a: Box, b: Box): boolean {
+	return (
+		a.minX <= b.maxX + TOUCH_SLACK &&
+		b.minX <= a.maxX + TOUCH_SLACK &&
+		a.minY <= b.maxY + TOUCH_SLACK &&
+		b.minY <= a.maxY + TOUCH_SLACK
+	)
+}
+
+/**
+ * Build the CLUSTER a creature lives in: the connected component of touching native
+ * geo shapes reachable from the geo shape under the creature's centre. A flood-fill
+ * over `boxesTouch` from that seed shape across all geo shapes on the page. Returns
+ * undefined when the creature isn't over any geo shape (→ no tank, it just undulates).
+ *
+ * Cost: O(geoShapes²) in the worst case, but it only runs on a CACHE MISS (the
+ * creature crossed out of its cached cluster), not every tick — see SwimState.
+ */
+function resolveCluster(editor: Editor, creatureId: TLShapeId): Cluster | undefined {
+	const seed = tankUnderWithId(editor, creatureId)
+	if (!seed) return undefined
+
+	// Collect every geo shape's AABB once, then flood-fill from the seed over touches.
+	const geos: { id: TLShapeId; box: Box }[] = []
+	for (const shape of editor.getCurrentPageShapes()) {
+		if (shape.type !== 'geo') continue
+		const box = editor.getShapePageBounds(shape.id)
+		if (box) geos.push({ id: shape.id, box })
+	}
+
+	const boxes: Box[] = []
+	const visited = new Set<TLShapeId>([seed.id])
+	const frontier: Box[] = [seed.bounds]
+	boxes.push(seed.bounds)
+	while (frontier.length > 0) {
+		const cur = frontier.pop()!
+		for (const g of geos) {
+			if (visited.has(g.id)) continue
+			if (boxesTouch(cur, g.box)) {
+				visited.add(g.id)
+				boxes.push(g.box)
+				frontier.push(g.box)
+			}
+		}
+	}
+
+	// Combined outer AABB — the cheap pre-filter for the per-tick cache check.
+	let minX = Infinity
+	let minY = Infinity
+	let maxX = -Infinity
+	let maxY = -Infinity
+	for (const b of boxes) {
+		if (b.minX < minX) minX = b.minX
+		if (b.minY < minY) minY = b.minY
+		if (b.maxX > maxX) maxX = b.maxX
+		if (b.maxY > maxY) maxY = b.maxY
+	}
+	const union = new Box(minX, minY, maxX - minX, maxY - minY)
+	return { seedId: seed.id, boxes, union }
+}
+
+/** Is a point inside ANY member box of the cluster? (union is a fast pre-filter.) */
+function clusterContains(cluster: Cluster, p: Vec): boolean {
+	if (!cluster.union.containsPoint(p)) return false
+	return cluster.boxes.some((b) => b.containsPoint(p))
+}
+
+/** The cluster box containing (x, y), or undefined if the point is between boxes. */
+function boxContaining(cluster: Cluster, x: number, y: number): Box | undefined {
+	return cluster.boxes.find((b) => x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY)
+}
+
+/** The cluster box whose centre is nearest (x, y) — the fallback home box. */
+function nearestBox(cluster: Cluster, x: number, y: number): Box {
+	let best = cluster.boxes[0]
+	let bestD = Infinity
+	for (const b of cluster.boxes) {
+		const dx = b.center.x - x
+		const dy = b.center.y - y
+		const d = dx * dx + dy * dy
+		if (d < bestD) {
+			bestD = d
+			best = b
+		}
+	}
+	return best
+}
+
+/**
+ * How far the centre (x, y) can travel in an AXIS direction (dirX,dirY) — one of
+ * (±1,0)/(0,±1) — before leaving the cluster's UNION of rooms. This is the distance to
+ * the OUTER boundary along that axis, treating seams as transparent: a ray cast that way
+ * passes through every box whose perpendicular span covers (x, y), and the clearance is
+ * how far the union extends before a gap. Wall-avoidance and confinement both read this,
+ * so a wall that opens into the next room reports a large clearance (no push, no clamp)
+ * while a true outer edge reports a small one.
+ *
+ * Walk: among boxes that straddle the ray, start from the one containing (x,y) and extend
+ * the reachable interval as long as the next box abuts (within TOUCH_SLACK) the running
+ * frontier. The clearance is the frontier edge minus the current coordinate.
+ */
+function clusterClearance(cluster: Cluster, x: number, y: number, dirX: -1 | 0 | 1, dirY: -1 | 0 | 1): number {
+	const horizontal = dirX !== 0
+	// Boxes whose PERPENDICULAR span covers the point lie on the ray's path.
+	const onRay = cluster.boxes.filter((b) =>
+		horizontal ? y >= b.minY && y <= b.maxY : x >= b.minX && x <= b.maxX
+	)
+	if (onRay.length === 0) return 0
+	// The coordinate we're advancing, and a helper for a box's near/far edge along it.
+	const coord = horizontal ? x : y
+	const lo = (b: Box): number => (horizontal ? b.minX : b.minY)
+	const hi = (b: Box): number => (horizontal ? b.maxX : b.maxY)
+	const forward = (horizontal ? dirX : dirY) > 0
+
+	// Extend a frontier outward from `coord` through abutting boxes; clearance = |frontier − coord|.
+	if (forward) {
+		let frontier = coord
+		let grew = true
+		while (grew) {
+			grew = false
+			for (const b of onRay) {
+				if (lo(b) <= frontier + TOUCH_SLACK && hi(b) > frontier) {
+					frontier = hi(b)
+					grew = true
+				}
+			}
+		}
+		return Math.max(0, frontier - coord)
+	} else {
+		let frontier = coord
+		let grew = true
+		while (grew) {
+			grew = false
+			for (const b of onRay) {
+				if (hi(b) >= frontier - TOUCH_SLACK && lo(b) < frontier) {
+					frontier = lo(b)
+					grew = true
+				}
+			}
+		}
+		return Math.max(0, coord - frontier)
+	}
+}
+
+/**
+ * Project (x, y) back inside the cluster so the creature stays in the multi-room region.
+ * We first snap the point into the union (nearest box if a step carried it past every
+ * box), then push it off any OUTER boundary by the half-extents so the BODY stays inside.
+ * "Outer" is read from clusterClearance: a direction whose clearance is larger than the
+ * inset is a seam or open interior (leave it), a direction whose clearance is smaller is a
+ * true outer wall (push in by the shortfall). A seam therefore never re-traps the creature,
+ * and the body still tucks fully inside real edges — matching the old single-tank clamp.
+ */
+function confineToCluster(cluster: Cluster, x: number, y: number, halfW: number, halfH: number): Vec {
+	// 1) Snap into the union: if the step left every box, pull back to the nearest box edge.
+	let cx = x
+	let cy = y
+	if (!boxContaining(cluster, cx, cy)) {
+		const b = nearestBox(cluster, cx, cy)
+		cx = clamp(cx, b.minX, b.maxX)
+		cy = clamp(cy, b.minY, b.maxY)
+	}
+	// 2) Tuck the body off any nearby OUTER wall (clearance < inset), leaving seams alone.
+	const clrL = clusterClearance(cluster, cx, cy, -1, 0)
+	const clrR = clusterClearance(cluster, cx, cy, 1, 0)
+	const clrT = clusterClearance(cluster, cx, cy, 0, -1)
+	const clrB = clusterClearance(cluster, cx, cy, 0, 1)
+	if (clrL < halfW) cx += halfW - clrL
+	if (clrR < halfW) cx -= halfW - clrR
+	if (clrT < halfH) cy += halfH - clrT
+	if (clrB < halfH) cy -= halfH - clrB
+	return new Vec(cx, cy)
 }
 
 /**
