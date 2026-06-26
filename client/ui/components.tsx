@@ -25,6 +25,7 @@ import { CardShape } from '../shapes/CardShape'
 import { ContainerShape } from '../shapes/ContainerShape'
 import { DieShape } from '../shapes/DieShape'
 import { useReferee } from '../referee/useReferee'
+import { runCreatureStressTest } from '../creature/stressTest'
 
 function GameMainMenu() {
 	// `useEditor()` is how a UI component reaches the editor. Close over it in the
@@ -70,6 +71,17 @@ function GameMainMenu() {
 					readonlyOk={false}
 					onSelect={() => clearBoard(editor)}
 				/>
+				{/* TEMP dev-only: ramps creatures and logs real FPS to the console.
+				    Remove this item + client/creature/stressTest.ts when done. */}
+				{import.meta.env.DEV && (
+					<TldrawUiMenuItem
+						id="stress-creatures"
+						label="Stress test (creatures → console)"
+						icon="dots-horizontal"
+						readonlyOk={false}
+						onSelect={() => void runCreatureStressTest(editor)}
+					/>
+				)}
 			</TldrawUiMenuGroup>
 
 			{/* Keep everything tldraw normally shows. Remove this to REPLACE the menu. */}

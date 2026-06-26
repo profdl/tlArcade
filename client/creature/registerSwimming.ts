@@ -37,7 +37,7 @@
  * disposer.
  */
 import { Editor, TLShapeId, Vec } from 'tldraw'
-import { creatureClock, tailBeat } from './clock'
+import { creatureClock, positionWriteHz, tailBeat } from './clock'
 import { CreatureShape } from '../shapes/CreatureShape'
 
 /** Base swim speed in page px/ms at speed:1 (a calm drift). */
@@ -50,12 +50,17 @@ const TURN_RATE = 0.0004
 const AVOID_RATE = 0.004
 /** Start steering away once the body is within this fraction of the tank from a wall. */
 const AVOID_MARGIN = 0.22
-/** Cap dt so a tab-switch stall can't teleport a creature across its tank. */
+/**
+ * Cap dt so a tab-switch stall can't teleport a creature across its tank. Must be
+ * ≥ the longest position-write THROTTLE interval (1000 / slowest positionWriteHz =
+ * 1000/20 = 50ms), or a throttled write at a big fleet would integrate less time
+ * than actually elapsed and the swim would run slow. 64 covers it with headroom.
+ */
 const MAX_DT = 64
 /**
  * If the shape's stored centre jumps further than this from where we last left
  * it, treat it as a USER DRAG and resync to it (rather than our own integration).
- * Must exceed the largest single-tick swim step so our own writes never trip it:
+ * Must exceed the largest single-WRITE swim step so our own writes never trip it:
  * one step ≈ BASE_SPEED · MAX_DT · speed; at speed 1 that's ~3.2px, so 8px leaves
  * headroom up to speed ~2.5 before a fast creature could false-trigger.
  */
@@ -75,6 +80,10 @@ type SwimState = { heading: number; wander: number; cx: number; cy: number }
 export function registerSwimming(editor: Editor): () => void {
 	let busy = false
 	const state = new Map<TLShapeId, SwimState>()
+	// Time (ms) accumulated since we last WROTE positions. We integrate over the
+	// whole accumulated dt in one write, then reset — so throttling the write rate
+	// down (for big fleets) doesn't slow the swim, it just makes it coarser.
+	let sinceWrite = 0
 
 	const onTick = (elapsedMs: number) => {
 		if (busy || elapsedMs <= 0) return
@@ -92,7 +101,22 @@ export function registerSwimming(editor: Editor): () => void {
 			.filter((s): s is CreatureShape => s.type === 'creature')
 		if (creatures.length === 0) return
 
-		const dt = Math.min(elapsedMs, MAX_DT)
+		// THROTTLE position writes ONLY for big fleets. Translation through space
+		// (unlike the body's cyclic undulation) looks visibly STEPPED if written at
+		// less than frame rate, so small fleets — where smoothness matters and the
+		// sync-diff cost is negligible — write EVERY tick (writeHz = 0 → per-frame).
+		// Large fleets throttle to cut the x/y/rotation sync broadcast: a 300-fish
+		// tank at 30 writes/s emits a fraction of the diffs it would per-frame. We
+		// bank elapsed time and integrate the whole accrued dt in one write, so the
+		// motion covers the same ground regardless of write rate.
+		const writeHz = positionWriteHz(creatures.length)
+		sinceWrite += elapsedMs
+		if (writeHz > 0) {
+			const stepMs = 1000 / writeHz
+			if (sinceWrite < stepMs) return
+		}
+		const dt = Math.min(sinceWrite, MAX_DT)
+		sinceWrite = 0
 
 		busy = true
 		try {
@@ -129,25 +153,31 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 	if (!tank) return // not in a tank → no roaming (it still undulates in place)
 
 	// Lazily seed this creature's heading + centre from its current synced state,
-	// so different creatures set off in different directions deterministically and
-	// we begin integrating from where the shape actually is.
+	// so we begin integrating from where (and how) the shape actually is. CRUCIAL:
+	// the heading must come from the creature's CURRENT rotation, not from its
+	// seed — else the first tick after a drop would snap the body from its resting
+	// angle to seed*2π, the visible "instant 90° rotation on drop" bug. The body
+	// draws head-LEFT (forward = −x) and the loop writes rotation = heading + π, so
+	// the inverse is heading = rotation − π. The seed only diversifies the MEANDER
+	// (wander phase), so different creatures still wander differently.
 	let s = all.get(creature.id)
 	if (!s) {
 		s = {
-			heading: creature.props.seed * Math.PI * 2,
+			heading: creature.rotation - Math.PI,
 			wander: creature.props.seed * 10,
 			cx: bounds.center.x,
 			cy: bounds.center.y,
 		}
 		all.set(creature.id, s)
 	} else {
-		// If a user dragged the creature, the store's centre moved out from under
-		// us — resync to it so we swim from where it was placed, not where we left
-		// off. Small drifts are our own writes; a jump past DRAG_RESYNC_DIST (well
-		// above one swim step) is a drag.
+		// If a user dragged (or rotated) the creature, the store moved out from
+		// under us — resync to it so we swim from where/how it was placed, not where
+		// we left off. Small drifts are our own writes; a jump past DRAG_RESYNC_DIST
+		// (well above one swim step) is a user move.
 		if (Math.hypot(bounds.center.x - s.cx, bounds.center.y - s.cy) > DRAG_RESYNC_DIST) {
 			s.cx = bounds.center.x
 			s.cy = bounds.center.y
+			s.heading = creature.rotation - Math.PI
 		}
 	}
 

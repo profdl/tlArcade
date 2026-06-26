@@ -37,6 +37,57 @@ import { Editor, atom } from 'tldraw'
 export const creatureClock = atom('creatureClock', 0)
 
 /**
+ * How many creatures are currently mounted (= visible / not unmounted) on this
+ * client. Used to scale per-frame cost down as the fleet grows: the body
+ * renderer quantizes the clock more coarsely (fewer path rebuilds/sec) and the
+ * swim loop writes positions less often when this is large. It's a plain number
+ * behind an atom so readers can react to it; it tracks subscribeCreatureClock's
+ * ref count, which mounts/unmounts with each CreatureBody.
+ */
+export const creatureCount = atom('creatureCount', 0)
+
+/**
+ * Animation steps per second the body renderer quantizes the clock to, as a
+ * function of how many creatures are live. Above the thresholds we step coarser
+ * so N creatures rebuild their (perfect-freehand) paths fewer times per second —
+ * the dominant render cost. Returned value also throttles the swim-loop writes.
+ *
+ *   ≤ 60 creatures → 60 steps/s (frame-rate smooth; we have the CPU headroom here)
+ *   ≤ 150         → 30 steps/s
+ *   ≤ 300         → 16 steps/s
+ *   > 300         →  8 steps/s
+ *
+ * Pure function of the count so every reader (renderer + swim loop) agrees.
+ */
+export function animationStepsPerSec(count: number): number {
+	if (count <= 60) return 60
+	if (count <= 150) return 30
+	if (count <= 300) return 16
+	return 8
+}
+
+/**
+ * How many times/sec the swim loop WRITES creature positions, as a function of
+ * fleet size. Distinct from animationStepsPerSec because translation through
+ * space looks STEPPED below frame rate, whereas the body's cyclic undulation
+ * tolerates coarse quantization. So small fleets write EVERY frame (0 = no
+ * throttle, the smoothest), and only large fleets throttle — to cut the x/y/
+ * rotation sync-diff broadcast, where many fish moving per-frame is the cost.
+ *
+ *   ≤ 150 creatures → 0  (write every tick — fully smooth gliding)
+ *   ≤ 300          → 30 writes/s
+ *   > 300          → 20 writes/s
+ *
+ * Even the throttled tiers stay at/above the body's animation cadence, so
+ * position never updates more coarsely than the creature visibly animates.
+ */
+export function positionWriteHz(count: number): number {
+	if (count <= 150) return 0
+	if (count <= 300) return 30
+	return 20
+}
+
+/**
  * THE SHARED SWIM WAVE — the single source of "where in the tail-beat are we?".
  *
  * Both the body renderer (CreatureShape) and the movement loop (registerSwimming)
@@ -79,6 +130,7 @@ function tick(elapsedMs: number) {
  */
 export function subscribeCreatureClock(editor: Editor): () => void {
 	mountCount++
+	creatureCount.set(mountCount)
 	if (off === null) {
 		editor.on('tick', tick)
 		off = () => editor.off('tick', tick)
@@ -90,5 +142,6 @@ export function subscribeCreatureClock(editor: Editor): () => void {
 			off = null
 			mountCount = 0
 		}
+		creatureCount.set(Math.max(0, mountCount))
 	}
 }

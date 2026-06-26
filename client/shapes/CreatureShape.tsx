@@ -40,7 +40,13 @@ import {
 } from 'tldraw'
 import { useEffect, useMemo, useRef } from 'react'
 import { creatureShapeValidators } from '../../shared/shape-schemas'
-import { creatureClock, subscribeCreatureClock, tailBeat } from '../creature/clock'
+import {
+	animationStepsPerSec,
+	creatureClock,
+	creatureCount,
+	subscribeCreatureClock,
+	tailBeat,
+} from '../creature/clock'
 import { tankUnder } from '../creature/registerSwimming'
 
 // ── 1. THE SHAPE TYPE ────────────────────────────────────────────────────────
@@ -146,19 +152,22 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// below are mutated in tldraw's reactive scheduler (once per committed value) —
 	// NOT during React render, which would double-run under Strict Mode.
 	//
-	//  • clock — QUANTIZED to ~30 steps/sec so sub-frame ticks reuse the same value
-	//    and the path memo doesn't recompute every frame. We HOLD the last value
-	//    unchanged (so useValue stops re-rendering, the body freezes mid-stride and
-	//    resumes there) in two cases: while culled (off-screen), and while the
-	//    creature is NOT inside a geo "tank" — a creature alone on the canvas sits
-	//    still until dropped into a shape. We quantize the RAW clock (not clock*speed)
-	//    because tailBeat() applies its own speed-scaling.
+	//  • clock — QUANTIZED to N steps/sec so sub-frame ticks reuse the same value
+	//    and the path memo doesn't recompute every frame. N is ADAPTIVE: it drops
+	//    from 30 to as low as 8 as more creatures mount (animationStepsPerSec),
+	//    so a big fleet rebuilds its perfect-freehand paths far fewer times/sec —
+	//    the dominant render cost. We HOLD the last value unchanged (so useValue
+	//    stops re-rendering, the body freezes mid-stride and resumes there) in two
+	//    cases: while culled (off-screen), and while the creature is NOT inside a
+	//    geo "tank" — a creature alone on the canvas sits still until dropped into
+	//    a shape. We quantize the RAW clock (not clock*speed) because tailBeat()
+	//    applies its own speed-scaling.
 	//  • bank — lean into turns. Measured as angular velocity over CLOCK time (rad÷s),
 	//    not per-render: `rotation` (synced) only changes on ticks the creature
 	//    turned, so a per-render delta would flicker for one frame. The lean EASES
 	//    toward its target, giving a smooth lean-in/out. Synced rotation → all
 	//    clients bank alike.
-	const acc = useRef({ tick: 0, prevRot: shape.rotation, prevClock: 0, bank: 0 })
+	const acc = useRef({ clock: 0, prevRot: shape.rotation, prevClock: 0, bank: 0 })
 	const { clock, bank } = useValue(
 		'creatureMotion',
 		() => {
@@ -166,11 +175,15 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 			// body stops animating (and resumes mid-stride when it moves back / is dropped
 			// into a shape). tankUnder() re-runs reactively as the creature's x/y change.
 			if (editor.getCulledShapes().has(shape.id) || !tankUnder(editor, shape.id)) {
-				return { clock: acc.current.tick / 30, bank: acc.current.bank }
+				return { clock: acc.current.clock, bank: acc.current.bank }
 			}
 			const a = acc.current
-			a.tick = Math.round(creatureClock.get() * 30)
-			const clock = a.tick / 30
+			// Adaptive quantization: coarser steps the more creatures are live, so a
+			// big fleet recomputes paths fewer times/sec. Reading creatureCount here
+			// makes the cadence reactive to the fleet size.
+			const steps = animationStepsPerSec(creatureCount.get())
+			a.clock = Math.round(creatureClock.get() * steps) / steps
+			const clock = a.clock
 			const rotation = shape.rotation
 			const dt = clock - a.prevClock
 			const target = dt > 0 ? Math.max(-1, Math.min(1, ((rotation - a.prevRot) / dt) * 0.4)) : 0
@@ -295,7 +308,10 @@ function dashArray(dash: TLDefaultDashStyle, sw: number): string | undefined {
 //            the visible flick drives the forward thrust (the propulsion look)
 //   bank   = -1..1 turn lean; curves the whole spine toward the turn direction
 
-const SEGMENTS = 28
+// Points along each body edge. Fewer = cheaper polygon + cheaper perfect-freehand
+// pass (the per-render hotspot), at a slight cost to silhouette smoothness. 20 is
+// still visually smooth for a fish this size; was 28.
+const SEGMENTS = 20
 
 type Pt = { x: number; y: number }
 type Fish = {
