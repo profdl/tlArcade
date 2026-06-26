@@ -42,8 +42,18 @@ import { CreatureShape } from '../shapes/CreatureShape'
 
 /** Base swim speed in page px/ms at speed:1 (a calm drift). */
 const BASE_SPEED = 0.05
-/** Fraction of base speed kept between tail-beats, so it coasts (never stalls). */
-const GLIDE_FLOOR = 0.35
+/**
+ * Fraction of base speed kept between tail-beats, so it coasts (never stalls).
+ * Higher = more momentum carried through the coast → smoother glide, less lurch.
+ */
+const GLIDE_FLOOR = 0.62
+/**
+ * How fast the actual forward speed EASES toward its target each ms. The target
+ * surges/eases with the tail-beat thrust; easing the real velocity toward it (a
+ * low-pass) turns the abrupt per-beat surge into a smooth swell, so the glide
+ * doesn't visibly jerk on every stroke. ~0.008/ms ≈ a ~125ms smoothing window.
+ */
+const SPEED_EASE = 0.008
 /** How sharply the heading meanders, in radians/ms. Gentle — barely curving. */
 const TURN_RATE = 0.0004
 /** How firmly the creature steers away from a wall, in radians/ms at full depth. */
@@ -74,8 +84,10 @@ const DRAG_RESYNC_DIST = 8
  *              and derive the shape's top-left from it each tick, so translation
  *              and rotation stay consistent (no fighting between a manual move and
  *              a centre-pivot rotate).
+ *   speed    — the EASED forward speed (px/ms), low-passed toward the tail-beat
+ *              target so the per-stroke surge reads as a smooth swell, not a jerk.
  */
-type SwimState = { heading: number; wander: number; cx: number; cy: number }
+type SwimState = { heading: number; wander: number; cx: number; cy: number; speed: number }
 
 export function registerSwimming(editor: Editor): () => void {
 	let busy = false
@@ -167,6 +179,7 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 			wander: creature.props.seed * 10,
 			cx: bounds.center.x,
 			cy: bounds.center.y,
+			speed: 0, // eases up from rest on the first strokes
 		}
 		all.set(creature.id, s)
 	} else {
@@ -213,16 +226,19 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 
 	// PROPULSION: modulate forward speed by the SHARED tail-beat thrust, read from
 	// the same clock+seed+speed the body renders with — so the surge lines up with
-	// the visible tail-flick on every client. A small GLIDE_FLOOR keeps it coasting
+	// the visible tail-flick on every client. A high GLIDE_FLOOR keeps it coasting
 	// between beats rather than stalling dead, like a real swimmer.
 	const { thrust } = tailBeat(creatureClock.get(), creature.props.seed, creature.props.speed)
 	const drive = GLIDE_FLOOR + (1 - GLIDE_FLOOR) * thrust
-	const speed = BASE_SPEED * Math.max(0, creature.props.speed) * drive
+	const targetSpeed = BASE_SPEED * Math.max(0, creature.props.speed) * drive
+	// EASE the real speed toward the target (frame-rate-independent low-pass), so the
+	// per-stroke surge becomes a smooth swell instead of an abrupt jerk each beat.
+	s.speed += (targetSpeed - s.speed) * Math.min(1, SPEED_EASE * dt)
 
 	// Integrate the CENTRE along the heading — the creature moves where its HEAD
 	// points. Then keep the centre inside the tank (its own half-size as inset).
-	s.cx += Math.cos(s.heading) * speed * dt
-	s.cy += Math.sin(s.heading) * speed * dt
+	s.cx += Math.cos(s.heading) * s.speed * dt
+	s.cy += Math.sin(s.heading) * s.speed * dt
 	const halfW = creature.props.w / 2
 	const halfH = creature.props.h / 2
 	s.cx = clamp(s.cx, tank.minX + halfW, Math.max(tank.minX + halfW, tank.maxX - halfW))

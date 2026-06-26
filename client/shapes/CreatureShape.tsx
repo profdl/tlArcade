@@ -41,12 +41,11 @@ import {
 import { useEffect, useMemo, useRef } from 'react'
 import { creatureShapeValidators } from '../../shared/shape-schemas'
 import {
-	animationStepsPerSec,
 	creatureClock,
-	creatureCount,
 	subscribeCreatureClock,
 	tailBeat,
 } from '../creature/clock'
+import { useReactor } from 'tldraw'
 import { tankUnder } from '../creature/registerSwimming'
 
 // ── 1. THE SHAPE TYPE ────────────────────────────────────────────────────────
@@ -136,10 +135,35 @@ export class CreatureShapeUtil extends ShapeUtil<CreatureShape> {
 }
 
 // ── 4. THE ANIMATED BODY ─────────────────────────────────────────────────────
-// A React component so it can subscribe to the shared clock and re-render each
-// tick. It resolves color/stroke from tldraw's NATIVE theme exactly like the
-// built-in shapes do (editor.getCurrentTheme() + getColorValue + STROKE_SIZES),
-// so the creature follows the global palette, dark mode, and the style panel.
+// PERF ARCHITECTURE (read this — it's why this scales):
+//
+// The naive version recomputed the whole fish silhouette (perfect-freehand path)
+// every tick and let React reconcile new <path> `d` strings — so each creature
+// re-rendered every frame. tldraw's own perf docs call this out: "Animating shape
+// properties causes continuous re-renders." With one component per creature, N
+// creatures = N React re-renders per tick, which is the 100-fish cliff we profiled.
+//
+// THE FIX (tldraw's own per-shape pattern — see Shape.js useQuickReactor): render
+// the geometry ONCE and animate via TRANSFORMS mutated IMPERATIVELY, off the React
+// path. So during animation React does NOTHING:
+//   • The body + tail outlines are built once (useMemo on w/h/seed/strokeWidth) at
+//     REST POSE — perfect-freehand still runs, but once per creature, not per tick.
+//   • The swim life comes from two SVG <g> groups whose `transform` we set every
+//     tick inside a useReactor (tldraw's batched reactive effect): the BODY group
+//     gentle-sways (yaw about the head), the TAIL group flicks (rotate about the
+//     peduncle hinge), and a turn LEAN rotates the whole creature. We write
+//     setAttribute('transform', …) on refs — NO setState, NO re-render.
+//   • useReactor subscribes ONCE to the shared clock and runs at animation-frame
+//     rate; freezing (culled / not in a tank) just skips the writes. Because the
+//     path props never change after mount, the <path> elements never reconcile.
+//
+// This drops per-tick React work to ~zero. The remaining per-creature cost is the
+// DOM node + its composited transform — cheap, and the basis for the planned
+// single-overlay renderer (see the creature-overlay-threshold note) when we want
+// to go past what per-shape DOM can do.
+//
+// Theme/colour resolution is unchanged: editor.getCurrentTheme() + getColorValue +
+// STROKE_SIZES via useValue, so the creature still follows the palette/dark-mode.
 
 function CreatureBody({ shape }: { shape: CreatureShape }) {
 	const { w, h, seed, speed, color, size, dash, fill } = shape.props
@@ -148,57 +172,13 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// Start/stop the shared tick listener with this creature's lifetime.
 	useEffect(() => subscribeCreatureClock(editor), [editor])
 
-	// Reactive { clock, bank }, computed inside ONE useValue so the accumulators
-	// below are mutated in tldraw's reactive scheduler (once per committed value) —
-	// NOT during React render, which would double-run under Strict Mode.
-	//
-	//  • clock — QUANTIZED to N steps/sec so sub-frame ticks reuse the same value
-	//    and the path memo doesn't recompute every frame. N is ADAPTIVE: it drops
-	//    from 30 to as low as 8 as more creatures mount (animationStepsPerSec),
-	//    so a big fleet rebuilds its perfect-freehand paths far fewer times/sec —
-	//    the dominant render cost. We HOLD the last value unchanged (so useValue
-	//    stops re-rendering, the body freezes mid-stride and resumes there) in two
-	//    cases: while culled (off-screen), and while the creature is NOT inside a
-	//    geo "tank" — a creature alone on the canvas sits still until dropped into
-	//    a shape. We quantize the RAW clock (not clock*speed) because tailBeat()
-	//    applies its own speed-scaling.
-	//  • bank — lean into turns. Measured as angular velocity over CLOCK time (rad÷s),
-	//    not per-render: `rotation` (synced) only changes on ticks the creature
-	//    turned, so a per-render delta would flicker for one frame. The lean EASES
-	//    toward its target, giving a smooth lean-in/out. Synced rotation → all
-	//    clients bank alike.
-	const acc = useRef({ clock: 0, prevRot: shape.rotation, prevClock: 0, bank: 0 })
-	const { clock, bank } = useValue(
-		'creatureMotion',
-		() => {
-			// Frozen when off-screen OR not in a tank → hold the last clock value so the
-			// body stops animating (and resumes mid-stride when it moves back / is dropped
-			// into a shape). tankUnder() re-runs reactively as the creature's x/y change.
-			if (editor.getCulledShapes().has(shape.id) || !tankUnder(editor, shape.id)) {
-				return { clock: acc.current.clock, bank: acc.current.bank }
-			}
-			const a = acc.current
-			// Adaptive quantization: coarser steps the more creatures are live, so a
-			// big fleet recomputes paths fewer times/sec. Reading creatureCount here
-			// makes the cadence reactive to the fleet size.
-			const steps = animationStepsPerSec(creatureCount.get())
-			a.clock = Math.round(creatureClock.get() * steps) / steps
-			const clock = a.clock
-			const rotation = shape.rotation
-			const dt = clock - a.prevClock
-			const target = dt > 0 ? Math.max(-1, Math.min(1, ((rotation - a.prevRot) / dt) * 0.4)) : 0
-			a.bank += (target - a.bank) * Math.min(1, 6 * Math.max(0, dt))
-			a.prevRot = rotation
-			a.prevClock = clock
-			return { clock, bank: a.bank }
-		},
-		[editor, shape.id]
-	)
+	// Refs to the two animated SVG groups. We mutate their `transform` imperatively
+	// each tick (below) — this is the whole point: motion never goes through React.
+	const bodyGroup = useRef<SVGGElement>(null)
+	const tailGroup = useRef<SVGGElement>(null)
 
 	// Resolve theme-dependent display values reactively — re-renders on palette /
-	// dark-mode change. Mirrors DrawShapeUtil.getDefaultDisplayValues(): colours via
-	// getColorValue, and stroke width as `theme.strokeWidth * STROKE_SIZES[size]` so
-	// the creature tracks the theme exactly like the built-in shapes.
+	// dark-mode change (rare). Mirrors DrawShapeUtil.getDefaultDisplayValues().
 	const { stroke, fillColor, strokeWidth } = useValue(
 		'creatureDisplay',
 		() => {
@@ -213,23 +193,11 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 		[editor, color, fill, size]
 	)
 
-	// The tail-beat phase — SHARED with the movement loop so the body's flick and
-	// the forward thrust are in lockstep (the propulsion illusion). See clock.ts.
-	const beat = tailBeat(clock, seed, speed).phase
-
-	// The two fish parts, recomputed only when the quantized beat or bank changes:
-	// the body silhouette (head → tapered peduncle) and the forked caudal (tail)
-	// fin that flicks with the beat. The eye is a fixed point near the head.
-	const fish = useMemo(
-		() => creatureFish(w, h, seed, beat, bank),
-		[w, h, seed, beat, bank]
-	)
-
-	// 'draw' → run each outline through perfect-freehand for the hand-drawn wobble
-	// (the same pipeline DrawShapeUtil uses). Other dash values render clean paths
-	// with the matching strokeDasharray. fill applies to the closed shapes.
+	// REST-POSE geometry, built ONCE per (w/h/seed/strokeWidth/dash). No `beat`/`bank`
+	// here — the silhouette is static; the swim is added by transforms below.
 	const isDraw = dash === 'draw'
-	const closedPath = (pts: { x: number; y: number }[]) => {
+	const fish = useMemo(() => creatureFish(w, h, seed), [w, h, seed])
+	const closedPath = (pts: Pt[]) => {
 		if (isDraw) {
 			const sp = getStrokePoints(pts, { size: strokeWidth, streamline: 0.4, last: true })
 			return getSvgPathFromStrokePoints(sp, true)
@@ -239,30 +207,87 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	const bodyD = useMemo(() => closedPath(fish.body), [fish.body, isDraw, strokeWidth])
 	const tailD = useMemo(() => closedPath(fish.tail), [fish.tail, isDraw, strokeWidth])
 
+	// IMPERATIVE ANIMATION. useReactor subscribes to the shared clock once and runs
+	// at animation-frame rate (it batches, unlike useQuickReactor). It sets the two
+	// groups' transforms directly — React is not involved, so no re-render per tick.
+	//
+	// We keep a tiny accumulator for the eased turn-lean (same idea as before: lean
+	// is angular velocity of the synced rotation over clock time, smoothed).
+	const acc = useRef({ prevRot: shape.rotation, prevClock: 0, bank: 0 })
+	useReactor(
+		'creatureSwim',
+		() => {
+			const body = bodyGroup.current
+			const tail = tailGroup.current
+			if (!body || !tail) return
+			// Freeze (skip writes, hold last transform) when off-screen OR not in a
+			// tank — a creature alone on the canvas sits still. tankUnder/getCulledShapes
+			// are reactive, so this effect re-evaluates when those change.
+			if (editor.getCulledShapes().has(shape.id) || !tankUnder(editor, shape.id)) return
+
+			const clock = creatureClock.get()
+			const a = acc.current
+			const dt = clock - a.prevClock
+			const rotation = shape.rotation
+			const targetBank = dt > 0 ? Math.max(-1, Math.min(1, ((rotation - a.prevRot) / dt) * 0.4)) : a.bank
+			a.bank += (targetBank - a.bank) * Math.min(1, 6 * Math.max(0, dt))
+			a.prevRot = rotation
+			a.prevClock = clock
+
+			// Shared tail-beat phase — in lockstep with the movement loop's thrust.
+			const beat = tailBeat(clock, seed, speed).phase
+
+			// BODY: gentle yaw sway about the head + the turn lean, around the head
+			// point so the nose stays put and the body fans behind it.
+			const sway = Math.sin(beat) * 4 + a.bank * 10 // degrees
+			const hx = fish.headPivot.x
+			const hy = fish.headPivot.y
+			body.setAttribute('transform', `rotate(${sway.toFixed(2)} ${hx.toFixed(1)} ${hy.toFixed(1)})`)
+
+			// TAIL: flick about the JOIN hinge. This composes ON TOP of the body sway
+			// (the tail group is nested in the body group), so it's the tail's motion
+			// RELATIVE to the body — a bigger sweep that reads as the tail driving.
+			const flick = Math.sin(beat) * 18 // degrees
+			const px = fish.tailPivot.x
+			const py = fish.tailPivot.y
+			tail.setAttribute('transform', `rotate(${flick.toFixed(2)} ${px.toFixed(1)} ${py.toFixed(1)})`)
+		},
+		[editor, shape.id, seed, speed, fish]
+	)
+
 	return (
 		<HTMLContainer style={{ width: w, height: h, pointerEvents: 'all' }}>
 			<svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
-				{/* tail sits behind the body so its base tucks under it */}
-				<path
-					d={tailD}
-					fill={fillColor}
-					stroke={stroke}
-					strokeWidth={strokeWidth}
-					strokeDasharray={dashArray(dash, strokeWidth)}
-					strokeLinecap="round"
-					strokeLinejoin="round"
-				/>
-				<path
-					d={bodyD}
-					fill={fillColor}
-					stroke={stroke}
-					strokeWidth={strokeWidth}
-					strokeDasharray={dashArray(dash, strokeWidth)}
-					strokeLinecap="round"
-					strokeLinejoin="round"
-				/>
-				{/* eye */}
-				<circle cx={fish.eye.x} cy={fish.eye.y} r={Math.max(1.2, strokeWidth * 0.9)} fill={stroke} />
+				{/* The body group carries the whole-creature sway; the <g> refs are the
+				    transform targets, mutated imperatively each tick. Their `d`/`cx`
+				    never change, so React never reconciles them after mount. */}
+				<g ref={bodyGroup}>
+					{/* tail NESTED inside the body group: it inherits the body sway so the
+					    join never drifts, then composes its own flick. Drawn first so it
+					    sits behind the body path; its tucked-in base hides under the body. */}
+					<g ref={tailGroup}>
+						<path
+							d={tailD}
+							fill={fillColor}
+							stroke={stroke}
+							strokeWidth={strokeWidth}
+							strokeDasharray={dashArray(dash, strokeWidth)}
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</g>
+					<path
+						d={bodyD}
+						fill={fillColor}
+						stroke={stroke}
+						strokeWidth={strokeWidth}
+						strokeDasharray={dashArray(dash, strokeWidth)}
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+					{/* eye rides with the body group so it stays anchored to the head */}
+					<circle cx={fish.eye.x} cy={fish.eye.y} r={Math.max(1.2, strokeWidth * 0.9)} fill={stroke} />
+				</g>
 			</svg>
 		</HTMLContainer>
 	)
@@ -297,20 +322,22 @@ function dashArray(dash: TLDefaultDashStyle, sw: number): string | undefined {
 }
 
 // ── 5. THE FORMULA (the #つぶやきProcessing bit) ──────────────────────────────
-// A minimal fish: its spine ± a tapered body radius, a rounded head pinching to
-// a narrow caudal peduncle, a FORKED tail fin that flicks with the beat, and one
-// eye. We build the body and tail as their own rings of points so the consumer
-// can render (and freehand-wobble) them independently.
+// A minimal fish at REST POSE: its spine ± a tapered body radius, a rounded head
+// pinching to a narrow caudal peduncle, a FORKED tail fin, and one eye. The swim
+// is NOT baked into this geometry anymore — the body is static and the consumer
+// animates it via transforms (see CreatureBody). So this is a pure function of
+// shape only; it returns the two outlines, the eye, and the two HINGE POINTS the
+// animation rotates about (the head, and the tail's peduncle base).
 //
-//   sway   = travelling sine wave (the swim; flows head→tail, grows toward tail)
-//   radius = head-heavy teardrop  (round at the head, pinched at the tail-base)
-//   beat   = tail-beat PHASE from tailBeat() — shared with the movement loop so
-//            the visible flick drives the forward thrust (the propulsion look)
-//   bank   = -1..1 turn lean; curves the whole spine toward the turn direction
+//   radius = head-heavy teardrop (round at the head, pinched at the tail-base)
+//
+// A small fixed sway is left in the spine so the resting silhouette isn't a dead
+// straight fish; the lively motion is the transform-driven body yaw + tail flick.
 
 // Points along each body edge. Fewer = cheaper polygon + cheaper perfect-freehand
-// pass (the per-render hotspot), at a slight cost to silhouette smoothness. 20 is
-// still visually smooth for a fish this size; was 28.
+// pass, at a slight cost to silhouette smoothness. 20 is still smooth for a fish
+// this size. NOTE: paths are now built ONCE per creature (not per tick), so this
+// no longer affects per-frame cost — only mount cost.
 const SEGMENTS = 20
 
 type Pt = { x: number; y: number }
@@ -318,9 +345,13 @@ type Fish = {
 	body: Pt[]
 	tail: Pt[]
 	eye: Pt
+	/** Hinge the body group yaws about (the nose). */
+	headPivot: Pt
+	/** Hinge the tail group flicks about (the caudal peduncle). */
+	tailPivot: Pt
 }
 
-function creatureFish(w: number, h: number, seed: number, beat: number, bank: number): Fish {
+function creatureFish(w: number, h: number, seed: number): Fish {
 	// The body spans head (x0) → tail-base (peduncle). We leave room on the right
 	// for the caudal fin, and a tiny inset elsewhere so strokes/fins aren't clipped.
 	const x0 = w * 0.06
@@ -329,10 +360,10 @@ function creatureFish(w: number, h: number, seed: number, beat: number, bank: nu
 	const cy = h * 0.5
 	const freq = 2.2 + seed * 1.5
 
-	// spine point at u∈[0,1] along the body. Travelling sine = swim; bank ∝ u² so
-	// the body leans into turns with the head leading. Amplitude kept small so the
-	// silhouette stays inside the now head-heavy box.
-	const spine = (u: number) => cy + h * 0.08 * u * Math.sin(freq * u - beat) + bank * h * 0.16 * u * u
+	// Rest-pose spine at u∈[0,1]: a small fixed sine ripple (seeded so creatures
+	// differ) gives the silhouette a touch of curve; the SWIM motion is applied as
+	// a transform by the consumer, not baked here.
+	const spine = (u: number) => cy + h * 0.04 * u * Math.sin(freq * u)
 
 	// HEAD-HEAVY teardrop: fat and round near the head (u≈0.18), pinching to a thin
 	// peduncle at the tail-base (u=1). This is what separates a fish from a leaf.
@@ -351,24 +382,42 @@ function creatureFish(w: number, h: number, seed: number, beat: number, bank: nu
 	}
 	const body = [...top, ...bottom]
 
-	// CAUDAL (tail) fin: a forked triangle hinged at the peduncle. It swings with
-	// the beat (and reaches further at the fork tips) for the swish.
+	// CAUDAL (tail) fin: a forked triangle hinged at the peduncle, drawn at REST
+	// (no swing). The consumer rotates the whole tail group about tailPivot to flick
+	// it — so the fork tips sweep, exactly like the old beat-driven `swing` did, but
+	// as a transform instead of re-generated points.
+	//
+	// THE JOIN: attach the fin's base right at the body's rear tip (peduncle), with
+	// only a SMALL overlap into the body so the seam is hidden but the fork doesn't
+	// sit buried inside the silhouette. uJoin near 1 = at the tail end; the base is
+	// narrow (the body is thin there) and the fork opens out to the right in open
+	// space. We pivot the flick about this join so the tail stays anchored as it
+	// swings.
 	const pedY = spine(1)
-	const pedR = radius(1)
-	const swing = h * 0.16 * Math.sin(beat)
-	const finX = w * 0.97
+	const uJoin = 0.97 // attach just inside the body's rear tip (was 0.86 — too buried)
+	const xJoin = x0 + uJoin * len
+	const joinR = radius(uJoin) // body half-thickness there → the fin's base height
+	const joinY = spine(uJoin)
+	const finX = w * 0.99 // fork tips reach a touch further to keep the fin's length
+	const innerX = xPed + (finX - xPed) * 0.45 // fork notch, between join and tips
 	const tail: Pt[] = [
-		{ x: xPed, y: pedY - pedR }, // top of peduncle
-		{ x: finX, y: pedY - h * 0.3 + swing }, // upper fork tip
-		{ x: w * 0.86, y: pedY + swing * 0.5 }, // inner notch (the fork)
-		{ x: finX, y: pedY + h * 0.3 + swing }, // lower fork tip
-		{ x: xPed, y: pedY + pedR }, // bottom of peduncle
+		{ x: xJoin, y: joinY - joinR }, // top of base (at the body's rear tip)
+		{ x: finX, y: pedY - h * 0.3 }, // upper fork tip
+		{ x: innerX, y: pedY }, // inner notch (the fork)
+		{ x: finX, y: pedY + h * 0.3 }, // lower fork tip
+		{ x: xJoin, y: joinY + joinR }, // bottom of base (at the body's rear tip)
 	]
 
 	// EYE, near the head.
 	const eye = { x: x0 + 0.1 * len, y: spine(0.1) - radius(0.1) * 0.25 }
 
-	return { body, tail, eye }
+	// HINGES for the transform animation: the body yaws about the nose; the tail
+	// flicks about the JOIN point (where its base meets the body), so the base stays
+	// put and only the fin sweeps — no gap opening up between tail and body.
+	const headPivot = { x: x0, y: spine(0) }
+	const tailPivot = { x: xJoin, y: joinY }
+
+	return { body, tail, eye, headPivot, tailPivot }
 }
 
 /** Join a ring of points into a closed straight-segment SVG path (2-dp coords). */
