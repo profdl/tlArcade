@@ -18,7 +18,24 @@ import {
 	DefaultDashStyle,
 	DefaultFillStyle,
 	DefaultSizeStyle,
+	StyleProp,
 } from '@tldraw/tlschema'
+
+/**
+ * The set of creature kinds, and the native enum StyleProp that selects between
+ * them. Lives here (worker-safe, no client deps) so it's the SINGLE source of
+ * truth: the client variant registry imports CREATURE_KINDS, and CreatureKindStyle
+ * — being a registered StyleProp — makes the kind picker appear in the style panel
+ * automatically and lets you switch a creature in place, exactly like the built-in
+ * `geo` shape switches rectangle↔ellipse. (CLAUDE.md gotcha #8: prefer native styles.)
+ */
+export const CREATURE_KINDS = ['fish', 'snake', 'jellyfish', 'crab'] as const
+export type CreatureKind = (typeof CREATURE_KINDS)[number]
+
+export const CreatureKindStyle = StyleProp.defineEnum('creature:kind', {
+	defaultValue: 'fish',
+	values: CREATURE_KINDS,
+})
 
 export const tokenShapeValidators = {
 	w: T.number,
@@ -108,8 +125,12 @@ export const creatureShapeValidators = {
 	// shapes use, so the creature shares the global palette and shows up in the
 	// style panel automatically — change it exactly like any other shape. The
 	// worker's createTLSchema auto-collects these StyleProps from the props map.
-	//   color → palette hue        size  → stroke width (s/m/l/xl)
-	//   dash  → 'draw' = hand-drawn  fill → none/semi/solid/pattern body fill
+	//   kind  → WHICH creature (fish/snake/…)   color → palette hue
+	//   size  → stroke width (s/m/l/xl)          dash  → 'draw' = hand-drawn
+	//   fill  → none/semi/solid/pattern body fill
+	// `kind` is also a StyleProp, so switching it (style panel) transforms the
+	// creature in place, exactly like the geo shape's rectangle↔ellipse selector.
+	kind: CreatureKindStyle,
 	color: DefaultColorStyle,
 	size: DefaultSizeStyle,
 	dash: DefaultDashStyle,

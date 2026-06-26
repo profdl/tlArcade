@@ -39,6 +39,23 @@
 import { Box, Editor, TLShapeId, Vec } from 'tldraw'
 import { creatureClock, positionWriteHz, tailBeat } from './clock'
 import { CreatureShape } from '../shapes/CreatureShape'
+import type { CreatureKind } from '../../shared/shape-schemas'
+
+/**
+ * How each creature kind ORIENTS itself relative to its travel direction. All
+ * variants are drawn head-LEFT (forward = −x), so the default rotation that points
+ * the head along the heading is `heading + π`. Per-kind tweaks:
+ *   facingOffset — extra radians added to that, so a crab leads with its SIDE
+ *                  (carapace sideways, classic crab scuttle) rather than head-first.
+ *   upright      — ignore heading for facing and keep the creature roughly UPRIGHT
+ *                  (jellyfish drift but the bell stays up); it still translates.
+ */
+const FACING: Record<CreatureKind, { facingOffset: number; upright: boolean }> = {
+	fish: { facingOffset: 0, upright: false },
+	snake: { facingOffset: 0, upright: false },
+	crab: { facingOffset: Math.PI / 2, upright: false }, // lead with the side → sideways
+	jellyfish: { facingOffset: 0, upright: true }, // bell stays up; drifts, doesn't aim
+}
 
 /** Base swim speed in page px/ms at speed:1 (a calm drift). */
 const BASE_SPEED = 0.05
@@ -292,14 +309,15 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 	s.cx = clamp(s.cx, tank.minX + halfW, Math.max(tank.minX + halfW, tank.maxX - halfW))
 	s.cy = clamp(s.cy, tank.minY + halfH, Math.max(tank.minY + halfH, tank.maxY - halfH))
 
-	// FACE THE HEADING. The body is drawn head-LEFT in local space (forward = −x),
-	// so rotation = heading + π points the head along the travel direction. Derive
-	// the top-left from the desired CENTRE + rotation in ONE write, so position and
-	// rotation never disagree (the bug with a separate translate + rotateShapesBy).
-	// NOTE: tldraw rotates a shape about its top-left ORIGIN (shape.x/y), not its
-	// centre — so the centre→top-left offset is (halfW, halfH) ROTATED by the angle,
-	// not the plain (halfW, halfH). Getting this wrong wobbles the body when turned.
-	const rotation = s.heading + Math.PI
+	// FACE THE HEADING (per-kind). The body is drawn head-LEFT in local space
+	// (forward = −x), so heading + π points the head along travel. A crab adds a
+	// 90° facingOffset so its SIDE leads (sideways scuttle); a jellyfish is `upright`
+	// — it keeps its bell up and just drifts, ignoring heading for rotation. Derive
+	// the top-left from the desired CENTRE + rotation in ONE write so position and
+	// rotation never disagree. NOTE: tldraw rotates about the top-left ORIGIN, so the
+	// centre→top-left offset is (halfW, halfH) ROTATED by the angle.
+	const face = FACING[creature.props.kind] ?? FACING.fish
+	const rotation = face.upright ? 0 : s.heading + Math.PI + face.facingOffset
 	const half = new Vec(halfW, halfH).rot(rotation) // centre→top-left offset, rotated
 	editor.updateShape<CreatureShape>({
 		id: creature.id,
@@ -328,6 +346,29 @@ function clamp(n: number, lo: number, hi: number): number {
  */
 export function tankUnder(editor: Editor, id: TLShapeId) {
 	return tankUnderWithId(editor, id)?.bounds
+}
+
+/** A mutable per-consumer cache of a creature's current tank. */
+export type TankCache = { id: TLShapeId; bounds: Box } | null
+
+/**
+ * Truthy "is this creature in a tank?" with the expensive getShapeAtPoint CACHED.
+ * The renderer's per-frame freeze check used to call tankUnder (→ getShapeAtPoint)
+ * every animation frame per creature — the same uncached hit-test the swim loop
+ * went to lengths to cache. This mirrors that: keep the last tank in `cache`, and
+ * while the creature's centre stays inside the cached tank's bounds (a cheap AABB)
+ * AND that tank still exists, reuse it; only re-run the hit-test on a miss. Still
+ * reads getShapePageBounds(id) — reactive — so the caller's reactor re-subscribes
+ * as the creature moves and self-heals when it enters/leaves a tank.
+ */
+export function tankUnderCached(editor: Editor, id: TLShapeId, cache: { current: TankCache }): boolean {
+	const bounds = editor.getShapePageBounds(id)
+	if (!bounds) return false
+	const c = cache.current
+	if (c && c.bounds.containsPoint(bounds.center) && editor.getShape(c.id)) return true
+	const found = tankUnderWithId(editor, id)
+	cache.current = found ? { id: found.id, bounds: found.bounds } : null
+	return !!found
 }
 
 /**

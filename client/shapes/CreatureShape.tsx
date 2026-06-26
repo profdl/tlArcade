@@ -39,14 +39,16 @@ import {
 	useValue,
 } from 'tldraw'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
-import { creatureShapeValidators } from '../../shared/shape-schemas'
+import { creatureShapeValidators, type CreatureKind } from '../../shared/shape-schemas'
 import {
 	creatureClock,
 	subscribeCreatureClock,
 	tailBeat,
 } from '../creature/clock'
 import { useReactor } from 'tldraw'
-import { tankUnder } from '../creature/registerSwimming'
+import { tankUnderCached, type TankCache } from '../creature/registerSwimming'
+import { getCreatureVariant } from '../creature/variants'
+import type { CreatureGeometry, MotionStyle, Pt } from '../creature/variants/types'
 
 // ── 1. THE SHAPE TYPE ────────────────────────────────────────────────────────
 // Everything here is PUBLIC and synced. There are no secrets and no referee —
@@ -60,7 +62,10 @@ import { tankUnder } from '../creature/registerSwimming'
 export type CreatureShapeProps = {
 	w: number
 	h: number
-	/** Picks WHICH creature. Body math is deterministic in `seed`. */
+	/** WHICH creature: fish/snake/jellyfish/crab. A native enum StyleProp, so it
+	 *  shows in the style panel and switches the creature in place (like geo's kind). */
+	kind: CreatureKind
+	/** Picks the individual within a kind. Geometry is deterministic in `seed`. */
 	seed: number
 	/** Undulation rate; higher = faster swim. */
 	speed: number
@@ -102,6 +107,7 @@ export class CreatureShapeUtil extends ShapeUtil<CreatureShape> {
 			// body — the silhouette fills it with little padding.
 			w: 120,
 			h: 64,
+			kind: 'fish',
 			seed: (Date.now() % 1000) / 1000,
 			speed: 1,
 			color: 'black',
@@ -166,18 +172,21 @@ export class CreatureShapeUtil extends ShapeUtil<CreatureShape> {
 // STROKE_SIZES via useValue, so the creature still follows the palette/dark-mode.
 
 function CreatureBody({ shape }: { shape: CreatureShape }) {
-	const { w, h, seed, speed, color, size, dash, fill } = shape.props
+	const { w, h, kind, seed, speed, color, size, dash, fill } = shape.props
 	const editor = useEditor()
 
 	// Start/stop the shared tick listener with this creature's lifetime.
 	useEffect(() => subscribeCreatureClock(editor), [editor])
 
-	// Refs to the animated SVG groups. We mutate their `transform` imperatively each
-	// tick (below) — this is the whole point: motion never goes through React. The
-	// body is a CHAIN of nested segment groups (bodyGroups[0] is the head; each later
-	// one is nested inside the previous), plus the tail nested at the end.
-	const bodyGroups = useRef<(SVGGElement | null)[]>([])
-	const tailGroup = useRef<SVGGElement>(null)
+	// The variant: geometry generator + motion params, looked up from `kind`. The
+	// renderer below is fully generic over whatever chains/dots/motion it produces.
+	const variant = useMemo(() => getCreatureVariant(kind), [kind])
+
+	// Refs to every animated SVG group, keyed `${chainIndex}:${segIndex}`. We mutate
+	// their `transform` imperatively each tick — motion never goes through React.
+	// Within a chain the segment <g>s are NESTED (a kinematic chain), so each rotation
+	// composes on its parent's; separate chains attach at their own anchor.
+	const segRefs = useRef<Map<string, SVGGElement | null>>(new Map())
 
 	// Resolve theme-dependent display values reactively — re-renders on palette /
 	// dark-mode change (rare). Mirrors DrawShapeUtil.getDefaultDisplayValues().
@@ -195,42 +204,40 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 		[editor, color, fill, size]
 	)
 
-	// REST-POSE geometry, built ONCE per (w/h/seed/strokeWidth/dash). No `beat`/`bank`
-	// here — the silhouette is static; the swim is added by transforms below.
-	const isDraw = dash === 'draw'
-	const fish = useMemo(() => creatureFish(w, h, seed), [w, h, seed])
-	const closedPath = (pts: Pt[]) => {
-		if (isDraw) {
-			const sp = getStrokePoints(pts, { size: strokeWidth, streamline: 0.4, last: true })
-			return getSvgPathFromStrokePoints(sp, true)
-		}
-		return polygonPath(pts)
-	}
-	// One freehand path per body segment (built once). The chain nests them so a
-	// per-segment phase offset makes a wave travel head→tail (see the reactor).
-	const bodyDs = useMemo(
-		() => fish.bodySegments.map((seg) => closedPath(seg)),
-		[fish.bodySegments, isDraw, strokeWidth]
-	)
-	const tailD = useMemo(() => closedPath(fish.tail), [fish.tail, isDraw, strokeWidth])
+	// REST-POSE geometry, built ONCE per (w/h/kind/seed). Pure function of shape; the
+	// motion is added by transforms below, so paths never rebuild per frame.
+	const geom = useMemo(() => variant.geometry(w, h, seed), [variant, w, h, seed])
 
-	// IMPERATIVE ANIMATION. useReactor subscribes to the shared clock once and runs
-	// at animation-frame rate (it batches, unlike useQuickReactor). It sets the two
-	// groups' transforms directly — React is not involved, so no re-render per tick.
-	//
-	// We keep a tiny accumulator for the eased turn-lean (same idea as before: lean
-	// is angular velocity of the synced rotation over clock time, smoothed).
+	// One freehand (or polygon) path per segment of every chain, built once.
+	const isDraw = dash === 'draw'
+	const chainDs = useMemo(
+		() =>
+			geom.chains.map((chain) =>
+				chain.segments.map((pts) => {
+					if (isDraw) {
+						const sp = getStrokePoints(pts, { size: strokeWidth, streamline: 0.4, last: true })
+						return getSvgPathFromStrokePoints(sp, true)
+					}
+					return polygonPath(pts)
+				})
+			),
+		[geom, isDraw, strokeWidth]
+	)
+
+	// IMPERATIVE ANIMATION. useReactor subscribes to the shared clock once and runs at
+	// animation-frame rate (batched). It sets each segment group's `transform` directly
+	// — React is not involved, so no re-render per tick. The motion STYLE (undulate /
+	// pulse / scuttle) is the variant's; the per-chain `role`/amp/phase shape the rest.
 	const acc = useRef({ prevRot: shape.rotation, prevClock: 0, bank: 0 })
+	// Per-creature tank cache for the freeze check, so we don't re-run the expensive
+	// getShapeAtPoint hit-test every animation frame (it re-verifies with a cheap AABB).
+	const tankCache = useRef<TankCache>(null)
 	useReactor(
 		'creatureSwim',
 		() => {
-			const tail = tailGroup.current
-			const segs = bodyGroups.current
-			if (!tail || segs.length === 0 || segs.some((g) => !g)) return
-			// Freeze (skip writes, hold last transform) when off-screen OR not in a
-			// tank — a creature alone on the canvas sits still. tankUnder/getCulledShapes
-			// are reactive, so this effect re-evaluates when those change.
-			if (editor.getCulledShapes().has(shape.id) || !tankUnder(editor, shape.id)) return
+			const refs = segRefs.current
+			// Freeze (skip writes, hold last transform) when off-screen OR not in a tank.
+			if (editor.getCulledShapes().has(shape.id) || !tankUnderCached(editor, shape.id, tankCache)) return
 
 			const clock = creatureClock.get()
 			const a = acc.current
@@ -241,33 +248,13 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 			a.prevRot = rotation
 			a.prevClock = clock
 
-			// Shared tail-beat phase — in lockstep with the movement loop's thrust.
-			const beat = tailBeat(clock, seed, speed).phase
+			// One shared beat for the whole creature, scaled per variant. tailBeat is the
+			// same wave the swim loop reads, so visible motion and propulsion stay in sync.
+			const beat = tailBeat(clock, seed, speed).phase * variant.motion.beatScale
 
-			// BODY CHAIN: each segment rotates about its own joint by a sine whose PHASE
-			// TRAILS the segment ahead of it (the `- i * PHASE_LAG` term) and whose
-			// AMPLITUDE GROWS toward the tail (AMP_BASE * (i+1)). Because the segments
-			// are nested, each rotation composes on its parent's, so the per-segment
-			// offsets accumulate into a wave flowing head→tail — the old traveling-sine
-			// undulation, but as cheap transforms on static paths. The head segment also
-			// carries the turn lean (bank) so the whole fish leans into turns.
-			for (let i = 0; i < segs.length; i++) {
-				const phase = beat - i * PHASE_LAG
-				let deg = Math.sin(phase) * AMP_BASE * (i + 1)
-				if (i === 0) deg += a.bank * 10 // lean rides on the head segment
-				const j = fish.joints[i]
-				segs[i]!.setAttribute('transform', `rotate(${deg.toFixed(2)} ${j.x.toFixed(1)} ${j.y.toFixed(1)})`)
-			}
-
-			// TAIL: flick about the JOIN hinge, nested at the end of the chain so it
-			// inherits the whole body's accumulated bend, then adds the biggest sweep —
-			// the crest of the wave arriving, reading as the tail driving the fish.
-			const flick = Math.sin(beat - segs.length * PHASE_LAG) * 16
-			const px = fish.tailPivot.x
-			const py = fish.tailPivot.y
-			tail.setAttribute('transform', `rotate(${flick.toFixed(2)} ${px.toFixed(1)} ${py.toFixed(1)})`)
+			animateCreature(refs, geom, variant.motion.style, beat, a.bank)
 		},
-		[editor, shape.id, seed, speed, fish]
+		[editor, shape.id, seed, speed, geom, variant]
 	)
 
 	const pathProps = {
@@ -279,40 +266,33 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 		strokeLinejoin: 'round' as const,
 	}
 
-	// Build the nested body CHAIN from the innermost segment out. Each segment <g> is
-	// a transform target (ref into bodyGroups[i]) holding its own path plus the next
-	// segment nested inside it, so transforms compose down the chain. The TAIL nests
-	// inside the LAST segment, rendered BEFORE that segment's path so it tucks behind
-	// the body; the EYE rides the head (outermost) segment.
-	let chain: ReactNode = null
-	for (let i = bodyDs.length - 1; i >= 0; i--) {
-		const inner = chain
-		const isLast = i === bodyDs.length - 1
-		const isHead = i === 0
-		chain = (
-			<g key={i} ref={(el) => { bodyGroups.current[i] = el }}>
-				{/* tail goes behind the last segment's path → render it first */}
-				{isLast && (
-					<g ref={tailGroup}>
-						<path d={tailD} {...pathProps} />
-					</g>
-				)}
-				<path d={bodyDs[i]} {...pathProps} />
-				{isHead && (
-					<circle cx={fish.eye.x} cy={fish.eye.y} r={Math.max(1.2, strokeWidth * 0.9)} fill={stroke} />
-				)}
-				{inner}
-			</g>
-		)
-	}
+	// Map parent chain → its attached child chains, and the set of top-level (un-
+	// attached) chains. A chain with `attachToChain` nests inside that parent's last
+	// segment (so a fish tail follows the body's rear segment instead of detaching);
+	// the rest render at the top level.
+	const childrenByParent = new Map<number, number[]>()
+	const topLevel: number[] = []
+	geom.chains.forEach((chain, ci) => {
+		const p = chain.attachToChain
+		if (p !== undefined && p >= 0 && p < geom.chains.length && p !== ci) {
+			const list = childrenByParent.get(p) ?? []
+			list.push(ci)
+			childrenByParent.set(p, list)
+		} else {
+			topLevel.push(ci)
+		}
+	})
+	const ctx = { pathProps, stroke, strokeWidth, segRefs }
 
 	return (
 		<HTMLContainer style={{ width: w, height: h, pointerEvents: 'all' }}>
 			<svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
-				{/* Body is a kinematic chain of nested segment <g>s (refs in bodyGroups),
-				    each rotated about its joint per tick so a wave flows head→tail. The
-				    <g>/path/cx never change, so React never reconciles them after mount. */}
-				{chain}
+				{/* Each chain is a kinematic chain of nested segment <g>s (refs keyed
+				    `chain:seg` in segRefs), rotated per tick by animateCreature. The spine
+				    (chains[0]) carries the eyes; attached chains (e.g. the tail) nest in
+				    their parent's last segment so they follow it. The <g>/path/cx never
+				    change, so React never reconciles them after mount. */}
+				{topLevel.map((ci) => renderChain(ci, geom, chainDs, childrenByParent, ctx))}
 			</svg>
 		</HTMLContainer>
 	)
@@ -346,141 +326,132 @@ function dashArray(dash: TLDefaultDashStyle, sw: number): string | undefined {
 	}
 }
 
-// ── 5. THE FORMULA (the #つぶやきProcessing bit) ──────────────────────────────
-// A minimal fish at REST POSE: its spine ± a tapered body radius, a rounded head
-// pinching to a narrow caudal peduncle, a FORKED tail fin, and one eye. The swim
-// is NOT baked into this geometry anymore — the body is static and the consumer
-// animates it via transforms (see CreatureBody). So this is a pure function of
-// shape only; it returns the two outlines, the eye, and the two HINGE POINTS the
-// animation rotates about (the head, and the tail's peduncle base).
-//
-//   radius = head-heavy teardrop (round at the head, pinched at the tail-base)
-//
-// A small fixed sway is left in the spine so the resting silhouette isn't a dead
-// straight fish; the lively motion is the transform-driven body yaw + tail flick.
+// ── 5. THE CHAIN RENDERER + ANIMATOR (generic over every variant) ─────────────
+// The geometry of each creature lives in client/creature/variants/*. Here we just
+// render and animate whatever chains/dots a variant produced. A chain renders as a
+// stack of NESTED <g>s (a kinematic chain: each segment rotates about its joint,
+// carrying the segments behind it), so transforms compose into a continuous bend.
 
-// Points along each body edge. Fewer = cheaper polygon + cheaper perfect-freehand
-// pass, at a slight cost to silhouette smoothness. 20 is still smooth for a fish
-// this size. NOTE: paths are now built ONCE per creature (not per tick), so this
-// no longer affects per-frame cost — only mount cost.
-const SEGMENTS = 20
+/**
+ * Render one chain (and, recursively, any chains ATTACHED to it) as nested <g>s.
+ * Within a chain the segment <g>s nest head→tail (kinematic chain); each <g>'s ref
+ * is stored in segRefs under `${chainIndex}:${segIndex}` for the animator. A chain
+ * declaring `attachToChain` is injected into its parent's LAST segment <g>, so it
+ * inherits the parent's full accumulated bend and stays joined as the parent moves
+ * (this is what keeps a fish's tail welded to the body's rear segment). Dots ride
+ * the head (segment 0).
+ */
+function renderChain(
+	ci: number,
+	geom: CreatureGeometry,
+	chainDs: string[][],
+	childrenByParent: Map<number, number[]>,
+	ctx: { pathProps: Record<string, unknown>; stroke: string; strokeWidth: number; segRefs: { current: Map<string, SVGGElement | null> } }
+): ReactNode {
+	const segmentDs = chainDs[ci]
+	const dots = geom.dots.filter((d) => d.chain === ci)
+	const lastSeg = segmentDs.length - 1
+	// Chains attached to THIS chain get nested in its last segment.
+	const attached = childrenByParent.get(ci) ?? []
 
-type Pt = { x: number; y: number }
-type Fish = {
-	/**
-	 * The body as a head→tail CHAIN of 3 overlapping segments. They're nested as a
-	 * kinematic chain by the consumer (each rotates about its near JOINT, carrying
-	 * the ones behind it), so a sine wave with a per-segment phase offset flows down
-	 * the body — recovering the old traveling-wave undulation without rebuilding the
-	 * path each frame. Built in shared world coords so they line up at rest; the
-	 * overlap (segments share a band of x) hides the seams as they bend.
-	 */
-	bodySegments: Pt[][]
-	/** The near-joint each body segment rotates about (segment i pivots about joints[i]). */
-	joints: Pt[]
-	tail: Pt[]
-	eye: Pt
-	/** Hinge the tail group flicks about (the caudal peduncle). */
-	tailPivot: Pt
+	// Build inside-out: innermost (tail-most) segment first, each wrapped by the one
+	// ahead of it. The innermost segment also hosts this chain's attached children.
+	let inner: ReactNode = null
+	for (let i = lastSeg; i >= 0; i--) {
+		const isHead = i === 0
+		const isLast = i === lastSeg
+		const wrapped = inner
+		inner = (
+			<g key={i} ref={(el) => { ctx.segRefs.current.set(`${ci}:${i}`, el) }}>
+				<path d={segmentDs[i]} {...ctx.pathProps} />
+				{isHead &&
+					dots.map((d, di) => (
+						<circle key={`dot${di}`} cx={d.at.x} cy={d.at.y} r={Math.max(1.2, d.r * ctx.strokeWidth)} fill={ctx.stroke} />
+					))}
+				{isLast && attached.map((childCi) => renderChain(childCi, geom, chainDs, childrenByParent, ctx))}
+				{wrapped}
+			</g>
+		)
+	}
+	return <g key={`chain${ci}`}>{inner}</g>
 }
 
-// How many body segments in the chain. 3 = a believable wave at ~4-5 paths/creature.
-const BODY_SEGS = 3
-// Each segment extends this far PAST its nominal u-range into the next, so the
-// overlap band hides the seam when adjacent segments rotate apart.
-const SEG_OVERLAP = 0.08
-// Per-segment phase lag (radians): how much each segment trails the one ahead of it,
-// so the wave visibly travels head→tail. ~0.7 ≈ a gentle, readable wave.
-const PHASE_LAG = 0.7
-// Base per-segment rotation amplitude (degrees). Grows ·(i+1) toward the tail, so
-// the head barely turns and the rear swings most — like a real swimming body.
-const AMP_BASE = 4
+/**
+ * Animate every chain by mutating its segment groups' transforms. Pure transforms
+ * (no path rebuild). The motion STYLE picks how the spine + appendages move:
+ *   undulate — wave flows down the spine (phaseLag); trailers sweep behind it.
+ *   pulse    — jellyfish: the bell BOBS up/down (and squashes as it pushes), and the
+ *              tentacles are SYNCED to that bob — they trail/extend on the up-stroke
+ *              and gather on the down-stroke, all driven by the same `bob` term.
+ *   scuttle  — body bobs gently; limbs twitch out of phase (crab).
+ * `bank` is the eased turn-lean; it rides the spine's head segment so the whole
+ * creature leans into turns.
+ */
+function animateCreature(
+	refs: Map<string, SVGGElement | null>,
+	geom: CreatureGeometry,
+	style: MotionStyle,
+	beat: number,
+	bank: number
+): void {
+	// One shared bob phase for the whole jellyfish, so bell + tentacles move in
+	// lockstep. bob ∈ [-1,1]: +1 = top of the rise, -1 = bottom of the push-down.
+	const bob = Math.sin(beat)
 
-function creatureFish(w: number, h: number, seed: number): Fish {
-	// The body spans head (x0) → tail-base (peduncle). We leave room on the right
-	// for the caudal fin, and a tiny inset elsewhere so strokes/fins aren't clipped.
-	const x0 = w * 0.06
-	const xPed = w * 0.78 // where the body pinches to the tail-base (caudal peduncle)
-	const len = xPed - x0
-	const cy = h * 0.5
-	const freq = 2.2 + seed * 1.5
+	for (let ci = 0; ci < geom.chains.length; ci++) {
+		const chain = geom.chains[ci]
+		for (let si = 0; si < chain.segments.length; si++) {
+			const g = refs.get(`${ci}:${si}`)
+			if (!g) continue
+			const j = chain.joints[si]
 
-	// Rest-pose spine at u∈[0,1]: a small fixed sine ripple (seeded so creatures
-	// differ) gives the silhouette a touch of curve; the SWIM motion is applied as
-	// a transform by the consumer, not baked here.
-	const spine = (u: number) => cy + h * 0.04 * u * Math.sin(freq * u)
+			// ── PULSE (jellyfish): bob-driven, NOT a free phase wave ────────────────
+			if (style === 'pulse') {
+				if (chain.role === 'spine' && si === 0) {
+					// BELL: translate up/down by the bob, and squash flatter as it pushes
+					// DOWN (bob negative → wider/shorter) then round tall as it rises. The
+					// scale is about the bell anchor so it breathes in place; the translate
+					// is the actual vertical travel. BOB_TRAVEL/SQUASH are local tuning.
+					const dy = -bob * BELL_BOB // rise on +bob (negative y = up)
+					const sx = (1 - bob * 0.14).toFixed(3) // push-down → wider
+					const sy = (1 + bob * 0.14).toFixed(3) // push-down → shorter
+					g.setAttribute(
+						'transform',
+						`translate(0 ${dy.toFixed(2)}) ` +
+							`translate(${chain.anchor.x.toFixed(1)} ${chain.anchor.y.toFixed(1)}) ` +
+							`scale(${sx} ${sy}) ` +
+							`translate(${(-chain.anchor.x).toFixed(1)} ${(-chain.anchor.y).toFixed(1)})`
+					)
+				} else {
+					// TENTACLES: synced to the SAME bob. They ride the bell's vertical
+					// travel (the same `dy` translate, so roots stay glued to the rim) AND
+					// sweep out as the bell rises / gather as it pushes down. Each segment
+					// lags slightly down the chain (phaseLag) for a whip, but the cycle is
+					// the bell's bob, not a free drift — so the whole creature moves as one.
+					const dy = -bob * BELL_BOB
+					const deg = Math.sin(beat - si * chain.phaseLag + chain.phaseOffset * 0.25) * chain.amp * (si + 1)
+					// Only the FIRST segment needs the bob translate; the rest are nested
+					// inside it (kinematic chain) and inherit it. Detect via si === 0.
+					const t = si === 0 ? `translate(0 ${dy.toFixed(2)}) ` : ''
+					g.setAttribute('transform', `${t}rotate(${deg.toFixed(2)} ${j.x.toFixed(1)} ${j.y.toFixed(1)})`)
+				}
+				continue
+			}
 
-	// HEAD-HEAVY teardrop: fat and round near the head (u≈0.18), pinching to a thin
-	// peduncle at the tail-base (u=1). This is what separates a fish from a leaf.
-	const radius = (u: number) => {
-		const fat = Math.pow(Math.sin(Math.PI * Math.min(1, u * 0.62 + 0.06)), 0.8)
-		return h * 0.34 * fat * (1 - 0.78 * u)
-	}
-
-	// A closed outline ring for the body slice over [uStart, uEnd], in world coords.
-	const segmentRing = (uStart: number, uEnd: number): Pt[] => {
-		const top: Pt[] = []
-		const bottom: Pt[] = []
-		const steps = Math.max(2, Math.round(SEGMENTS * (uEnd - uStart)))
-		for (let i = 0; i <= steps; i++) {
-			const u = uStart + (uEnd - uStart) * (i / steps)
-			const x = x0 + u * len
-			top.push({ x, y: spine(u) - radius(u) })
-			bottom.unshift({ x, y: spine(u) + radius(u) })
+			// ── UNDULATE / SCUTTLE: per-segment phase wave ──────────────────────────
+			const phase = beat + chain.phaseOffset - si * chain.phaseLag
+			let deg = Math.sin(phase) * chain.amp * (si + 1)
+			if (chain.role === 'spine' && si === 0) deg += bank * 10 // head carries the lean
+			g.setAttribute('transform', `rotate(${deg.toFixed(2)} ${j.x.toFixed(1)} ${j.y.toFixed(1)})`)
 		}
-		return [...top, ...bottom]
 	}
-
-	// Build the 3 segments + their near-joints. Segment i covers [i/N, (i+1)/N] but
-	// extends SEG_OVERLAP past the end into the next so the seam hides. Joint i is on
-	// the spine at the segment's START — the hinge it rotates about.
-	const bodySegments: Pt[][] = []
-	const joints: Pt[] = []
-	for (let i = 0; i < BODY_SEGS; i++) {
-		const uStart = i / BODY_SEGS
-		const uEnd = Math.min(1, (i + 1) / BODY_SEGS + SEG_OVERLAP)
-		bodySegments.push(segmentRing(uStart, uEnd))
-		joints.push({ x: x0 + uStart * len, y: spine(uStart) })
-	}
-
-	// CAUDAL (tail) fin: a forked triangle hinged at the peduncle, drawn at REST
-	// (no swing). The consumer rotates the whole tail group about tailPivot to flick
-	// it — so the fork tips sweep, exactly like the old beat-driven `swing` did, but
-	// as a transform instead of re-generated points.
-	//
-	// THE JOIN: attach the fin's base right at the body's rear tip (peduncle), with
-	// only a SMALL overlap into the body so the seam is hidden but the fork doesn't
-	// sit buried inside the silhouette. uJoin near 1 = at the tail end; the base is
-	// narrow (the body is thin there) and the fork opens out to the right in open
-	// space. We pivot the flick about this join so the tail stays anchored as it
-	// swings.
-	const pedY = spine(1)
-	const uJoin = 0.97 // attach just inside the body's rear tip (was 0.86 — too buried)
-	const xJoin = x0 + uJoin * len
-	const joinR = radius(uJoin) // body half-thickness there → the fin's base height
-	const joinY = spine(uJoin)
-	const finX = w * 0.99 // fork tips reach a touch further to keep the fin's length
-	const innerX = xPed + (finX - xPed) * 0.45 // fork notch, between join and tips
-	const tail: Pt[] = [
-		{ x: xJoin, y: joinY - joinR }, // top of base (at the body's rear tip)
-		{ x: finX, y: pedY - h * 0.3 }, // upper fork tip
-		{ x: innerX, y: pedY }, // inner notch (the fork)
-		{ x: finX, y: pedY + h * 0.3 }, // lower fork tip
-		{ x: xJoin, y: joinY + joinR }, // bottom of base (at the body's rear tip)
-	]
-
-	// EYE, near the head.
-	const eye = { x: x0 + 0.1 * len, y: spine(0.1) - radius(0.1) * 0.25 }
-
-	// The tail flicks about the JOIN point (where its base meets the body), so the
-	// base stays put and only the fin sweeps — no gap opening up between tail and body.
-	const tailPivot = { x: xJoin, y: joinY }
-
-	return { bodySegments, joints, tail, eye, tailPivot }
 }
+
+/** How far the jellyfish bell travels vertically per bob, in local px. */
+const BELL_BOB = 6
 
 /** Join a ring of points into a closed straight-segment SVG path (2-dp coords). */
-function polygonPath(pts: { x: number; y: number }[]): string {
+export function polygonPath(pts: Pt[]): string {
 	const r2 = (n: number) => Math.round(n * 100) / 100
 	return 'M ' + pts.map((p) => `${r2(p.x)},${r2(p.y)}`).join(' L ') + ' Z'
 }
