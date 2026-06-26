@@ -14,25 +14,26 @@ import {
 	DefaultContextMenuContent,
 	DefaultMainMenu,
 	DefaultMainMenuContent,
+	DefaultStylePanel,
+	DefaultStylePanelContent,
 	Editor,
+	StylePanelDropdownPicker,
 	TLComponents,
-	TldrawUiMenuCheckboxItem,
+	TLUiStylePanelProps,
 	TldrawUiMenuGroup,
 	TldrawUiMenuItem,
-	TldrawUiMenuSubmenu,
 	useEditor,
+	useRelevantStyles,
+	useStylePanelContext,
 	useValue,
 } from 'tldraw'
 import { CardShape } from '../shapes/CardShape'
 import { ContainerShape } from '../shapes/ContainerShape'
 import { DieShape } from '../shapes/DieShape'
-import { CreatureShape } from '../shapes/CreatureShape'
-import { CREATURE_KINDS } from '../../shared/shape-schemas'
+import { CreatureKindStyle, CREATURE_KINDS } from '../../shared/shape-schemas'
+import { creatureKindIcon } from '../creature/variants'
 import { useReferee } from '../referee/useReferee'
 import { runCreatureStressTest } from '../creature/stressTest'
-
-/** Title-case a kind id for the menu label ('jellyfish' → 'Jellyfish'). */
-const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 function GameMainMenu() {
 	// `useEditor()` is how a UI component reaches the editor. Close over it in the
@@ -130,11 +131,10 @@ function makeGameContextMenu(roomId: string | undefined) {
 		const selectedCard = selected?.type === 'card' ? (selected as CardShape) : null
 		const selectedContainer = selected?.type === 'container' ? (selected as ContainerShape) : null
 		const deck = selectedContainer && selectedContainer.props.count > 0 ? selectedContainer : null
-		const selectedCreature = selected?.type === 'creature' ? (selected as CreatureShape) : null
 
 		return (
 			<DefaultContextMenu>
-				{(selectedDie || selectedCard || deck || selectedCreature) && (
+				{(selectedDie || selectedCard || deck) && (
 					<TldrawUiMenuGroup id="game">
 						{selectedDie && (
 							<TldrawUiMenuItem
@@ -175,32 +175,6 @@ function makeGameContextMenu(roomId: string | undefined) {
 									onSelect={() => drawFromDeck(editor, deck, sendToReferee)}
 								/>
 							</>
-						)}
-						{/* CREATURE TYPE picker — switches the selected creature in place,
-						    like the geo shape's rectangle↔ellipse selector. A checkbox per
-						    kind shows the current one; selecting writes the native `kind`
-						    StyleProp, transforming the creature with full undo support. It
-						    also appears in the style panel automatically; this explicit
-						    menu just makes it discoverable. */}
-						{selectedCreature && (
-							<TldrawUiMenuSubmenu id="creature-kind" label="Creature type">
-								{CREATURE_KINDS.map((kind) => (
-									<TldrawUiMenuCheckboxItem
-										key={kind}
-										id={`creature-kind-${kind}`}
-										label={titleCase(kind)}
-										checked={selectedCreature.props.kind === kind}
-										readonlyOk={false}
-										onSelect={() => {
-											editor.updateShape<CreatureShape>({
-												id: selectedCreature.id,
-												type: 'creature',
-												props: { kind },
-											})
-										}}
-									/>
-								))}
-							</TldrawUiMenuSubmenu>
 						)}
 					</TldrawUiMenuGroup>
 				)}
@@ -253,14 +227,53 @@ async function drawFromDeck(
 	if (!res.ok) editor.deleteShape(cardId)
 }
 
+// ── STYLE PANEL: a creature-kind picker, reusing tldraw's own geo-shape picker ──
+// tldraw's built-in geo shape shows a grid-of-icons popover ("Shape") in the style
+// panel to switch rectangle↔ellipse↔… We reuse the EXACT same control for creatures:
+// StylePanelDropdownPicker driven by our CreatureKindStyle StyleProp, with one icon
+// per kind. It reads the selected styles from the panel context and auto-hides when
+// no creature is selected (returns null) — identical to StylePanelGeoShapePicker.
+function StylePanelCreatureKindPicker() {
+	const { styles } = useStylePanelContext()
+	const kind = styles.get(CreatureKindStyle)
+	if (kind === undefined) return null // no creature selected → nothing to show
+	const items = CREATURE_KINDS.map((value) => ({ value, icon: creatureKindIcon(value) }))
+	return (
+		<StylePanelDropdownPicker
+			id="creature-kind"
+			label="Creature"
+			type="menu"
+			uiType="creature-kind"
+			stylePanelType="creature-kind"
+			style={CreatureKindStyle}
+			items={items}
+			value={kind}
+		/>
+	)
+}
+
+// The full style panel: tldraw's default content + our creature picker appended.
+// Passing children to DefaultStylePanel renders them inside its style context
+// provider (so the picker's useStylePanelContext works), in place of the default.
+function GameStylePanel(props: TLUiStylePanelProps) {
+	const styles = useRelevantStyles()
+	return (
+		<DefaultStylePanel {...props} styles={styles}>
+			<DefaultStylePanelContent />
+			<StylePanelCreatureKindPicker />
+		</DefaultStylePanel>
+	)
+}
+
 /**
  * Build the components map handed to <Tldraw components={...}>. A factory because
- * referee-backed actions need the roomId. Add more keys (Toolbar, StylePanel,
- * ...) here to customize other UI.
+ * referee-backed actions need the roomId. Add more keys (Toolbar, ...) here to
+ * customize other UI.
  */
 export function createGameComponents(roomId: string | undefined): TLComponents {
 	return {
 		MainMenu: GameMainMenu,
 		ContextMenu: makeGameContextMenu(roomId),
+		StylePanel: GameStylePanel,
 	}
 }

@@ -11,6 +11,7 @@ import { registerPhysics } from '../physics/registerPhysics'
 import { onRefereePrivateMessage } from '../referee/privateReveals'
 import { gameBindingUtils, gameShapeUtils, gameTools } from '../shapes/registry'
 import { createGameComponents } from '../ui/components'
+import { creatureIconAssetUrls } from '../creature/variants'
 
 export function Room() {
 	const { roomId } = useParams<{ roomId: string }>()
@@ -45,8 +46,10 @@ export function Room() {
 				shapeUtils={gameShapeUtils}
 				bindingUtils={gameBindingUtils}
 				tools={gameTools}
-				// custom UI (main menu, context menu, ...) — see client/ui/components.tsx
+				// custom UI (main menu, context menu, style panel) — see client/ui/components.tsx
 				components={components}
+				// register the creature-kind glyphs so the style-panel picker can show them
+				assetUrls={{ icons: creatureIconAssetUrls }}
 				options={{ deepLinks: true }}
 				onMount={(editor) => {
 					// when the editor is ready, we need to register our bookmark unfurling service

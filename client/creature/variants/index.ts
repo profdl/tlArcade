@@ -33,3 +33,17 @@ const VARIANTS: Record<CreatureKind, CreatureVariant> = {
 export function getCreatureVariant(kind: string): CreatureVariant {
 	return VARIANTS[kind as CreatureKind] ?? VARIANTS.fish
 }
+
+/** The UI icon NAME for each kind (referenced by the style-panel picker). */
+export function creatureKindIcon(kind: CreatureKind): string {
+	return `creature-${kind}`
+}
+
+/**
+ * Custom UI icon URLs to register on <Tldraw assetUrls={{ icons }}>, so the
+ * style-panel creature picker can show a glyph per kind (the SVGs live in
+ * public/creature-icons/). Keyed by the same `creature-<kind>` name the picker uses.
+ */
+export const creatureIconAssetUrls: Record<string, string> = Object.fromEntries(
+	CREATURE_KINDS.map((kind) => [`creature-${kind}`, `/creature-icons/${kind}.svg`])
+)
