@@ -32,53 +32,48 @@
  * Math.random / Date — so every client draws the identical ant.
  */
 import type { CreatureVariant, CreatureGeometry, Chain, Pt } from './types'
-import { buildChain, ring, rand } from './geometry'
+import { buildChain, rand } from './geometry'
 
 function geometry(w: number, h: number, seed: number): CreatureGeometry {
 	const cy = h * 0.5
 
-	// --- BODY landmarks along x (head-LEFT, so the head is the SMALL x end) -------
-	// Four lobe centres laid across the width: head, thorax, petiole (waist),
-	// gaster. The gaster (rear) is the largest; the petiole pinches to a thin waist.
-	const headCx = w * 0.16
-	const thoraxCx = w * 0.4
-	const petioleCx = w * 0.58
-	const gasterCx = w * 0.78
+	// --- BODY: three EQUAL circles (head, thorax, gaster) -----------------------
+	// The ant body is THREE identical circles laid out head-LEFT (forward = −x): head
+	// at the front, thorax in the middle (the legs hang off this), gaster at the rear.
+	// All on chain 0 so the eyes ride the head and the body stays one rigid 'spine'
+	// (amp 0 → it doesn't bob; the legs do all the moving).
+	const bodyR = h * 0.22 // shared radius — all three circles are the same size
+	// Space the three centres evenly so the equal circles just touch/slightly overlap.
+	const gap = bodyR * 1.7
+	const headCx = w * 0.5 - gap
+	const thoraxCx = w * 0.5
+	const gasterCx = w * 0.5 + gap
+	// Kept so the leg/eye code below (which references these) stays unchanged.
+	const headR = bodyR
+	const thoraxR = bodyR
 
-	const headR = h * 0.2
-	const thoraxR = h * 0.17
-	const waistR = h * 0.06 // the pinch between thorax and gaster
-	const gasterR = h * 0.3
-
-	// The body SPINE runs straight along mid-height from the head to the rear tip of
-	// the gaster. We map u∈[0,1] across [headCx − headR, gasterCx + gasterR].
-	const x0 = headCx - headR
-	const x1 = gasterCx + gasterR
-	const bodySpine = (u: number): Pt => ({ x: x0 + u * (x1 - x0), y: cy })
-
-	// RADIUS PROFILE: smooth bumps at each lobe centre, pinched at the waist. We sum
-	// a few Gaussian-ish lobes so the outline bulges (head/thorax/gaster) and necks
-	// down between them (the petiole) — the recognisable ant three-body silhouette.
-	const lobe = (x: number, cx: number, r: number, spread: number): number =>
-		r * Math.exp(-(((x - cx) / spread) ** 2))
-	const bodyRadius = (u: number): number => {
-		const x = x0 + u * (x1 - x0)
-		const head = lobe(x, headCx, headR, headR * 1.1)
-		const thorax = lobe(x, thoraxCx, thoraxR, thoraxR * 1.3)
-		const waist = lobe(x, petioleCx, waistR, waistR * 2.2)
-		const gaster = lobe(x, gasterCx, gasterR, gasterR * 0.95)
-		// Take the max of the lobes (so they read as distinct segments), but keep a
-		// thin floor at the waist so the body never fully separates.
-		return Math.max(waist, head, thorax, gaster, waistR * 0.7)
+	// A closed circle ring centred at (cx, cy) with radius r — sampled finely so it
+	// reads smooth. Built once at mount, so the sample count is free.
+	const circle = (cx: number, r: number): Pt[] => {
+		const pts: Pt[] = []
+		const STEPS = 40
+		for (let i = 0; i < STEPS; i++) {
+			const a = (i / STEPS) * Math.PI * 2
+			pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r })
+		}
+		return pts
 	}
 
-	// The body is ONE oval-ish ring segment (a near-still 'spine': under 'walk' the
-	// animator leaves it to the gentle bob, so the body reads as rigid as it should).
+	// The body chain: three equal circle segments, head → thorax → gaster.
 	const body: Chain = {
-		segments: [ring(bodySpine, bodyRadius, 0, 1)],
-		joints: [{ x: thoraxCx, y: cy }],
+		segments: [circle(headCx, bodyR), circle(thoraxCx, bodyR), circle(gasterCx, bodyR)],
+		joints: [
+			{ x: headCx, y: cy },
+			{ x: thoraxCx, y: cy },
+			{ x: gasterCx, y: cy },
+		],
 		role: 'spine',
-		amp: 1, // tiny — the body barely bobs while the legs do the walking
+		amp: 0, // rigid — the legs do the walking, the body just translates
 		phaseLag: 0,
 		phaseOffset: 0,
 		anchor: { x: thoraxCx, y: cy },
@@ -202,13 +197,8 @@ function geometry(w: number, h: number, seed: number): CreatureGeometry {
 	addAntenna(-1)
 	addAntenna(1)
 
-	// --- EYES: two dots on the head (chain 0), set back from the front edge -------
-	const dots = [
-		{ at: { x: headCx + headR * 0.1, y: cy - headR * 0.45 }, r: 0.8, chain: 0 },
-		{ at: { x: headCx + headR * 0.1, y: cy + headR * 0.45 }, r: 0.8, chain: 0 },
-	]
-
-	return { chains: [body, ...legs, ...antennae], dots }
+	// No eyes — the ant is a clean three-circle silhouette.
+	return { chains: [body, ...legs, ...antennae], dots: [] }
 }
 
 export const antVariant: CreatureVariant = {

@@ -228,7 +228,10 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// animation-frame rate (batched). It sets each segment group's `transform` directly
 	// — React is not involved, so no re-render per tick. The motion STYLE (undulate /
 	// pulse / scuttle) is the variant's; the per-chain `role`/amp/phase shape the rest.
-	const acc = useRef({ prevRot: shape.rotation, prevClock: 0, bank: 0 })
+	// prevX/prevY start NaN: the reactor seeds them from the reactive page-bounds CENTRE on
+	// its first run (we can't read bounds here at render-time cheaply), so the first tick
+	// measures zero travel instead of a jump.
+	const acc = useRef({ prevRot: shape.rotation, prevClock: 0, bank: 0, prevX: NaN, prevY: NaN, walkPhase: 0 })
 	// Per-creature tank cache for the freeze check, so we don't re-run the expensive
 	// getShapeAtPoint hit-test every animation frame (it re-verifies with a cheap AABB).
 	const tankCache = useRef<TankCache>(null)
@@ -248,11 +251,41 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 			a.prevRot = rotation
 			a.prevClock = clock
 
+			// DISTANCE-DRIVEN WALK PHASE. A clock-driven leg cycle slides its feet whenever
+			// the body's actual ground speed doesn't match the (fixed) stride rate — most
+			// visibly while TURNING, when the swim loop slows the body but the clock keeps
+			// the legs cycling. So we advance the walk phase by how far the body actually
+			// MOVED this tick, divided by a stride length, so a planted foot's local backward
+			// slide exactly cancels the body's forward travel at any speed.
+			//
+			// CRITICAL: read the centre from editor.getShapePageBounds (REACTIVE) — NOT the
+			// closed-over `shape` prop, which is a stale React snapshot. The swim loop writes
+			// x/y with history:'ignore' (no React re-render), so a prop-based delta is always
+			// ~0 and the legs freeze. Reading the reactive bounds makes this reactor re-run as
+			// the shape moves and gives the true per-tick travel.
+			const step = shape.props.h * WALK_STEP_FRAC
+			const strideLen = Math.max(1, (2 * step) / WALK_DUTY)
+			const center = editor.getShapePageBounds(shape.id)?.center
+			if (center) {
+				// Seed prevX/Y on the first tick (NaN guard) so we don't take a huge first step.
+				if (Number.isNaN(a.prevX)) {
+					a.prevX = center.x
+					a.prevY = center.y
+				}
+				const moved = Math.hypot(center.x - a.prevX, center.y - a.prevY)
+				a.prevX = center.x
+				a.prevY = center.y
+				// Pure distance-driven: legs step ONLY as the body covers ground. A stopped
+				// ant holds its stance (correct — a still ant doesn't tread). No clock/idle
+				// term, so there's no speed mismatch and feet never slide while turning.
+				a.walkPhase += (moved / strideLen) * (Math.PI * 2)
+			}
+
 			// One shared beat for the whole creature, scaled per variant. tailBeat is the
 			// same wave the swim loop reads, so visible motion and propulsion stay in sync.
 			const beat = tailBeat(clock, seed, speed).phase * variant.motion.beatScale
 
-			animateCreature(refs, geom, variant.motion.style, beat, a.bank)
+			animateCreature(refs, geom, variant.motion.style, beat, a.bank, a.walkPhase, step)
 		},
 		[editor, shape.id, seed, speed, geom, variant]
 	)
@@ -395,7 +428,9 @@ function animateCreature(
 	geom: CreatureGeometry,
 	style: MotionStyle,
 	beat: number,
-	bank: number
+	bank: number,
+	walkPhase: number,
+	walkStep: number
 ): void {
 	// PULSE envelope. Real jellyfish locomotion is asymmetric: a quick power
 	// CONTRACTION followed by a slow RELAXATION. `pump` ∈ [0,1]: 0 = bell fully
@@ -482,11 +517,12 @@ function animateCreature(
 			// Then 2-bone IK solves the femur (about the hip, joints[0]) and tibia (about the
 			// knee, joints[1]) to hit that target; we rotate each <g> by the DELTA from its
 			// drawn rest pose. The two tripods (phase 0 vs π) trade stance/swing so three feet
-			// are always planted. Limbs WITHOUT walk data (the antennae) fall through to the
-			// gentle sweep below.
+			// are always planted. The gait is driven by `walkPhase` — accumulated GROUND
+			// TRAVEL, not the clock — so feet don't slide when the body slows to turn. Limbs
+			// WITHOUT walk data (the antennae) fall through to the gentle sweep below.
 			if (style === 'walk' && chain.walk) {
 				if (si > 1) continue // legs are 2-bone; nothing past the tibia
-				const t = walkLegTransform(chain.walk, beat, si)
+				const t = walkLegTransform(chain.walk, walkPhase, walkStep, si)
 				if (t) g.setAttribute('transform', t)
 				continue
 			}
@@ -499,6 +535,19 @@ function animateCreature(
 		}
 	}
 }
+
+/**
+ * WALK gait tuning. These two are COUPLED so a planted foot never slides:
+ *   WALK_STEP_FRAC — the foot's fore/aft half-excursion as a fraction of body height,
+ *     i.e. how far each foot reaches ahead/behind its rest point (the visible step size).
+ *   WALK_DUTY      — fraction of the cycle a foot is planted (stance). >0.5 keeps ≥3 down.
+ * Over one stance the foot slides 2·step px rearward while the body advances
+ * strideLen·DUTY px; setting strideLen = 2·step / DUTY makes those equal, so the stance
+ * foot stays glued to the ground at any body speed (the no-slide condition). strideLen is
+ * therefore DERIVED from these, not tuned independently. See the reactor + walkLegTransform.
+ */
+const WALK_STEP_FRAC = 0.16
+const WALK_DUTY = 0.62
 
 /**
  * WALK leg IK — solve one ant leg's two-bone chain to a stepping FOOT TARGET and return
@@ -524,15 +573,17 @@ function animateCreature(
  *          (subtract Δfemur because the tibia <g> is NESTED in the femur <g>, so it
  *           already inherits the femur's rotation.)
  */
-function walkLegTransform(wk: WalkLeg, beat: number, si: number): string | null {
+function walkLegTransform(wk: WalkLeg, walkPhase: number, walkStep: number, si: number): string | null {
 	const TWO_PI = Math.PI * 2
-	// Normalise the gait phase into [0,1). `beat` already carries the shared tempo; the
-	// per-leg `phase` (0 vs π for the two tripods, + jitter) offsets it.
-	let g = ((beat + wk.phase) / TWO_PI) % 1
+	// Normalise the gait phase into [0,1). `walkPhase` is accumulated GROUND TRAVEL in
+	// radians (2π per stride), NOT clock time — so the cycle advances with how far the
+	// body actually moved, and a planted foot stays planted at any speed (no slide when
+	// the ant slows to turn). The per-leg `phase` (0 vs π for the two tripods, + jitter)
+	// offsets each leg within the cycle.
+	let g = ((walkPhase + wk.phase) / TWO_PI) % 1
 	if (g < 0) g += 1
 
-	const DUTY = 0.62 // fraction of the cycle the foot is planted (stance). >0.5 = ≥3 down.
-	const STRIDE = wk.femurLen + wk.tibiaLen // full leg length; stride scales off it
+	const DUTY = WALK_DUTY // stance fraction; coupled to the phase stride (no-slide condition)
 	const fwd = wk.forward
 
 	// Where along the stride is the foot (s ∈ [-1,+1]: +1 = front of stride, −1 = rear),
@@ -554,7 +605,9 @@ function walkLegTransform(wk: WalkLeg, beat: number, si: number): string | null 
 	// Build the foot target in local space. Start from the rest foot, then:
 	//   • shift ALONG the forward axis by s·strideHalf (the fore/aft slide),
 	//   • on the swing, SHORTEN the hip→foot vector by `lift` (tuck the knee up).
-	const strideHalf = STRIDE * 0.28 // how far the foot travels fore/aft each step
+	// strideHalf = walkStep, the SAME excursion the phase-advance stride was derived from,
+	// so the foot's rearward slide during stance exactly matches the body's forward travel.
+	const strideHalf = walkStep
 	let fx = wk.footRest.x + fwd.x * s * strideHalf
 	let fy = wk.footRest.y + fwd.y * s * strideHalf
 	if (lift > 0) {
