@@ -168,6 +168,10 @@ export function registerPhysics(editor: Editor): () => void {
 function isThrowable(editor: Editor, id: TLShapeId): boolean {
 	const shape = editor.getShape(id)
 	if (!shape || shape.type === 'grid') return false
+	// Creatures have their own motion system (client/creature/registerSwimming.ts);
+	// don't also fling them as throw-physics projectiles, or the two loops would
+	// fight over x/y. A creature is placed, then swims — never thrown.
+	if (shape.type === 'creature') return false
 	if (editor.isShapeOrAncestorLocked(id)) return false
 
 	const bounds = editor.getShapePageBounds(id)

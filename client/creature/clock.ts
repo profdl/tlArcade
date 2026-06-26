@@ -36,6 +36,34 @@ import { Editor, atom } from 'tldraw'
  */
 export const creatureClock = atom('creatureClock', 0)
 
+/**
+ * THE SHARED SWIM WAVE — the single source of "where in the tail-beat are we?".
+ *
+ * Both the body renderer (CreatureShape) and the movement loop (registerSwimming)
+ * call this, so the forward THRUST lines up with the visible tail-FLICK and the
+ * creature looks self-propelled. It is a PURE function of values every client
+ * already shares — the clock (same on all clients), and the creature's synced
+ * `seed`/`speed` — so the two systems stay coupled WITHOUT syncing anything new
+ * (no per-frame phase in the store; CLAUDE.md gotchas #5 & #7). The movement
+ * owner and a passive viewer compute the identical wave.
+ *
+ *   phase  — the tail-beat argument (radians). Beat rate scales with `speed`, so
+ *            a faster fish beats faster. Feed into the body's travelling sine.
+ *   thrust — 0..1 power-stroke envelope: ~1 mid-sweep (tail at full speed), ~0 at
+ *            the turnaround. The swim loop multiplies forward motion by this, so
+ *            the fish surges on each beat and glides between.
+ */
+export function tailBeat(clock: number, seed: number, speed: number): { phase: number; thrust: number } {
+	// Beat frequency rises with speed (clamped so a still fish still idles a tail).
+	const rate = 2 * (0.5 + Math.max(0, speed))
+	const phase = clock * rate + seed * Math.PI * 2
+	// |sin| gives two power strokes per cycle (tail sweeps both ways); square-ish
+	// it slightly so thrust concentrates into the mid-sweep and eases at the ends.
+	const s = Math.abs(Math.sin(phase))
+	const thrust = s * s
+	return { phase, thrust }
+}
+
 let mountCount = 0
 let off: (() => void) | null = null
 

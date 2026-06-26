@@ -40,7 +40,7 @@ import {
 } from 'tldraw'
 import { useEffect, useMemo, useRef } from 'react'
 import { creatureShapeValidators } from '../../shared/shape-schemas'
-import { creatureClock, subscribeCreatureClock } from '../creature/clock'
+import { creatureClock, subscribeCreatureClock, tailBeat } from '../creature/clock'
 
 // ── 1. THE SHAPE TYPE ────────────────────────────────────────────────────────
 // Everything here is PUBLIC and synced. There are no secrets and no referee —
@@ -92,8 +92,10 @@ export class CreatureShapeUtil extends ShapeUtil<CreatureShape> {
 		// clients keep this exact value once the shape exists. The style defaults
 		// match the built-in shapes' look ('draw' dash = hand-drawn).
 		return {
+			// Fish-shaped box (wider than tall) so the selection bounds hug the
+			// body — the silhouette fills it with little padding.
 			w: 120,
-			h: 120,
+			h: 64,
 			seed: (Date.now() % 1000) / 1000,
 			speed: 1,
 			color: 'black',
@@ -139,42 +141,68 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// Start/stop the shared tick listener with this creature's lifetime.
 	useEffect(() => subscribeCreatureClock(editor), [editor])
 
-	// Reactive phase, QUANTIZED to ~30 steps/sec: sub-frame ticks reuse the same
-	// value (and a still creature — speed 0 — holds one value forever), so the
-	// path memo below doesn't recompute. While this creature is scrolled
-	// off-screen we return its LAST phase unchanged — a culled shape yields a
-	// constant, so useValue stops re-rendering it, and it resumes mid-stride when
-	// it scrolls back in (no snap to t=0).
-	const lastPhase = useRef(0)
-	const phase = useValue(
-		'creaturePhase',
+	// Reactive { clock, bank }, computed inside ONE useValue so the accumulators
+	// below are mutated in tldraw's reactive scheduler (once per committed value) —
+	// NOT during React render, which would double-run under Strict Mode.
+	//
+	//  • clock — QUANTIZED to ~30 steps/sec so sub-frame ticks reuse the same value
+	//    and the path memo doesn't recompute every frame. While culled (off-screen)
+	//    we return the LAST value unchanged, so useValue stops re-rendering it and it
+	//    resumes mid-stride when scrolled back (no snap to t=0). We quantize the RAW
+	//    clock (not clock*speed) because tailBeat() applies its own speed-scaling.
+	//  • bank — lean into turns. Measured as angular velocity over CLOCK time (rad÷s),
+	//    not per-render: `rotation` (synced) only changes on ticks the creature
+	//    turned, so a per-render delta would flicker for one frame. The lean EASES
+	//    toward its target, giving a smooth lean-in/out. Synced rotation → all
+	//    clients bank alike.
+	const acc = useRef({ tick: 0, prevRot: shape.rotation, prevClock: 0, bank: 0 })
+	const { clock, bank } = useValue(
+		'creatureMotion',
 		() => {
-			if (!editor.getCulledShapes().has(shape.id)) {
-				lastPhase.current = Math.round(creatureClock.get() * speed * 30)
+			if (editor.getCulledShapes().has(shape.id)) {
+				return { clock: acc.current.tick / 30, bank: acc.current.bank }
 			}
-			return lastPhase.current
+			const a = acc.current
+			a.tick = Math.round(creatureClock.get() * 30)
+			const clock = a.tick / 30
+			const rotation = shape.rotation
+			const dt = clock - a.prevClock
+			const target = dt > 0 ? Math.max(-1, Math.min(1, ((rotation - a.prevRot) / dt) * 0.4)) : 0
+			a.bank += (target - a.bank) * Math.min(1, 6 * Math.max(0, dt))
+			a.prevRot = rotation
+			a.prevClock = clock
+			return { clock, bank: a.bank }
 		},
-		[editor, shape.id, speed]
+		[editor, shape.id]
 	)
 
-	// Resolve theme colors reactively — re-renders on palette/dark-mode change.
-	// This mirrors DrawShapeUtil.getDefaultDisplayValues().
-	const { stroke, fillColor } = useValue(
-		'creatureColors',
+	// Resolve theme-dependent display values reactively — re-renders on palette /
+	// dark-mode change. Mirrors DrawShapeUtil.getDefaultDisplayValues(): colours via
+	// getColorValue, and stroke width as `theme.strokeWidth * STROKE_SIZES[size]` so
+	// the creature tracks the theme exactly like the built-in shapes.
+	const { stroke, fillColor, strokeWidth } = useValue(
+		'creatureDisplay',
 		() => {
-			const colors = editor.getCurrentTheme().colors[editor.getColorMode()]
+			const theme = editor.getCurrentTheme()
+			const colors = theme.colors[editor.getColorMode()]
 			return {
 				stroke: getColorValue(colors, color, 'solid'),
 				fillColor: FILL_VARIANT[fill] === null ? 'none' : getColorValue(colors, color, FILL_VARIANT[fill]!),
+				strokeWidth: theme.strokeWidth * STROKE_SIZES[size],
 			}
 		},
-		[editor, color, fill]
+		[editor, color, fill, size]
 	)
 
-	const strokeWidth = STROKE_SIZES[size]
+	// The tail-beat phase — SHARED with the movement loop so the body's flick and
+	// the forward thrust are in lockstep (the propulsion illusion). See clock.ts.
+	const beat = tailBeat(clock, seed, speed).phase
 
-	// The outline points; recomputed only when the quantized phase changes.
-	const outline = useMemo(() => creatureOutline(w, h, seed, phase / 30), [w, h, seed, phase])
+	// The outline points; recomputed only when the quantized beat or bank changes.
+	const outline = useMemo(
+		() => creatureOutline(w, h, seed, beat, bank),
+		[w, h, seed, beat, bank]
+	)
 
 	// 'draw' → run the outline through perfect-freehand for the hand-drawn wobble
 	// (the same pipeline DrawShapeUtil uses). Other dash values render a clean
@@ -205,9 +233,10 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	)
 }
 
-// size style → stroke width in px. These are tldraw's own STROKE_SIZES values
-// (s/m/l/xl); the constant isn't part of the public API, so we mirror it here.
-const STROKE_SIZES: Record<TLDefaultSizeStyle, number> = { s: 2, m: 3.5, l: 5, xl: 10 }
+// size style → stroke-width MULTIPLIER. tldraw's built-ins compute the px width as
+// `theme.strokeWidth * STROKE_SIZES[size]`; STROKE_SIZES isn't a public export, so
+// we mirror its exact values here and apply the theme factor at the call site.
+const STROKE_SIZES: Record<TLDefaultSizeStyle, number> = { s: 1, m: 1.75, l: 2.5, xl: 5 }
 
 // fill style → which theme color variant to fill with (null = no fill).
 // 'pattern'/'lined-fill' are approximated by their semi tint (no hatch SVG).
@@ -240,20 +269,30 @@ function dashArray(dash: TLDefaultDashStyle, sw: number): string | undefined {
 //
 //   sway   = travelling sine wave (the swim; flows head→tail, grows toward tail)
 //   radius = sin(π·u) teardrop  (0 at head & tail, fattest in the middle)
-//   seed   = per-creature frequency/phase offset
+//   beat   = tail-beat PHASE from tailBeat() — shared with the movement loop so
+//            the visible flick drives the forward thrust (the propulsion look)
+//   bank   = -1..1 turn lean; curves the whole spine toward the turn direction
 
 const SEGMENTS = 24
 
-function creatureOutline(w: number, h: number, seed: number, t: number): { x: number; y: number }[] {
-	const x0 = w * 0.1
-	const len = w * 0.8
+function creatureOutline(w: number, h: number, seed: number, beat: number, bank: number): { x: number; y: number }[] {
+	// The body fills the box edge-to-edge (tiny inset so the stroke isn't clipped),
+	// so the selection bounds hug the silhouette with almost no padding. The
+	// vertical amplitudes are tuned so the worst case (full sway + radius + a hard
+	// banked turn) stays inside the box rather than poking out of the now-tight
+	// bounds.
+	const x0 = w * 0.04
+	const len = w * 0.92
 	const cy = h * 0.5
 	const freq = 2.2 + seed * 1.5
-	const phase = seed * Math.PI * 2
 
-	// spine point + body half-height at parameter u (0 = head, 1 = tail)
-	const spine = (u: number) => cy + h * 0.12 * u * Math.sin(freq * u - t * 2 + phase)
-	const radius = (u: number) => h * 0.18 * Math.sin(Math.PI * u)
+	// spine point + body half-height at parameter u (0 = head, 1 = tail). The
+	// travelling sine is driven by the SHARED beat phase; `bank` adds a steady
+	// sideways curve (∝ u²) so the body leans into turns, head leading.
+	//   sway 0.10 + bank 0.18 + radius 0.20  →  ≤ 0.48·h from centre (fits in box)
+	const spine = (u: number) =>
+		cy + h * 0.1 * u * Math.sin(freq * u - beat) + bank * h * 0.18 * u * u
+	const radius = (u: number) => h * 0.2 * Math.sin(Math.PI * u)
 
 	const top: { x: number; y: number }[] = []
 	const bottom: { x: number; y: number }[] = []

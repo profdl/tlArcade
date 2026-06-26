@@ -61,7 +61,7 @@ function GameMainMenu() {
 					label="Add creature"
 					icon="plus"
 					readonlyOk={false}
-					onSelect={() => addAtCenter(editor, 'creature', 60)}
+					onSelect={() => addAtCenter(editor, 'creature', 60, 32)}
 				/>
 				<TldrawUiMenuItem
 					id="reset-board"
