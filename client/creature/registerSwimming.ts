@@ -55,6 +55,7 @@ const FACING: Record<CreatureKind, { facingOffset: number; upright: boolean }> =
 	snake: { facingOffset: 0, upright: false },
 	crab: { facingOffset: Math.PI / 2, upright: false }, // lead with the side → sideways
 	jellyfish: { facingOffset: 0, upright: true }, // bell stays up; drifts, doesn't aim
+	ant: { facingOffset: 0, upright: false }, // walks head-first along its heading
 }
 
 /** Base swim speed in page px/ms at speed:1 (a calm drift). */

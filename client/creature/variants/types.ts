@@ -57,6 +57,35 @@ export type Chain = {
 	 * body). Attach to a chain with a LOWER index than this one (no cycles).
 	 */
 	attachToChain?: number
+	/** IK WALK metadata for a 2-bone ant leg (see WalkLeg below); only ant legs set it. */
+	walk?: WalkLeg
+}
+
+/**
+ * WALK metadata for a 2-bone leg driven by INVERSE KINEMATICS (the ant). Unlike the
+ * rotation-wave motion styles, a walking leg is SOLVED to plant its FOOT on a moving
+ * target — the foot holds still on the ground through stance and snaps forward on the
+ * swing — which is what reads as STEPPING instead of swimming. The animator's 'walk'
+ * branch (walkLegTransform in CreatureShape.tsx) reads this to solve the hip + knee
+ * angles each frame; the leg's two segments (femur about joints[0], tibia about
+ * joints[1]) are rotated by the DELTA from this rest pose. Present only on ant legs.
+ */
+export type WalkLeg = {
+	/** Hip (femur pivot) in local coords — = joints[0]. */
+	hip: Pt
+	/** Knee (tibia pivot) at REST — = joints[1]; sets the rest bone directions. */
+	kneeRest: Pt
+	/** Foot tip at REST — sets the rest tibia direction + the stance/swing path. */
+	footRest: Pt
+	/** Femur length (hip→knee) and tibia length (knee→foot), precomputed. */
+	femurLen: number
+	tibiaLen: number
+	/** Tripod phase (radians): legs in the same tripod share a phase, the other tripod
+	 *  is offset by π, so three feet are always planted. */
+	phase: number
+	/** Forward unit vector in local space (toward the head). Stance slides the foot
+	 *  toward the REAR; the swing snaps it forward. */
+	forward: Pt
 }
 
 /** A single static dot (eye, spot). Rides whichever chain index it's attached to. */
@@ -80,8 +109,11 @@ export type CreatureGeometry = {
  *   'undulate' — fish/snake: a wave flows down the spine; trailers sweep behind.
  *   'pulse'    — jellyfish: the bell contracts/expands rhythmically; tentacles drift.
  *   'scuttle'  — crab: body bobs slightly; limbs twitch out of phase.
+ *   'walk'     — ant/insect: an alternating-TRIPOD gait. Legs swing fore↔aft along
+ *                the body axis (protraction/retraction) in two interleaved tripods,
+ *                their lower segments bending as they plant and push; antennae sweep.
  */
-export type MotionStyle = 'undulate' | 'pulse' | 'scuttle'
+export type MotionStyle = 'undulate' | 'pulse' | 'scuttle' | 'walk'
 
 export type MotionParams = {
 	style: MotionStyle

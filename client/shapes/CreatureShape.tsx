@@ -48,7 +48,7 @@ import {
 import { useReactor } from 'tldraw'
 import { tankUnderCached, type TankCache } from '../creature/registerSwimming'
 import { getCreatureVariant } from '../creature/variants'
-import type { CreatureGeometry, MotionStyle, Pt } from '../creature/variants/types'
+import type { CreatureGeometry, MotionStyle, Pt, WalkLeg } from '../creature/variants/types'
 
 // ── 1. THE SHAPE TYPE ────────────────────────────────────────────────────────
 // Everything here is PUBLIC and synced. There are no secrets and no referee —
@@ -469,6 +469,28 @@ function animateCreature(
 				continue
 			}
 
+			// ── WALK (ant/insect): INVERSE-KINEMATICS tripod gait ───────────────────
+			// This is a different technique from every other creature here: not a rotation
+			// WAVE (which reads as swimming) but a leg SOLVED to plant its FOOT on a moving
+			// target. What makes it read as WALKING — not a sweep — is the asymmetric cycle
+			// of that target, per leg, in BODY-LOCAL space:
+			//   • STANCE (most of the cycle): the foot is DOWN and slides steadily toward the
+			//     REAR (+x). Since the body is moving forward, a foot sliding backward in body
+			//     space stays put on the ground — it looks planted and pushing.
+			//   • SWING (a short burst): the foot LIFTS (we shorten the leg's reach so the
+			//     knee tucks) and snaps FORWARD (−x) to replant ahead, fast.
+			// Then 2-bone IK solves the femur (about the hip, joints[0]) and tibia (about the
+			// knee, joints[1]) to hit that target; we rotate each <g> by the DELTA from its
+			// drawn rest pose. The two tripods (phase 0 vs π) trade stance/swing so three feet
+			// are always planted. Limbs WITHOUT walk data (the antennae) fall through to the
+			// gentle sweep below.
+			if (style === 'walk' && chain.walk) {
+				if (si > 1) continue // legs are 2-bone; nothing past the tibia
+				const t = walkLegTransform(chain.walk, beat, si)
+				if (t) g.setAttribute('transform', t)
+				continue
+			}
+
 			// ── UNDULATE / SCUTTLE: per-segment phase wave ──────────────────────────
 			const phase = beat + chain.phaseOffset - si * chain.phaseLag
 			let deg = Math.sin(phase) * chain.amp * (si + 1)
@@ -476,6 +498,115 @@ function animateCreature(
 			g.setAttribute('transform', `rotate(${deg.toFixed(2)} ${j.x.toFixed(1)} ${j.y.toFixed(1)})`)
 		}
 	}
+}
+
+/**
+ * WALK leg IK — solve one ant leg's two-bone chain to a stepping FOOT TARGET and return
+ * the SVG transform for its femur (si 0) or tibia (si 1). This is the ant's whole trick:
+ * instead of waving the leg (a swim), we move a foot target through an asymmetric gait
+ * cycle and SOLVE the joints to reach it, so feet plant and push.
+ *
+ * GAIT CYCLE `g` ∈ [0,1) (this leg's phase advances it): a long STANCE then a short SWING.
+ *   • Stance (g < DUTY): foot DOWN, sliding from the front of its stride to the back
+ *     (forward → rear in body space) at steady speed → looks planted as the body advances.
+ *   • Swing  (g ≥ DUTY): foot LIFTS (reach shortens so the knee tucks up) and races back
+ *     to the front of the stride to replant. Fast, so it reads as a quick step-over.
+ * The horizontal travel is along the body's forward axis; the "lift" is faked in 2-D (no
+ * ground plane in top-view) by SHORTENING the hip→foot reach mid-swing, which tucks the
+ * knee inward — the top-view tell that a leg has left the ground.
+ *
+ * 2-BONE IK: given hip H, target foot F, bone lengths (a=femur, b=tibia), find the knee.
+ * Standard law-of-cosines solution; we pick the elbow on the SAME side the leg was drawn
+ * (rest knee) so it never flips. Then we emit, per segment, the DELTA rotation from the
+ * drawn rest pose (the segments are baked at rest), about the matching joint:
+ *   femur: Δ = angle(H→kneeSolved) − angle(H→kneeRest), pivot = hip.
+ *   tibia: Δ = [angle(knee→F) − angle(kneeRest→footRest)] − Δfemur, pivot = knee.
+ *          (subtract Δfemur because the tibia <g> is NESTED in the femur <g>, so it
+ *           already inherits the femur's rotation.)
+ */
+function walkLegTransform(wk: WalkLeg, beat: number, si: number): string | null {
+	const TWO_PI = Math.PI * 2
+	// Normalise the gait phase into [0,1). `beat` already carries the shared tempo; the
+	// per-leg `phase` (0 vs π for the two tripods, + jitter) offsets it.
+	let g = ((beat + wk.phase) / TWO_PI) % 1
+	if (g < 0) g += 1
+
+	const DUTY = 0.62 // fraction of the cycle the foot is planted (stance). >0.5 = ≥3 down.
+	const STRIDE = wk.femurLen + wk.tibiaLen // full leg length; stride scales off it
+	const fwd = wk.forward
+
+	// Where along the stride is the foot (s ∈ [-1,+1]: +1 = front of stride, −1 = rear),
+	// and how much is it LIFTED (lift ∈ [0,1], faked as a reach-shortening).
+	let s: number
+	let lift: number
+	if (g < DUTY) {
+		// STANCE: slide front(+1) → rear(−1) linearly, foot down.
+		const u = g / DUTY
+		s = 1 - 2 * u
+		lift = 0
+	} else {
+		// SWING: race rear(−1) → front(+1), with a lift hump peaking mid-swing.
+		const u = (g - DUTY) / (1 - DUTY)
+		s = -1 + 2 * u
+		lift = Math.sin(u * Math.PI) // 0 → 1 → 0 over the swing
+	}
+
+	// Build the foot target in local space. Start from the rest foot, then:
+	//   • shift ALONG the forward axis by s·strideHalf (the fore/aft slide),
+	//   • on the swing, SHORTEN the hip→foot vector by `lift` (tuck the knee up).
+	const strideHalf = STRIDE * 0.28 // how far the foot travels fore/aft each step
+	let fx = wk.footRest.x + fwd.x * s * strideHalf
+	let fy = wk.footRest.y + fwd.y * s * strideHalf
+	if (lift > 0) {
+		const LIFT_TUCK = 0.35 // up to 35% shorter reach at the top of the swing
+		const k = 1 - LIFT_TUCK * lift
+		fx = wk.hip.x + (fx - wk.hip.x) * k
+		fy = wk.hip.y + (fy - wk.hip.y) * k
+	}
+
+	// 2-bone IK to (fx, fy).
+	const a = wk.femurLen
+	const b = wk.tibiaLen
+	const dx = fx - wk.hip.x
+	const dy = fy - wk.hip.y
+	let dist = Math.hypot(dx, dy)
+	// Clamp to the reachable annulus so acos stays valid (target never exceeds a+b or |a−b|).
+	const maxR = a + b - 0.001
+	const minR = Math.abs(a - b) + 0.001
+	dist = Math.max(minR, Math.min(maxR, dist))
+	const toTarget = Math.atan2(dy, dx)
+	// Interior angle at the hip between (hip→target) and the femur, law of cosines.
+	const cosHip = (a * a + dist * dist - b * b) / (2 * a * dist)
+	const hipInner = Math.acos(Math.max(-1, Math.min(1, cosHip)))
+
+	// Elbow side: keep the knee on the SAME side as the rest knee so it never flips.
+	const restKneeAngle = Math.atan2(wk.kneeRest.y - wk.hip.y, wk.kneeRest.x - wk.hip.x)
+	const restFootDir = Math.atan2(wk.footRest.y - wk.hip.y, wk.footRest.x - wk.hip.x)
+	// Is the rest knee CCW or CW from the rest hip→foot line? Pick that sign for the bend.
+	const kneeSide = signedDelta(restKneeAngle, restFootDir) >= 0 ? 1 : -1
+
+	const femurAngle = toTarget + kneeSide * hipInner // absolute femur direction (hip→knee)
+	const kneeX = wk.hip.x + Math.cos(femurAngle) * a
+	const kneeY = wk.hip.y + Math.sin(femurAngle) * a
+	const tibiaAngle = Math.atan2(fy - kneeY, fx - kneeX) // absolute tibia direction (knee→foot)
+
+	// DELTAS from the drawn rest pose.
+	const restFemur = Math.atan2(wk.kneeRest.y - wk.hip.y, wk.kneeRest.x - wk.hip.x)
+	const restTibia = Math.atan2(wk.footRest.y - wk.kneeRest.y, wk.footRest.x - wk.kneeRest.x)
+	const dFemur = signedDelta(femurAngle, restFemur)
+	const dTibia = signedDelta(tibiaAngle, restTibia) - dFemur // un-inherit the femur rotation
+
+	if (si === 0) {
+		const deg = (dFemur * 180) / Math.PI
+		return `rotate(${deg.toFixed(2)} ${wk.hip.x.toFixed(1)} ${wk.hip.y.toFixed(1)})`
+	}
+	const deg = (dTibia * 180) / Math.PI
+	return `rotate(${deg.toFixed(2)} ${wk.kneeRest.x.toFixed(1)} ${wk.kneeRest.y.toFixed(1)})`
+}
+
+/** Shortest signed angular difference a−b, wrapped to (−π, π]. */
+function signedDelta(a: number, b: number): number {
+	return Math.atan2(Math.sin(a - b), Math.cos(a - b))
 }
 
 /**
