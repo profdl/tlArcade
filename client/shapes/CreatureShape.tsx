@@ -38,7 +38,7 @@ import {
 	useEditor,
 	useValue,
 } from 'tldraw'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { creatureShapeValidators } from '../../shared/shape-schemas'
 import {
 	creatureClock,
@@ -172,9 +172,11 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// Start/stop the shared tick listener with this creature's lifetime.
 	useEffect(() => subscribeCreatureClock(editor), [editor])
 
-	// Refs to the two animated SVG groups. We mutate their `transform` imperatively
-	// each tick (below) — this is the whole point: motion never goes through React.
-	const bodyGroup = useRef<SVGGElement>(null)
+	// Refs to the animated SVG groups. We mutate their `transform` imperatively each
+	// tick (below) — this is the whole point: motion never goes through React. The
+	// body is a CHAIN of nested segment groups (bodyGroups[0] is the head; each later
+	// one is nested inside the previous), plus the tail nested at the end.
+	const bodyGroups = useRef<(SVGGElement | null)[]>([])
 	const tailGroup = useRef<SVGGElement>(null)
 
 	// Resolve theme-dependent display values reactively — re-renders on palette /
@@ -204,7 +206,12 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 		}
 		return polygonPath(pts)
 	}
-	const bodyD = useMemo(() => closedPath(fish.body), [fish.body, isDraw, strokeWidth])
+	// One freehand path per body segment (built once). The chain nests them so a
+	// per-segment phase offset makes a wave travel head→tail (see the reactor).
+	const bodyDs = useMemo(
+		() => fish.bodySegments.map((seg) => closedPath(seg)),
+		[fish.bodySegments, isDraw, strokeWidth]
+	)
 	const tailD = useMemo(() => closedPath(fish.tail), [fish.tail, isDraw, strokeWidth])
 
 	// IMPERATIVE ANIMATION. useReactor subscribes to the shared clock once and runs
@@ -217,9 +224,9 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	useReactor(
 		'creatureSwim',
 		() => {
-			const body = bodyGroup.current
 			const tail = tailGroup.current
-			if (!body || !tail) return
+			const segs = bodyGroups.current
+			if (!tail || segs.length === 0 || segs.some((g) => !g)) return
 			// Freeze (skip writes, hold last transform) when off-screen OR not in a
 			// tank — a creature alone on the canvas sits still. tankUnder/getCulledShapes
 			// are reactive, so this effect re-evaluates when those change.
@@ -237,17 +244,25 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 			// Shared tail-beat phase — in lockstep with the movement loop's thrust.
 			const beat = tailBeat(clock, seed, speed).phase
 
-			// BODY: gentle yaw sway about the head + the turn lean, around the head
-			// point so the nose stays put and the body fans behind it.
-			const sway = Math.sin(beat) * 4 + a.bank * 10 // degrees
-			const hx = fish.headPivot.x
-			const hy = fish.headPivot.y
-			body.setAttribute('transform', `rotate(${sway.toFixed(2)} ${hx.toFixed(1)} ${hy.toFixed(1)})`)
+			// BODY CHAIN: each segment rotates about its own joint by a sine whose PHASE
+			// TRAILS the segment ahead of it (the `- i * PHASE_LAG` term) and whose
+			// AMPLITUDE GROWS toward the tail (AMP_BASE * (i+1)). Because the segments
+			// are nested, each rotation composes on its parent's, so the per-segment
+			// offsets accumulate into a wave flowing head→tail — the old traveling-sine
+			// undulation, but as cheap transforms on static paths. The head segment also
+			// carries the turn lean (bank) so the whole fish leans into turns.
+			for (let i = 0; i < segs.length; i++) {
+				const phase = beat - i * PHASE_LAG
+				let deg = Math.sin(phase) * AMP_BASE * (i + 1)
+				if (i === 0) deg += a.bank * 10 // lean rides on the head segment
+				const j = fish.joints[i]
+				segs[i]!.setAttribute('transform', `rotate(${deg.toFixed(2)} ${j.x.toFixed(1)} ${j.y.toFixed(1)})`)
+			}
 
-			// TAIL: flick about the JOIN hinge. This composes ON TOP of the body sway
-			// (the tail group is nested in the body group), so it's the tail's motion
-			// RELATIVE to the body — a bigger sweep that reads as the tail driving.
-			const flick = Math.sin(beat) * 18 // degrees
+			// TAIL: flick about the JOIN hinge, nested at the end of the chain so it
+			// inherits the whole body's accumulated bend, then adds the biggest sweep —
+			// the crest of the wave arriving, reading as the tail driving the fish.
+			const flick = Math.sin(beat - segs.length * PHASE_LAG) * 16
 			const px = fish.tailPivot.x
 			const py = fish.tailPivot.y
 			tail.setAttribute('transform', `rotate(${flick.toFixed(2)} ${px.toFixed(1)} ${py.toFixed(1)})`)
@@ -255,39 +270,49 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 		[editor, shape.id, seed, speed, fish]
 	)
 
+	const pathProps = {
+		fill: fillColor,
+		stroke,
+		strokeWidth,
+		strokeDasharray: dashArray(dash, strokeWidth),
+		strokeLinecap: 'round' as const,
+		strokeLinejoin: 'round' as const,
+	}
+
+	// Build the nested body CHAIN from the innermost segment out. Each segment <g> is
+	// a transform target (ref into bodyGroups[i]) holding its own path plus the next
+	// segment nested inside it, so transforms compose down the chain. The TAIL nests
+	// inside the LAST segment, rendered BEFORE that segment's path so it tucks behind
+	// the body; the EYE rides the head (outermost) segment.
+	let chain: ReactNode = null
+	for (let i = bodyDs.length - 1; i >= 0; i--) {
+		const inner = chain
+		const isLast = i === bodyDs.length - 1
+		const isHead = i === 0
+		chain = (
+			<g key={i} ref={(el) => { bodyGroups.current[i] = el }}>
+				{/* tail goes behind the last segment's path → render it first */}
+				{isLast && (
+					<g ref={tailGroup}>
+						<path d={tailD} {...pathProps} />
+					</g>
+				)}
+				<path d={bodyDs[i]} {...pathProps} />
+				{isHead && (
+					<circle cx={fish.eye.x} cy={fish.eye.y} r={Math.max(1.2, strokeWidth * 0.9)} fill={stroke} />
+				)}
+				{inner}
+			</g>
+		)
+	}
+
 	return (
 		<HTMLContainer style={{ width: w, height: h, pointerEvents: 'all' }}>
 			<svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
-				{/* The body group carries the whole-creature sway; the <g> refs are the
-				    transform targets, mutated imperatively each tick. Their `d`/`cx`
-				    never change, so React never reconciles them after mount. */}
-				<g ref={bodyGroup}>
-					{/* tail NESTED inside the body group: it inherits the body sway so the
-					    join never drifts, then composes its own flick. Drawn first so it
-					    sits behind the body path; its tucked-in base hides under the body. */}
-					<g ref={tailGroup}>
-						<path
-							d={tailD}
-							fill={fillColor}
-							stroke={stroke}
-							strokeWidth={strokeWidth}
-							strokeDasharray={dashArray(dash, strokeWidth)}
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						/>
-					</g>
-					<path
-						d={bodyD}
-						fill={fillColor}
-						stroke={stroke}
-						strokeWidth={strokeWidth}
-						strokeDasharray={dashArray(dash, strokeWidth)}
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					/>
-					{/* eye rides with the body group so it stays anchored to the head */}
-					<circle cx={fish.eye.x} cy={fish.eye.y} r={Math.max(1.2, strokeWidth * 0.9)} fill={stroke} />
-				</g>
+				{/* Body is a kinematic chain of nested segment <g>s (refs in bodyGroups),
+				    each rotated about its joint per tick so a wave flows head→tail. The
+				    <g>/path/cx never change, so React never reconciles them after mount. */}
+				{chain}
 			</svg>
 		</HTMLContainer>
 	)
@@ -342,14 +367,34 @@ const SEGMENTS = 20
 
 type Pt = { x: number; y: number }
 type Fish = {
-	body: Pt[]
+	/**
+	 * The body as a head→tail CHAIN of 3 overlapping segments. They're nested as a
+	 * kinematic chain by the consumer (each rotates about its near JOINT, carrying
+	 * the ones behind it), so a sine wave with a per-segment phase offset flows down
+	 * the body — recovering the old traveling-wave undulation without rebuilding the
+	 * path each frame. Built in shared world coords so they line up at rest; the
+	 * overlap (segments share a band of x) hides the seams as they bend.
+	 */
+	bodySegments: Pt[][]
+	/** The near-joint each body segment rotates about (segment i pivots about joints[i]). */
+	joints: Pt[]
 	tail: Pt[]
 	eye: Pt
-	/** Hinge the body group yaws about (the nose). */
-	headPivot: Pt
 	/** Hinge the tail group flicks about (the caudal peduncle). */
 	tailPivot: Pt
 }
+
+// How many body segments in the chain. 3 = a believable wave at ~4-5 paths/creature.
+const BODY_SEGS = 3
+// Each segment extends this far PAST its nominal u-range into the next, so the
+// overlap band hides the seam when adjacent segments rotate apart.
+const SEG_OVERLAP = 0.08
+// Per-segment phase lag (radians): how much each segment trails the one ahead of it,
+// so the wave visibly travels head→tail. ~0.7 ≈ a gentle, readable wave.
+const PHASE_LAG = 0.7
+// Base per-segment rotation amplitude (degrees). Grows ·(i+1) toward the tail, so
+// the head barely turns and the rear swings most — like a real swimming body.
+const AMP_BASE = 4
 
 function creatureFish(w: number, h: number, seed: number): Fish {
 	// The body spans head (x0) → tail-base (peduncle). We leave room on the right
@@ -372,15 +417,31 @@ function creatureFish(w: number, h: number, seed: number): Fish {
 		return h * 0.34 * fat * (1 - 0.78 * u)
 	}
 
-	const top: Pt[] = []
-	const bottom: Pt[] = []
-	for (let i = 0; i <= SEGMENTS; i++) {
-		const u = i / SEGMENTS
-		const x = x0 + u * len
-		top.push({ x, y: spine(u) - radius(u) })
-		bottom.unshift({ x, y: spine(u) + radius(u) }) // return edge, reversed
+	// A closed outline ring for the body slice over [uStart, uEnd], in world coords.
+	const segmentRing = (uStart: number, uEnd: number): Pt[] => {
+		const top: Pt[] = []
+		const bottom: Pt[] = []
+		const steps = Math.max(2, Math.round(SEGMENTS * (uEnd - uStart)))
+		for (let i = 0; i <= steps; i++) {
+			const u = uStart + (uEnd - uStart) * (i / steps)
+			const x = x0 + u * len
+			top.push({ x, y: spine(u) - radius(u) })
+			bottom.unshift({ x, y: spine(u) + radius(u) })
+		}
+		return [...top, ...bottom]
 	}
-	const body = [...top, ...bottom]
+
+	// Build the 3 segments + their near-joints. Segment i covers [i/N, (i+1)/N] but
+	// extends SEG_OVERLAP past the end into the next so the seam hides. Joint i is on
+	// the spine at the segment's START — the hinge it rotates about.
+	const bodySegments: Pt[][] = []
+	const joints: Pt[] = []
+	for (let i = 0; i < BODY_SEGS; i++) {
+		const uStart = i / BODY_SEGS
+		const uEnd = Math.min(1, (i + 1) / BODY_SEGS + SEG_OVERLAP)
+		bodySegments.push(segmentRing(uStart, uEnd))
+		joints.push({ x: x0 + uStart * len, y: spine(uStart) })
+	}
 
 	// CAUDAL (tail) fin: a forked triangle hinged at the peduncle, drawn at REST
 	// (no swing). The consumer rotates the whole tail group about tailPivot to flick
@@ -411,13 +472,11 @@ function creatureFish(w: number, h: number, seed: number): Fish {
 	// EYE, near the head.
 	const eye = { x: x0 + 0.1 * len, y: spine(0.1) - radius(0.1) * 0.25 }
 
-	// HINGES for the transform animation: the body yaws about the nose; the tail
-	// flicks about the JOIN point (where its base meets the body), so the base stays
-	// put and only the fin sweeps — no gap opening up between tail and body.
-	const headPivot = { x: x0, y: spine(0) }
+	// The tail flicks about the JOIN point (where its base meets the body), so the
+	// base stays put and only the fin sweeps — no gap opening up between tail and body.
 	const tailPivot = { x: xJoin, y: joinY }
 
-	return { body, tail, eye, headPivot, tailPivot }
+	return { bodySegments, joints, tail, eye, tailPivot }
 }
 
 /** Join a ring of points into a closed straight-segment SVG path (2-dp coords). */
