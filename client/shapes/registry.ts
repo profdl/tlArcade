@@ -13,7 +13,13 @@
  * Everything else (registration with <Tldraw>, the toolbar button, the menu)
  * reads from these arrays, so this is the only wiring you touch.
  */
-import { TLAnyBindingUtilConstructor, TLAnyShapeUtilConstructor, TLStateNodeConstructor } from 'tldraw'
+import {
+	TLAnyBindingUtilConstructor,
+	TLAnyShapeUtilConstructor,
+	TLStateNodeConstructor,
+	defaultBindingUtils,
+	defaultShapeUtils,
+} from 'tldraw'
 import { ContainmentBindingUtil } from '../containment/ContainmentBinding'
 import { CardShapeUtil } from './CardShape'
 import { ContainerShapeUtil } from './ContainerShape'
@@ -23,10 +29,19 @@ import { TokenShapeUtil } from './TokenShape'
 import { TrackerShapeUtil } from './TrackerShape'
 
 /**
- * All custom game-shape utils, registered with the editor via `<Tldraw shapeUtils={...}>`.
- * Order does not matter.
+ * All shape utils registered with the editor via `<Tldraw shapeUtils={...}>` AND
+ * the synced schema via `useSync({ shapeUtils })`.
+ *
+ * IMPORTANT: this MUST include tldraw's `defaultShapeUtils` (geo/draw/arrow/text/
+ * note/…) because the SYNC SERVER registers `defaultShapeSchemas` too (see
+ * worker/TldrawDurableObject.ts). If the client omitted the defaults, the two
+ * schemas would diverge and every client would be rejected at the sync handshake
+ * with CLIENT_TOO_OLD. Keep the two sides in lockstep.
+ *
+ * Order does not matter. Add your custom `<Your>ShapeUtil` to the custom list.
  */
 export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
+	...defaultShapeUtils,
 	TokenShapeUtil,
 	TrackerShapeUtil,
 	DieShapeUtil,
@@ -42,6 +57,7 @@ export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
  * and the synced schema, same as shapes.
  */
 export const gameBindingUtils: TLAnyBindingUtilConstructor[] = [
+	...defaultBindingUtils,
 	ContainmentBindingUtil,
 	// ← add your `<Your>BindingUtil` here
 ]

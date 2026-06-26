@@ -6,6 +6,7 @@ import { getBookmarkPreview } from '../getBookmarkPreview'
 import { multiplayerAssetStore } from '../multiplayerAssetStore'
 import { registerContainment } from '../containment/registerContainment'
 import { registerSnapping } from '../grid/registerSnapping'
+import { registerPhysics } from '../physics/registerPhysics'
 import { onRefereePrivateMessage } from '../referee/privateReveals'
 import { gameBindingUtils, gameShapeUtils, gameTools } from '../shapes/registry'
 import { createGameComponents } from '../ui/components'
@@ -50,7 +51,11 @@ export function Room() {
 					// when the editor is ready, we need to register our bookmark unfurling service
 					editor.registerExternalAssetHandler('url', getBookmarkPreview)
 					// editor behaviours: drop-into-container (§4.2) + grid snapping (§4.1).
-					const disposers = [registerContainment(editor), registerSnapping(editor)]
+					const disposers = [
+						registerContainment(editor),
+						registerSnapping(editor),
+						registerPhysics(editor),
+					]
 					return () => disposers.forEach((d) => d())
 				}}
 			/>

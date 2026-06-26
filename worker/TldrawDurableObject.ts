@@ -16,9 +16,13 @@ import { gameBindingSchemas, gameShapeSchemas } from '../shared/shape-schemas'
 import { isRefereeEnvelope, RefereeEnvelope } from '../shared/referee-protocol'
 import { Referee } from './Referee'
 
-// The server's schema MUST match the client's (which is built from `shapeUtils`
-// in useSync). We register our custom game shapes from the shared schema map so
-// the two stay in lockstep — a mismatch makes synced custom shapes fail to load.
+// The server's schema MUST match the client's EXACTLY, or the sync handshake
+// rejects clients with CLIENT_TOO_OLD (mismatched migrations). This toolkit keeps
+// tldraw's BUILT-IN shapes (geo/draw/arrow/text/note…) alongside the game shapes,
+// so we register BOTH the defaults AND our custom schemas here — and the client
+// must mirror this by passing `defaultShapeUtils`+`gameShapeUtils` to useSync
+// (see client/shapes/registry.ts). Keep the two in lockstep: any default you
+// include here must be included on the client, and vice-versa.
 const schema = createTLSchema({
 	shapes: { ...defaultShapeSchemas, ...gameShapeSchemas },
 	bindings: { ...defaultBindingSchemas, ...gameBindingSchemas },

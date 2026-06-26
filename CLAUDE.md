@@ -107,6 +107,20 @@ These are the things your training data probably gets wrong. The repo is on
    If the client and server prop validators disagree, synced shapes fail
    validation on other clients. That's why validators live in `shared/`.
 
+   **The schema on each side must be the SAME SET — defaults included.** This is
+   the subtle one. `useSync({ shapeUtils })` builds the client's *synced* schema
+   from EXACTLY the utils array you pass — it does NOT auto-add tldraw's built-in
+   shapes. So if you want the built-ins (geo/draw/arrow/text/note/…), the client
+   array (`gameShapeUtils` in `registry.ts`) must spread `...defaultShapeUtils`
+   (and `...defaultBindingUtils`), AND the worker must spread `...defaultShapeSchemas`
+   (`...defaultBindingSchemas`). Include the defaults on BOTH sides or NEITHER —
+   a mismatch makes the server's schema carry migrations the client lacks, and
+   the sync handshake rejects every client at connect time with **`CLIENT_TOO_OLD`**
+   (a misleading name: it means "schemas differ", not "stale client/cache"). If
+   you keep the built-ins, leaving them out of `gameShapeUtils` ALSO makes adding
+   a built-in shape (e.g. the rectangle tool → a `geo` shape) throw a
+   `ValidationError: ... got "geo"`. Keep the two lists in lockstep.
+
 5. **Anything secret or random goes through the Referee, never the store.** The
    sync document is visible to every client. Dice rolls, shuffles, and
    face-down values are computed by `worker/Referee.ts` and only their redacted
