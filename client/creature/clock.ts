@@ -83,6 +83,74 @@ export function tailBeat(clock: number, seed: number, speed: number): { phase: n
 	return { phase, thrust }
 }
 
+/**
+ * THE JELLYFISH PROPULSION ENVELOPE — the SINGLE source of "how hard is the bell
+ * jetting right now?", shared by the BODY animation (CreatureShape's bodyLift) and
+ * the swim loop (registerSwimming) so the visible up-surge and the shape's actual
+ * forward lurch are the SAME impulse, in lockstep, on every client.
+ *
+ * It's an asymmetric pump (fast contraction, slow recovery) shaped into a one-sided
+ * IMPULSE that's ≈0 while the tentacles reach outward and spikes to 1 the instant
+ * they snap STRAIGHT — then ramps down fast. Phased (JELLY_DRIVE_LAG) to the visible
+ * lower-tentacle straightening, so the lurch lands exactly when they look straight.
+ *
+ *   clock/seed/speed — same shared inputs as tailBeat, so it's deterministic and
+ *                      every client computes the identical impulse with no sync.
+ *   returns 0..1 — the propulsion power this instant (1 = peak jet at straightening).
+ *
+ * NOTE: keep `beatScale` here in sync with jellyfishVariant.motion.beatScale, and the
+ * pump SHAPE constants in sync with CreatureShape's pumpEnvelope — they describe the
+ * same physical pump from the propulsion side. (Small, stable; not worth a shared import.)
+ */
+export function jellyfishPropulsion(clock: number, seed: number, speed: number): number {
+	const beat = tailBeat(clock, seed, speed).phase * JELLY_BEAT_SCALE
+	// Asymmetric pump ∈ [0,1]: 0 = bell relaxed (tentacles out), 1 = contracted (straight).
+	const pump = Math.pow((1 - Math.cos(beat - JELLY_DRIVE_LAG)) * 0.5, JELLY_PUMP_SKEW)
+	const straight = 1 - pump // 1 = tentacles straight, 0 = reached out
+	return Math.pow(straight, JELLY_IMPULSE) // sharp pulse at straightening; ≈0 otherwise
+}
+
+/**
+ * THE JELLYFISH STROKE LEAN — the bell's tilt (radians from upright) for the current
+ * pump. Unlike a brief twitch, this is HELD across the whole stroke and the swim loop
+ * JETS ALONG IT, so the animal pumps up-and-to-the-side in the direction it's leaning
+ * (then the next stroke leans the OTHER way) — a zig-zag climb, not a twitch in place.
+ *
+ * Deterministic in the shared clock/seed/speed (no sync) and locked to the SAME pump
+ * phase as jellyfishPropulsion, so the lean is fullest exactly WHILE it jets and eases
+ * back toward upright between strokes (it rests vertical, leans as it pumps).
+ *
+ *   sign — ALTERNATES every pump cycle (left stroke, right stroke, …); `seed` picks
+ *          which way the first stroke goes, so jellies aren't all in sync.
+ *   amount — rides the propulsion envelope (≈0 at rest → JELLY_TILT at the jet peak).
+ *   returns the signed lean in radians; pair it with jellyfishPropulsion (same phase)
+ *   so the rotation and the jet direction always agree.
+ */
+export function jellyfishTilt(clock: number, seed: number, speed: number): number {
+	const beat = tailBeat(clock, seed, speed).phase * JELLY_BEAT_SCALE
+	const p = beat - JELLY_DRIVE_LAG
+	// Lean amount follows the SAME impulse the jet uses, so the tilt is held through the
+	// stroke and fades between — body + travel point the same way exactly while jetting.
+	const pump = Math.pow((1 - Math.cos(p)) * 0.5, JELLY_PUMP_SKEW)
+	const amount = Math.pow(1 - pump, JELLY_IMPULSE) // 1 at the jet peak, ≈0 at rest
+	// Alternate the lean direction each pump cycle (parity of the cycle index, +seed).
+	const cycle = Math.floor(p / (2 * Math.PI) + seed)
+	const sign = cycle % 2 === 0 ? 1 : -1
+	return sign * amount * JELLY_TILT
+}
+
+/** Peak stroke lean in radians (~12°): enough that the jet visibly angles sideways. */
+const JELLY_TILT = 0.21
+
+/** Tempo of the jellyfish pump — MUST match jellyfishVariant.motion.beatScale. */
+const JELLY_BEAT_SCALE = 0.75
+/** >1 skews the pump toward relaxed (slow recover, fast squeeze). Matches pumpEnvelope. */
+const JELLY_PUMP_SKEW = 1.8
+/** Phase so the lurch lands with the visible (lower) tentacle straightening. */
+const JELLY_DRIVE_LAG = 1.9 // = PUMP_LAG (0.9) + BODY_TIP_LAG (1.0) from CreatureShape
+/** Exponent shaping the surge into a sharp impulse (matches BODY_IMPULSE). */
+const JELLY_IMPULSE = 4
+
 let mountCount = 0
 let off: (() => void) | null = null
 

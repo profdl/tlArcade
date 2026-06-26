@@ -37,7 +37,7 @@
  * disposer.
  */
 import { Box, Editor, TLShapeId, Vec } from 'tldraw'
-import { creatureClock, positionWriteHz, tailBeat } from './clock'
+import { creatureClock, jellyfishPropulsion, jellyfishTilt, positionWriteHz, tailBeat } from './clock'
 import { CreatureShape } from '../shapes/CreatureShape'
 import type { CreatureKind } from '../../shared/shape-schemas'
 
@@ -71,6 +71,17 @@ const GLIDE_FLOOR = 0.62
  * doesn't visibly jerk on every stroke. ~0.008/ms ≈ a ~125ms smoothing window.
  */
 const SPEED_EASE = 0.008
+// ── Jellyfish-specific propulsion (jet up on each pump, sink between) ──────────
+/** Peak-speed multiplier for the jelly's brief, sharp jet impulse (vs. a fish's
+ *  sustained thrust) so each lurch still covers ground. */
+const JELLY_THRUST = 3.0
+/** The jelly eases speed faster than a fish (shorter low-pass) so the impulse stays
+ *  a crisp lurch instead of smearing into a steady glide. */
+const JELLY_SPEED_EASE = 0.02
+/** Steady downward drift (page px/ms at speed 1) between pumps — the bell sinks as it
+ *  refills. Tuned to ~85% of the jet's AVERAGE speed so each cycle bobs up then settles
+ *  with only a slight net rise: it roams vertically instead of pinning the ceiling. */
+const JELLY_SINK = 0.054
 /** How sharply the heading meanders, in radians/ms. Gentle — barely curving. */
 const TURN_RATE = 0.0004
 /** How firmly the creature steers away from a wall, in radians/ms at full depth. */
@@ -289,21 +300,47 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 		s.heading += diff * Math.min(1, AVOID_RATE * dt * depth)
 	}
 
-	// PROPULSION: modulate forward speed by the SHARED tail-beat thrust, read from
-	// the same clock+seed+speed the body renders with — so the surge lines up with
-	// the visible tail-flick on every client. A high GLIDE_FLOOR keeps it coasting
-	// between beats rather than stalling dead, like a real swimmer.
-	const { thrust } = tailBeat(creatureClock.get(), creature.props.seed, creature.props.speed)
-	const drive = GLIDE_FLOOR + (1 - GLIDE_FLOOR) * thrust
-	const targetSpeed = BASE_SPEED * Math.max(0, creature.props.speed) * drive
+	// PROPULSION: modulate forward speed, read from the same clock+seed+speed the body
+	// renders with — so the canvas surge lines up with the VISIBLE animation on every
+	// client. The envelope is KIND-SPECIFIC:
+	//   • jellyfish — the JET IMPULSE (jellyfishPropulsion): ≈0 while the tentacles
+	//     reach out (it barely moves), spiking the instant they snap straight, then
+	//     ramping down — so the shape lurches forward exactly when the body visibly
+	//     jets. It surges from a dead glide (no GLIDE_FLOOR), pulse-and-coast.
+	//   • everything else — the tail-beat thrust (two smooth power strokes/cycle) with
+	//     a high GLIDE_FLOOR so a fish coasts between flicks instead of stalling.
+	const isJelly = creature.props.kind === 'jellyfish'
+	const drive = isJelly
+		? jellyfishPropulsion(creatureClock.get(), creature.props.seed, creature.props.speed)
+		: GLIDE_FLOOR +
+			(1 - GLIDE_FLOOR) * tailBeat(creatureClock.get(), creature.props.seed, creature.props.speed).thrust
+	// The jelly's impulse is sharp + brief, so give it more peak speed to cover ground.
+	const speedScale = isJelly ? JELLY_THRUST : 1
+	const targetSpeed = BASE_SPEED * Math.max(0, creature.props.speed) * speedScale * drive
 	// EASE the real speed toward the target (frame-rate-independent low-pass), so the
-	// per-stroke surge becomes a smooth swell instead of an abrupt jerk each beat.
-	s.speed += (targetSpeed - s.speed) * Math.min(1, SPEED_EASE * dt)
+	// per-stroke surge becomes a smooth swell instead of an abrupt jerk each beat. The
+	// jelly eases faster (shorter window) so its impulse stays a crisp lurch, not a smear.
+	const ease = isJelly ? JELLY_SPEED_EASE : SPEED_EASE
+	s.speed += (targetSpeed - s.speed) * Math.min(1, ease * dt)
 
-	// Integrate the CENTRE along the heading — the creature moves where its HEAD
-	// points. Then keep the centre inside the tank (its own half-size as inset).
-	s.cx += Math.cos(s.heading) * s.speed * dt
-	s.cy += Math.sin(s.heading) * s.speed * dt
+	// Integrate the CENTRE. A jellyfish is `upright` (bell up) and JETS ALONG ITS BELL
+	// AXIS on each pump — and that axis is TILTED by the stroke lean (jellyfishTilt),
+	// so it pumps up-AND-to-the-side in whichever way it's leaning, then leans the OTHER
+	// way next stroke: a zig-zag climb, not a twitch in place. The jet direction and the
+	// shape's rotation use the SAME tilt, so the body always points where it's going.
+	// Between pumps it SINKS gently straight down (the bell refilling). The up-jet is
+	// stronger than the sink, so each cycle nets headway; every other kind moves where
+	// its HEAD points. Wall avoidance + the clamp keep it in the tank (no ceiling-pin).
+	const jellyTilt = isJelly ? jellyfishTilt(creatureClock.get(), creature.props.seed, creature.props.speed) : 0
+	if (isJelly) {
+		// Bell "up" is local −y; rotating it by the lean θ gives jet dir (sin θ, −cos θ).
+		s.cx += Math.sin(jellyTilt) * s.speed * dt // sideways component of the tilted jet
+		s.cy -= Math.cos(jellyTilt) * s.speed * dt // upward component of the tilted jet
+		s.cy += JELLY_SINK * Math.max(0, creature.props.speed) * dt // steady drift back down
+	} else {
+		s.cx += Math.cos(s.heading) * s.speed * dt
+		s.cy += Math.sin(s.heading) * s.speed * dt
+	}
 	const halfW = creature.props.w / 2
 	const halfH = creature.props.h / 2
 	s.cx = clamp(s.cx, tank.minX + halfW, Math.max(tank.minX + halfW, tank.maxX - halfW))
@@ -312,12 +349,13 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 	// FACE THE HEADING (per-kind). The body is drawn head-LEFT in local space
 	// (forward = −x), so heading + π points the head along travel. A crab adds a
 	// 90° facingOffset so its SIDE leads (sideways scuttle); a jellyfish is `upright`
-	// — it keeps its bell up and just drifts, ignoring heading for rotation. Derive
-	// the top-left from the desired CENTRE + rotation in ONE write so position and
-	// rotation never disagree. NOTE: tldraw rotates about the top-left ORIGIN, so the
-	// centre→top-left offset is (halfW, halfH) ROTATED by the angle.
+	// — it stays bell-up but leans by the STROKE TILT (jellyTilt, computed above) so the
+	// bell points along its tilted jet and zig-zags as it climbs. Derive the top-left
+	// from the desired CENTRE + rotation in ONE write so position and rotation never
+	// disagree. NOTE: tldraw rotates about the top-left ORIGIN, so the centre→top-left
+	// offset is (halfW, halfH) ROTATED by the angle.
 	const face = FACING[creature.props.kind] ?? FACING.fish
-	const rotation = face.upright ? 0 : s.heading + Math.PI + face.facingOffset
+	const rotation = face.upright ? jellyTilt : s.heading + Math.PI + face.facingOffset
 	const half = new Vec(halfW, halfH).rot(rotation) // centre→top-left offset, rotated
 	editor.updateShape<CreatureShape>({
 		id: creature.id,

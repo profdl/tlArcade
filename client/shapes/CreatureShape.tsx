@@ -380,9 +380,12 @@ function renderChain(
  * Animate every chain by mutating its segment groups' transforms. Pure transforms
  * (no path rebuild). The motion STYLE picks how the spine + appendages move:
  *   undulate — wave flows down the spine (phaseLag); trailers sweep behind it.
- *   pulse    — jellyfish: the bell BOBS up/down (and squashes as it pushes), and the
- *              tentacles are SYNCED to that bob — they trail/extend on the up-stroke
- *              and gather on the down-stroke, all driven by the same `bob` term.
+ *   pulse    — jellyfish JET PROPULSION: an ASYMMETRIC pump — a fast CONTRACTION
+ *              (the bell squeezes radially narrower + taller, its rim pulls in,
+ *              and the whole animal jets forward) then a slow RELAXATION (the bell
+ *              opens wide + rounds out, drifting back). Tentacles trail the bell
+ *              with a lag: they STREAM OUT behind on the jet and RECOIL/BUNCH as
+ *              the bell re-opens. All driven by the same `pump` envelope.
  *   scuttle  — body bobs gently; limbs twitch out of phase (crab).
  * `bank` is the eased turn-lean; it rides the spine's head segment so the whole
  * creature leans into turns.
@@ -394,9 +397,21 @@ function animateCreature(
 	beat: number,
 	bank: number
 ): void {
-	// One shared bob phase for the whole jellyfish, so bell + tentacles move in
-	// lockstep. bob ∈ [-1,1]: +1 = top of the rise, -1 = bottom of the push-down.
-	const bob = Math.sin(beat)
+	// PULSE envelope. Real jellyfish locomotion is asymmetric: a quick power
+	// CONTRACTION followed by a slow RELAXATION. `pump` ∈ [0,1]: 0 = bell fully
+	// relaxed (open, rounded), 1 = bell fully contracted (squeezed, jetting). We
+	// shape a sine into a fast-rise/slow-fall by raising it to a >1 power on the
+	// rising edge — so the squeeze snaps and the recovery eases.
+	const pump = style === 'pulse' ? pumpEnvelope(beat) : 0
+	// Bell centre x — tentacles to its left/right curve MIRRORED outward. chains[0]
+	// is the bell (its anchor.x is the centre); fall back to 0 if somehow absent.
+	const bellCx = geom.chains[0]?.anchor.x ?? 0
+	// BODY LIFT — the whole animal's vertical travel, tied to the TENTACLE state (not
+	// the bell's own pump) so motion matches what the tentacles are doing: barely any
+	// movement while they reach outward, then a fast up-surge that quickly ramps down
+	// as they snap straight. Computed once (shared by the bell + every tentacle root so
+	// they translate together). `lift` is negative = up.
+	const lift = style === 'pulse' ? bodyLift(beat) : 0
 
 	for (let ci = 0; ci < geom.chains.length; ci++) {
 		const chain = geom.chains[ci]
@@ -405,16 +420,19 @@ function animateCreature(
 			if (!g) continue
 			const j = chain.joints[si]
 
-			// ── PULSE (jellyfish): bob-driven, NOT a free phase wave ────────────────
+			// ── PULSE (jellyfish): jet-propulsion pump, NOT a free phase wave ────────
 			if (style === 'pulse') {
 				if (chain.role === 'spine' && si === 0) {
-					// BELL: translate up/down by the bob, and squash flatter as it pushes
-					// DOWN (bob negative → wider/shorter) then round tall as it rises. The
-					// scale is about the bell anchor so it breathes in place; the translate
-					// is the actual vertical travel. BOB_TRAVEL/SQUASH are local tuning.
-					const dy = -bob * BELL_BOB // rise on +bob (negative y = up)
-					const sx = (1 - bob * 0.14).toFixed(3) // push-down → wider
-					const sy = (1 + bob * 0.14).toFixed(3) // push-down → shorter
+					// BELL: on the CONTRACTION (pump→1) it squeezes radially NARROWER and
+					// stretches TALLER (sx<1, sy>1) as the rim jets water down, and the whole
+					// animal JETS UP. On RELAXATION (pump→0) it opens back wide + short and
+					// SINKS slightly (the refill glide) before the next pump. So the vertical
+					// travel swings BOTH ways around neutral: a gentle sink while reaching out,
+					// a stronger jet up while straightening. The scale is about the bell anchor
+					// so it breathes in place.
+					const dy = lift // <0 surge up (tentacles straightening), ~0 while reaching out
+					const sx = (1 - pump * BELL_SQUEEZE).toFixed(3) // contraction → narrower
+					const sy = (1 + pump * BELL_STRETCH).toFixed(3) // contraction → taller
 					g.setAttribute(
 						'transform',
 						`translate(0 ${dy.toFixed(2)}) ` +
@@ -423,14 +441,27 @@ function animateCreature(
 							`translate(${(-chain.anchor.x).toFixed(1)} ${(-chain.anchor.y).toFixed(1)})`
 					)
 				} else {
-					// TENTACLES: synced to the SAME bob. They ride the bell's vertical
-					// travel (the same `dy` translate, so roots stay glued to the rim) AND
-					// sweep out as the bell rises / gather as it pushes down. Each segment
-					// lags slightly down the chain (phaseLag) for a whip, but the cycle is
-					// the bell's bob, not a free drift — so the whole creature moves as one.
-					const dy = -bob * BELL_BOB
-					const deg = Math.sin(beat - si * chain.phaseLag + chain.phaseOffset * 0.25) * chain.amp * (si + 1)
-					// Only the FIRST segment needs the bob translate; the rest are nested
+					// TENTACLES — the swimming GAIT the bell drives:
+					//   • RELAXED (pump→0): the tentacles REACH OUT, curving OUTWARD and
+					//     MIRRORED across the bell centre — left ones bow left, right ones
+					//     bow right (an opening parasol). The curve grows down the chain
+					//     (×(si+1)) so each tentacle is an arc, not a straight splay.
+					//   • CONTRACTED (pump→1): they SNAP STRAIGHT (vertical) as the animal
+					//     jets up — propelling it forward.
+					// So the sweep magnitude rides RELAXATION (1−lagged-pump), and its SIGN
+					// is the tentacle's outward side. The lag (PUMP_LAG + per-seg phaseLag)
+					// makes the reach/straighten flow a beat behind the bell, down each
+					// chain — a whip toward the tips.
+					const dy = lift // same vertical travel as the bell → roots stay glued to the rim
+					const relax = 1 - pumpEnvelope(beat - PUMP_LAG - si * chain.phaseLag) // 1=reached out, 0=straight
+					// Outward sign. A tentacle hangs DOWN; in SVG +deg rotates CLOCKWISE
+					// (y is down), which swings a downward tip toward −x. So to bow a
+					// RIGHT-of-centre tentacle OUTWARD (tip → +x) we need NEGATIVE deg, and
+					// vice-versa — hence the leading minus. Left ones bow left, right bow
+					// right: a mirrored, outward-opening parasol.
+					const side = Math.sign(chain.anchor.x - bellCx) || 1
+					const deg = -side * relax * chain.amp * (si + 1)
+					// Only the FIRST segment needs the jet translate; the rest are nested
 					// inside it (kinematic chain) and inherit it. Detect via si === 0.
 					const t = si === 0 ? `translate(0 ${dy.toFixed(2)}) ` : ''
 					g.setAttribute('transform', `${t}rotate(${deg.toFixed(2)} ${j.x.toFixed(1)} ${j.y.toFixed(1)})`)
@@ -447,8 +478,61 @@ function animateCreature(
 	}
 }
 
-/** How far the jellyfish bell travels vertically per bob, in local px. */
-const BELL_BOB = 6
+/**
+ * The jellyfish PUMP envelope: a [0,1] signal that snaps UP (fast contraction) and
+ * eases DOWN (slow relaxation) — the asymmetry that makes the bell read as JETTING
+ * rather than passively wobbling. We take a raised cosine in [0,1], then bias it
+ * toward 0 with a >1 exponent so it spends MORE time relaxed and contracts sharply.
+ *   0 → bell fully relaxed (open, round) · 1 → bell fully contracted (squeezed)
+ */
+function pumpEnvelope(beat: number): number {
+	const s = (1 - Math.cos(beat)) * 0.5 // raised cosine, [0,1], symmetric
+	return Math.pow(s, PUMP_SKEW) // >1 skews toward relaxed: slow recover, fast squeeze
+}
+
+/**
+ * BODY LIFT — the whole jellyfish's vertical travel for the current beat, in local
+ * px (negative = up). Tied to the TENTACLE state, not the bell's own pump, so the
+ * body moves in step with what the tentacles are visibly doing:
+ *   • While the tentacles REACH OUTWARD (straightness low) the lift is ≈0 — the
+ *     animal barely moves (the glide between strokes).
+ *   • As the tentacles SNAP STRAIGHT (straightness → 1) it surges UP fast, then
+ *     quickly ramps back down — a propulsion IMPULSE, not a smooth sine.
+ * `str` is the lagged-pump straightness of the tentacles AS A WHOLE. The reach/
+ * straighten flows DOWN each chain (per-segment phaseLag), so the tips straighten a
+ * beat after the roots — and it's the long lower segments the eye reads as "straight".
+ * So we phase the body surge to the LOWER segments (PUMP_LAG + BODY_TIP_LAG), not the
+ * roots, so the animal moves up exactly when the tentacles LOOK straight. Raising str
+ * to a high power keeps the lift flat across the reach-out and concentrates it into a
+ * sharp pulse at the straightening — fast up, quick ramp-down. A tiny constant sink
+ * keeps the rest pose from drifting upward.
+ */
+function bodyLift(beat: number): number {
+	const str = 1 - pumpEnvelope(beat - PUMP_LAG - BODY_TIP_LAG) // 1 = tentacles straight, 0 = reached out
+	return BODY_SINK - Math.pow(str, BODY_IMPULSE) * (BODY_RISE + BODY_SINK)
+}
+
+/** Extra phase (radians) so the body surge aligns with the tentacle TIPS straightening
+ *  (which the eye reads as "straight"), not the roots. Matches the tip's total
+ *  per-segment lag: (SEGS_PER_TENTACLE − 1) × phaseLag = 2 × 0.5. */
+const BODY_TIP_LAG = 1.0
+
+/** Peak upward surge at full straightening, in local px. Kept LARGER than the
+ *  tentacles' horizontal tip excursion so the up/down propulsion is the dominant
+ *  motion (otherwise the side-to-side sweep visually swamps it). */
+const BODY_RISE = 22
+/** Gentle resting sink (px down) while the tentacles are reached out — the glide. */
+const BODY_SINK = 3
+/** Exponent shaping the up-surge into a sharp impulse (higher = flatter glide, snappier surge). */
+const BODY_IMPULSE = 4
+/** Radial squeeze of the bell at full contraction (fraction narrower). */
+const BELL_SQUEEZE = 0.18
+/** Vertical stretch of the bell at full contraction (fraction taller). */
+const BELL_STRETCH = 0.16
+/** Exponent skewing the pump toward the relaxed state (>1 = fast squeeze, slow recover). */
+const PUMP_SKEW = 1.8
+/** Phase the tentacles trail the bell by (radians) — they recoil a beat late. */
+const PUMP_LAG = 0.9
 
 /** Join a ring of points into a closed straight-segment SVG path (2-dp coords). */
 export function polygonPath(pts: Pt[]): string {
