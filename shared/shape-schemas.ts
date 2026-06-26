@@ -13,6 +13,12 @@
  * from both the client ShapeUtil and the worker schema. (See CLAUDE.md.)
  */
 import { T } from '@tldraw/validate'
+import {
+	DefaultColorStyle,
+	DefaultDashStyle,
+	DefaultFillStyle,
+	DefaultSizeStyle,
+} from '@tldraw/tlschema'
 
 export const tokenShapeValidators = {
 	w: T.number,
@@ -88,6 +94,28 @@ export const gridShapeValidators = {
 	snap: T.literalEnum('strict', 'loose', 'none'),
 }
 
+export const creatureShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// Picks WHICH creature this is. The body math is a deterministic function of
+	// `seed`, so every client draws the same swimmer — the only bespoke synced
+	// state. The animation itself is computed locally each frame (NOT synced);
+	// see client/creature/clock.ts and CreatureShape.tsx.
+	seed: T.number,
+	// Undulation rate. Public knob: higher = faster swim. Local clock multiplies it.
+	speed: T.number,
+	// NATIVE tldraw STYLE props. These are the SAME StyleProp objects the built-in
+	// shapes use, so the creature shares the global palette and shows up in the
+	// style panel automatically — change it exactly like any other shape. The
+	// worker's createTLSchema auto-collects these StyleProps from the props map.
+	//   color → palette hue        size  → stroke width (s/m/l/xl)
+	//   dash  → 'draw' = hand-drawn  fill → none/semi/solid/pattern body fill
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+	fill: DefaultFillStyle,
+}
+
 export const gameShapeSchemas = {
 	token: { props: tokenShapeValidators },
 	tracker: { props: trackerShapeValidators },
@@ -95,6 +123,7 @@ export const gameShapeSchemas = {
 	card: { props: cardShapeValidators },
 	container: { props: containerShapeValidators },
 	grid: { props: gridShapeValidators },
+	creature: { props: creatureShapeValidators },
 	// ← add your shape's `{ props: <validators> }` here
 }
 

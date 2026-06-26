@@ -64,6 +64,11 @@ SPEC.md                 The architecture spec. Read it for the "why".
   runner can't handle TS *parameter properties* (`constructor(private x)`) — use a
   plain field + assignment in any code you want testable this way.
 - `npx vite build` — verify the client bundles.
+- **Changing a shape's props after it has persisted records throws
+  `ValidationError: ... got undefined` at load.** Adding a required prop to an
+  existing shape needs a tldraw props migration. For local dev (throwaway rooms),
+  instead stop `yarn dev` (it locks the files) and wipe the Durable Object store:
+  `rm -rf .wrangler/state/v3/do/multiplayer-template-TldrawDurableObject`.
 
 ---
 
@@ -146,11 +151,26 @@ These are the things your training data probably gets wrong. The repo is on
    'ignore' })`; keep a re-entry guard. Register from `<Tldraw onMount>` and
    return the disposer.
 
+8. **Use NATIVE styles, not custom props, for color/size/dash/fill.** Register
+   tldraw's `StyleProp`s (`DefaultColorStyle`, `DefaultSizeStyle`,
+   `DefaultDashStyle`, `DefaultFillStyle` from `@tldraw/tlschema`) in the shape's
+   validators (`shared/shape-schemas.ts`). They appear in the style panel and
+   share the global palette automatically; `createTLSchema` auto-collects them
+   (no extra worker wiring). Resolve a color to hex the way built-ins do:
+   `getColorValue(editor.getCurrentTheme().colors[editor.getColorMode()], color,
+   'solid')`. Hand-drawn stroke = feed outline points through `getStrokePoints` →
+   `getSvgPathFromStrokePoints` (the Draw-shape pipeline), gated on
+   `dash === 'draw'`. NOTE: `STROKE_SIZES` and `getDefaultColorTheme` are NOT
+   exported in this version — mirror stroke sizes as a local const; use
+   `editor.getCurrentTheme()`. `CreatureShape.tsx` is the reference.
+
 ---
 
 ## RECIPE: add a custom shape
 
 1. Copy `client/shapes/TokenShape.tsx` to `client/shapes/<Name>Shape.tsx`.
+   (For color/size/dash/fill, prefer NATIVE style props — copy `CreatureShape.tsx`
+   instead; `TokenShape`'s bespoke `color` enum predates that policy. See gotcha #8.)
 2. Rename the type, props, validators, and `static type`. Keep the
    `declare module 'tldraw'` augmentation block (gotcha #1).
 3. Add the prop validators to `shared/shape-schemas.ts` and reference them from
@@ -225,6 +245,12 @@ messages (server→client only). So:
 
 ## House rules
 
+- **Default to native tldraw v5.** New shapes/features should reuse tldraw's own
+  styling and machinery — `DefaultColorStyle`/`DefaultSizeStyle`/`DefaultDashStyle`/
+  `DefaultFillStyle` style props (NOT bespoke color enums or hex maps),
+  `editor.getCurrentTheme()` for color resolution, and perfect-freehand for
+  hand-drawn strokes — unless the user asks otherwise. See gotcha #8 and
+  `CreatureShape.tsx` for the worked example.
 - **Typecheck after every change** (`npx tsc --noEmit`). Don't hand back code
   that doesn't compile.
 - **Match the existing style** in the file you're editing: heavy explanatory
