@@ -29,7 +29,7 @@ import {
  * automatically and lets you switch a creature in place, exactly like the built-in
  * `geo` shape switches rectangle↔ellipse. (CLAUDE.md gotcha #8: prefer native styles.)
  */
-export const CREATURE_KINDS = ['fish', 'snake', 'jellyfish', 'crab', 'ant', 'lineFish'] as const
+export const CREATURE_KINDS = ['fish', 'snake', 'jellyfish', 'crab', 'ant', 'lineFish', 'inkFish'] as const
 export type CreatureKind = (typeof CREATURE_KINDS)[number]
 
 export const CreatureKindStyle = StyleProp.defineEnum('creature:kind', {

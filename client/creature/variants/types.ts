@@ -131,8 +131,14 @@ export type MotionParams = {
  *            edge, stroked not filled), so the creature reads as a single drawn LINE
  *            that swims rather than a filled shape. A variant whose `segments` are
  *            centreline point-runs (not outline rings) sets this.
+ *   'ink'  — SAME centreline point-runs as 'line', but each run is pushed through
+ *            perfect-freehand's FILLED outline (getStroke, fat→thin pressure taper)
+ *            once at build time and FILLED, not stroked. So a line-fish's skeleton is
+ *            re-inked as a tapered, hand-drawn body — more fish than line — with NO
+ *            extra geometry and the identical animate-by-transform efficiency. The
+ *            taper (head fat, tail pointed) is keyed off each point's x along the body.
  */
-export type RenderMode = 'fill' | 'line'
+export type RenderMode = 'fill' | 'line' | 'ink'
 
 /**
  * A variant = a geometry generator + its motion params. Pure and stateless; the

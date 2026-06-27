@@ -68,6 +68,7 @@ function swimKind(shape: SwimmableShape): CreatureKind {
 const FACING: Record<CreatureKind, { facingOffset: number; upright: boolean }> = {
 	fish: { facingOffset: 0, upright: false },
 	lineFish: { facingOffset: 0, upright: false }, // a fish reduced to its centreline — faces head-first
+	inkFish: { facingOffset: 0, upright: false }, // the line-fish re-inked as a tapered body — same head-first facing
 	snake: { facingOffset: 0, upright: false },
 	crab: { facingOffset: Math.PI / 2, upright: false }, // lead with the side → sideways
 	jellyfish: { facingOffset: 0, upright: true }, // bell stays up; drifts, doesn't aim

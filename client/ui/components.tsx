@@ -181,6 +181,13 @@ function GameMainMenu() {
 								onSelect={() => void runCreatureStressTest(editor, 'lineFish')}
 							/>
 							<TldrawUiMenuItem
+								id="stress-ink-fish"
+								label="Stress test (ink-fish in tank → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runCreatureStressTest(editor, 'inkFish')}
+							/>
+							<TldrawUiMenuItem
 								id="stress-blooms"
 								label="Stress test (blooms → console)"
 								icon="dots-horizontal"

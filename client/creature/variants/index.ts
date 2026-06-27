@@ -18,6 +18,7 @@ import { jellyfishVariant } from './jellyfish'
 import { crabVariant } from './crab'
 import { antVariant } from './ant'
 import { lineFishVariant } from './lineFish'
+import { inkFishVariant } from './inkFish'
 
 // CREATURE_KINDS / CreatureKind are the SINGLE source of truth, defined alongside
 // the schema StyleProp in shared/ so the type union, the enum, and this registry
@@ -31,6 +32,7 @@ const VARIANTS: Record<CreatureKind, CreatureVariant> = {
 	crab: crabVariant,
 	ant: antVariant,
 	lineFish: lineFishVariant,
+	inkFish: inkFishVariant,
 }
 
 /** Look up a variant by kind, falling back to fish for any unknown value. */

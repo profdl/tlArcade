@@ -32,7 +32,9 @@ import {
 	TLDefaultSizeStyle,
 	TLResizeInfo,
 	getColorValue,
+	getStroke,
 	getStrokePoints,
+	getSvgPathFromPoints,
 	getSvgPathFromStrokePoints,
 	resizeBox,
 	useEditor,
@@ -213,13 +215,28 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// difference between a line-fish and a normal creature — geometry, animation, swim,
 	// and freeze gate are all shared below (see RenderMode in variants/types.ts).
 	const isLine = variant.render === 'line'
+	// INK variants (the ink-fish) feed those SAME centreline runs through perfect-
+	// freehand's FILLED outline (getStroke) with a fat→thin taper, so the one-line
+	// skeleton reads as a tapered hand-drawn body. Built once below, filled not stroked.
+	const isInk = variant.render === 'ink'
 
 	// One freehand (or polygon) path per segment of every chain, built once.
 	const isDraw = dash === 'draw'
+	// INK taper needs the body's overall x-extent so a point's pressure maps head→tail
+	// CONSISTENTLY across separately-inked segments (otherwise each segment would taper
+	// on its own and the body would look beaded). Pure function of geom → computed once.
+	const inkBodyX = useMemo(() => (isInk ? bodyXExtent(geom) : null), [isInk, geom])
 	const chainDs = useMemo(
 		() =>
 			geom.chains.map((chain) =>
 				chain.segments.map((pts) => {
+					if (isInk && inkBodyX) {
+						// RE-INK the centreline run as a FILLED, tapered perfect-freehand body.
+						// Pressure is a fat→thin function of each point's x across the WHOLE body
+						// (head fat, tail pointed), so the same line-fish skeleton becomes a fish.
+						// Built ONCE here (like the 'draw' branch), animated only by transforms.
+						return inkPath(pts, inkBodyX.min, inkBodyX.max, strokeWidth)
+					}
 					if (isLine) {
 						// OPEN centreline: a plain polyline (`M … L …`, no closing Z). Stroked, not
 						// filled — see lineProps below. 'draw' stays a clean stroked line here too
@@ -233,7 +250,7 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 					return polygonPath(pts)
 				})
 			),
-		[geom, isLine, isDraw, strokeWidth]
+		[geom, isInk, inkBodyX, isLine, isDraw, strokeWidth]
 	)
 
 	// IMPERATIVE ANIMATION. useReactor subscribes to the shared clock once and runs at
@@ -303,12 +320,15 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	)
 
 	// LINE variants stroke an open centreline and never fill (filling an open path would
-	// shade the area under the line). Every other variant fills its closed silhouette.
+	// shade the area under the line). INK variants are a CLOSED perfect-freehand outline,
+	// so they fill SOLID with the stroke colour (the ink blob IS the body — like the Draw
+	// shape, the filled outline carries the look, not a separate stroke). Every other
+	// variant fills its closed silhouette with the theme fill.
 	const pathProps = {
-		fill: isLine ? 'none' : fillColor,
-		stroke,
+		fill: isLine ? 'none' : isInk ? stroke : fillColor,
+		stroke: isInk ? 'none' : stroke,
 		strokeWidth,
-		strokeDasharray: dashArray(dash, strokeWidth),
+		strokeDasharray: isInk ? undefined : dashArray(dash, strokeWidth),
 		strokeLinecap: 'round' as const,
 		strokeLinejoin: 'round' as const,
 	}
@@ -744,4 +764,55 @@ export function polygonPath(pts: Pt[]): string {
 export function polylinePath(pts: Pt[]): string {
 	const r2 = (n: number) => Math.round(n * 100) / 100
 	return 'M ' + pts.map((p) => `${r2(p.x)},${r2(p.y)}`).join(' L ')
+}
+
+// ── INK RENDERING (the ink-fish: re-ink a centreline as a tapered freehand body) ──
+// These run ONCE per shape at build time (inside the chainDs memo), never per frame —
+// so an ink-fish costs exactly what a line-fish costs to animate (transforms only).
+
+/** The min/max x over EVERY centreline point of the body (chain 0). Pressure is mapped
+ *  against this span so the head→tail taper is consistent across separately-inked
+ *  segments. Pure function of the rest-pose geometry → computed once. */
+function bodyXExtent(geom: CreatureGeometry): { min: number; max: number } {
+	let min = Infinity
+	let max = -Infinity
+	for (const seg of geom.chains[0]?.segments ?? []) {
+		for (const p of seg) {
+			if (p.x < min) min = p.x
+			if (p.x > max) max = p.x
+		}
+	}
+	if (!Number.isFinite(min)) return { min: 0, max: 1 }
+	return { min, max: max > min ? max : min + 1 }
+}
+
+/**
+ * Re-ink one centreline run as a FILLED, tapered perfect-freehand outline — the whole
+ * trick that turns the line-fish skeleton into a fish-shaped body WITHOUT any new
+ * geometry. We attach a PRESSURE (z) to each point as a fat→thin function of its x
+ * across the body span [bodyMinX, bodyMaxX]: fat near the head (small x), tapering to a
+ * point at the tail (large x). getStroke then renders a variable-width closed outline;
+ * getSvgPathFromPoints(closed=true) turns it into the filled ink-blob `d` (same helper
+ * the Draw shape + CanvasSnakeShape use). Built once, then only transformed each tick.
+ */
+function inkPath(pts: Pt[], bodyMinX: number, bodyMaxX: number, strokeWidth: number): string {
+	const span = bodyMaxX - bodyMinX || 1
+	// u ∈ [0,1] along the body: 0 = head, 1 = tail. Pressure: fat head → thin tail, with
+	// a tiny dip right at the snout so the head reads rounded rather than blunt (mirrors
+	// CanvasSnakeShape's pressure curve). simulatePressure:false → we supply real z.
+	const inked = pts.map((p) => {
+		const u = Math.max(0, Math.min(1, (p.x - bodyMinX) / span))
+		const z = 0.18 + 0.82 * Math.pow(1 - u, 0.7) * (1 - 0.25 * Math.pow(1 - u, 8))
+		return { x: p.x, y: p.y, z }
+	})
+	const outline = getStroke(inked, {
+		size: strokeWidth * 4.5, // the body is several stroke-widths thick at the head
+		thinning: 0.85, // pressure strongly shrinks the width → a real taper
+		smoothing: 0.6,
+		streamline: 0.4,
+		simulatePressure: false, // real pressure supplied via z
+		start: { taper: 0, cap: true }, // rounded head cap
+		end: { taper: strokeWidth * 4, cap: false }, // pointed tail
+	})
+	return getSvgPathFromPoints(outline, true)
 }
