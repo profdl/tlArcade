@@ -210,6 +210,22 @@ export const ribbonShapeValidators = {
 	dash: DefaultDashStyle,
 }
 
+export const canvasSnakeValidators = {
+	w: T.number,
+	h: T.number,
+	// Deterministic seed (spine wobble phase + eye jitter). The slithering body is
+	// animated locally each frame from the shared clock; the WHOLE-SHAPE roaming
+	// (x/y/rotation around the viewport) is driven by client/creature/registerCanvasSnake.ts.
+	seed: T.number,
+	speed: T.number,
+	// NATIVE styles only: color (ink hue) + size (body weight) + dash. The body is the
+	// perfect-freehand FILLED outline (getStroke), so 'draw' isn't special here — every
+	// dash renders the same hand-drawn ink blob; dash only restyles the centre seam.
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
 export const spiderShapeValidators = {
 	w: T.number,
 	h: T.number,
@@ -259,6 +275,7 @@ export const gameShapeSchemas = {
 	frond: { props: frondShapeValidators },
 	plume: { props: plumeShapeValidators },
 	ribbon: { props: ribbonShapeValidators },
+	canvasSnake: { props: canvasSnakeValidators },
 	spider: { props: spiderShapeValidators },
 	spiderBlobs: { props: spiderBlobsShapeValidators },
 	spiderOval: { props: spiderOvalShapeValidators },

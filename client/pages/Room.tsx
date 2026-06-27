@@ -5,6 +5,7 @@ import { Tldraw } from 'tldraw'
 import { getBookmarkPreview } from '../getBookmarkPreview'
 import { multiplayerAssetStore } from '../multiplayerAssetStore'
 import { registerContainment } from '../containment/registerContainment'
+import { registerCanvasSnake } from '../creature/registerCanvasSnake'
 import { registerSwimming } from '../creature/registerSwimming'
 import { registerSnapping } from '../grid/registerSnapping'
 import { registerPhysics } from '../physics/registerPhysics'
@@ -60,6 +61,7 @@ export function Room() {
 						registerSnapping(editor),
 						registerPhysics(editor),
 						registerSwimming(editor),
+						registerCanvasSnake(editor),
 					]
 					return () => disposers.forEach((d) => d())
 				}}

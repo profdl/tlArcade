@@ -13,7 +13,7 @@
 		"dev": "vite",
 		"build": "tsc && vite build",
 		"preview": "vite preview",
-		"test": "node --experimental-strip-types worker/__tests__/referee.test.mjs && node --experimental-strip-types client/grid/__tests__/geometry.test.mjs"
+		"test": "node --experimental-strip-types worker/__tests__/referee.test.mjs && node --experimental-strip-types client/grid/__tests__/geometry.test.mjs && node --experimental-strip-types client/creature/__tests__/snakeSteering.test.mjs"
 	},
 	"dependencies": {
 		"@tldraw/editor": "^5.1.1",
