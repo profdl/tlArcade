@@ -58,6 +58,14 @@ const FACING: Record<CreatureKind, { facingOffset: number; upright: boolean }> =
 	ant: { facingOffset: 0, upright: false }, // walks head-first along its heading
 }
 
+// ════════════════════════════════════════════════════════════════════════════════
+// TUNING KNOBS — the feel of the swim. Safe to nudge; each doc-comment says what the
+// number trades off and which symptom it was tuned against. (The two STRUCTURAL
+// constants below this block — MAX_DT, DRAG_RESYNC_DIST — are NOT feel knobs: they're
+// coupled to the write cadence / drag detection, so read their comments before changing.)
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ── Speed & propulsion ─────────────────────────────────────────────────────────
 /** Base swim speed in page px/ms at speed:1 (a calm drift). */
 const BASE_SPEED = 0.05
 /**
@@ -83,6 +91,7 @@ const JELLY_SPEED_EASE = 0.02
  *  refills. Tuned to ~85% of the jet's AVERAGE speed so each cycle bobs up then settles
  *  with only a slight net rise: it roams vertically instead of pinning the ceiling. */
 const JELLY_SINK = 0.054
+// ── Steering & turning ─────────────────────────────────────────────────────────
 /** How sharply the heading meanders, in radians/ms. Gentle — barely curving. */
 const TURN_RATE = 0.0004
 /**
@@ -121,14 +130,8 @@ const AVOID_RATE = 0.012
  * wall at all — the steering has more runway to bend the heading before contact.
  */
 const AVOID_MARGIN = 0.32
-/**
- * Cap dt so a tab-switch stall can't teleport a creature across its tank. Must be
- * ≥ the longest position-write THROTTLE interval (1000 / slowest positionWriteHz =
- * 1000/20 = 50ms), or a throttled write at a big fleet would integrate less time
- * than actually elapsed and the swim would run slow. 64 covers it with headroom.
- */
-const MAX_DT = 64
-// ── FOOD: green geo shapes attract creatures ───────────────────────────────────
+
+// ── Food attraction (green geo shapes attract creatures) ───────────────────────
 /**
  * A geo shape with one of these colors is FOOD: the creature steers toward it. When
  * a creature reaches it, the food turns 'black' (EATEN_COLOR) and drops out of this
@@ -173,6 +176,17 @@ const MIN_AIM_DIST = 60
  */
 const EAT_SLACK = 4
 
+// ════════════════════════════════════════════════════════════════════════════════
+// STRUCTURAL constants — NOT feel knobs. Coupled to the write cadence and drag
+// detection; changing them can break correctness, not just feel. Read each comment.
+// ════════════════════════════════════════════════════════════════════════════════
+/**
+ * Cap dt so a tab-switch stall can't teleport a creature across its tank. Must be
+ * ≥ the longest position-write THROTTLE interval (1000 / slowest positionWriteHz =
+ * 1000/20 = 50ms), or a throttled write at a big fleet would integrate less time
+ * than actually elapsed and the swim would run slow. 64 covers it with headroom.
+ */
+const MAX_DT = 64
 /**
  * If the shape's stored centre jumps further than this from where we last left
  * it, treat it as a USER DRAG and resync to it (rather than our own integration).
@@ -495,104 +509,14 @@ function swimOne(
 	s.wander += dt * 0.002
 	s.heading += Math.sin(s.wander) * TURN_RATE * dt
 
-	// FOOD ATTRACTION + EATING. Green geo shapes in the cluster are FOOD: steer toward
-	// the nearest one (overriding the aimless meander) and, on contact, "eat" it by
-	// turning it black — after which it's no longer green, so it stops attracting. We
-	// read live colors each tick (nearestFood → getShape), so the moment one is eaten
-	// the rest of the fleet retargets. Steering nudges `heading`; the wall-avoidance
-	// pass below runs AFTER, so a food tucked against a wall never steers the creature
-	// into the wall — avoidance gets the last word. (A jellyfish drifts by its own jet,
-	// not its heading, so attraction barely moves it — but it still eats on contact.)
-	const food = nearestFood(editor, tank, s.cx, s.cy)
-	// The point we actually steer toward: a PATH waypoint, not the food itself. When the
-	// food is in another room of the cluster, steering straight at it drives the creature
-	// into the wall between rooms (it can't see the doorway). navWaypoint routes through the
-	// room graph and returns the next DOORWAY on the way — so the creature heads for the
-	// opening, passes into the next room, then re-targets, until it shares the food's room
-	// and aims at the food directly. Kept for the debug overlay too (drawn as the link end).
-	let waypoint: Vec | null = null
-	if (food) {
-		// "Deep inside the next room" is measured with a small inset so the plan only advances
-		// once the body has truly cleared the doorway — half the smaller body extent, which is
-		// the natural scale for "past the threshold" without being so large a small room fails it.
-		const bodyInset = Math.min(creature.props.w, creature.props.h) / 2
-		waypoint = navWaypoint(tank, s, s.cx, s.cy, food.box.center, bodyInset)
-		// EASE a smoothed aim point toward the raw waypoint, then steer at the SMOOTHED point.
-		// When the waypoint jumps (plan advances), the aim glides across the gap so the desired
-		// heading sweeps continuously and the turn rounds the corner instead of pivoting. Snap
-		// the aim straight to the waypoint on the first tick (no prior aim) so it starts correct.
-		if (!s.navAim) s.navAim = new Vec(waypoint.x, waypoint.y)
-		else {
-			const k = Math.min(1, AIM_EASE * dt)
-			s.navAim = new Vec(s.navAim.x + (waypoint.x - s.navAim.x) * k, s.navAim.y + (waypoint.y - s.navAim.y) * k)
-		}
-		// Steer the heading toward the smoothed aim, scaled like wall-avoidance — but FADE the
-		// strength out as the aim comes within MIN_AIM_DIST, where the bearing to it gets
-		// numerically unstable (a near point swings its angle fast). The fade lets the fish
-		// coast straight through a close aim instead of jerking toward a whipping bearing.
-		const aimDist = Math.hypot(s.navAim.x - s.cx, s.navAim.y - s.cy)
-		const nearFade = Math.min(1, aimDist / MIN_AIM_DIST) // 0 at the body → 1 past the radius
-		const want = Math.atan2(s.navAim.y - s.cy, s.navAim.x - s.cx)
-		let diff = want - s.heading
-		diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // shortest angular path
-		s.heading += diff * Math.min(1, FOOD_ATTRACT_RATE * dt) * nearFade
+	// FOOD ATTRACTION + EATING. Steer the heading toward the nearest food (via a routed
+	// waypoint) and eat it on contact. Runs BEFORE wall-avoidance so a food tucked against
+	// a wall never wins over staying in the tank — avoidance gets the last word below.
+	const { food, waypoint } = steerTowardFood(editor, tank, s, creature, dt)
 
-		// EAT on contact: once the centre is within EAT_SLACK of the food box, mark it
-		// eaten (color → black). This is a normal store write; it's already inside the
-		// loop's editor.run(..., { history: 'ignore' }) so it syncs to every client.
-		// A color change doesn't move the box, so the cached cluster stays valid.
-		if (food.box.containsPoint(new Vec(s.cx, s.cy), EAT_SLACK)) {
-			editor.updateShape({ id: food.id, type: 'geo', props: { color: EATEN_COLOR } })
-		}
-	} else {
-		// No food in reach → drop the route commitment AND the smoothed aim so the next hunt
-		// re-plans fresh and the aim doesn't lerp from a stale point.
-		s.navNextRoom = null
-		s.navAim = null
-	}
-
-	// WALL AVOIDANCE (not bounce): as the body's centre nears a wall, steer the
-	// heading toward the tank interior — gently when just inside the margin, more
-	// firmly the closer it gets. The creature curves away before reaching the edge.
-	//
-	// CLUSTER-AWARE: a creature should steer away from the OUTER boundary of the whole
-	// connected region, never from a seam where two rooms meet. The earlier "pick one home
-	// box and skip walls that touch a neighbour" approach mis-fired in the overlap zone —
-	// it would treat a real outer wall as open (because the *other* box sat past it on a
-	// different side) and suppress the steering, so the creature ran into the wall and got
-	// hard-clamped ("hits and stops"). Instead we measure, in each of the four directions,
-	// the distance from the centre to the cluster's outer boundary along that axis
-	// (clusterClearance): how far the creature could travel that way before leaving the
-	// UNION of rooms. A seam contributes a large clearance (the next room continues), so it
-	// produces no push; only a true outer edge is near, so only it steers. Margin scales to
-	// the local room so rooms of any size steer naturally.
-	const home = boxContaining(tank, s.cx, s.cy) ?? nearestBox(tank, s.cx, s.cy)
-	const margin = Math.min(home.width, home.height) * AVOID_MARGIN
-	let ax = 0
-	let ay = 0
-	if (margin > 0) {
-		const dxL = clusterClearance(tank, s.cx, s.cy, -1, 0) // room to the LEFT
-		const dxR = clusterClearance(tank, s.cx, s.cy, 1, 0) // room to the RIGHT
-		const dyT = clusterClearance(tank, s.cx, s.cy, 0, -1) // room UP
-		const dyB = clusterClearance(tank, s.cx, s.cy, 0, 1) // room DOWN
-		// Per axis, combine the two opposing walls into ONE smooth push. When only one side is
-		// near, this is the old one-sided shove. When BOTH sides are near — a NARROW CORRIDOR —
-		// summing two near-equal opposing shoves left a tiny residual that FLIPPED SIGN as the
-		// body wobbled off-centre, whipping the heading side to side (the corridor "glitch").
-		// axisPush instead returns a centering force from the relative clearance: zero at the
-		// centreline, smoothly toward the roomier side, so a corridor gently centres the body
-		// instead of bouncing it between walls.
-		ax = axisPush(dxL, dxR, margin)
-		ay = axisPush(dyT, dyB, margin)
-	}
-	if (ax !== 0 || ay !== 0) {
-		// Rotate `heading` toward the away-direction by an amount scaled to depth.
-		const depth = Math.min(1, Math.hypot(ax, ay))
-		const want = Math.atan2(ay, ax)
-		let diff = want - s.heading
-		diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // shortest angular path
-		s.heading += diff * Math.min(1, AVOID_RATE * dt * depth)
-	}
+	// WALL AVOIDANCE (not bounce): nudge the heading toward the tank interior as the body
+	// nears an OUTER wall, so it curves away before contact. Runs AFTER food steering.
+	steerFromWalls(tank, s, dt)
 
 	// SMOOTH THE TURN — speed cap PLUS acceleration limit. The steppers above mutated s.heading
 	// into the DESIRED heading; treat the net change as the turn the steering wants this tick.
@@ -701,6 +625,111 @@ function swimOne(
 
 function clamp(n: number, lo: number, hi: number): number {
 	return n < lo ? lo : n > hi ? hi : n
+}
+
+/**
+ * FOOD ATTRACTION + EATING — nudges s.heading toward the nearest food and eats it on contact.
+ * Returns the food it's hunting and the raw nav waypoint (both for the debug overlay; null when
+ * there's no food in reach). Green geo shapes in the cluster are FOOD: we read live colors each
+ * tick (nearestFood → getShape), so the moment one is eaten — turned black — the fleet retargets.
+ *
+ * The point we actually steer toward is a routed WAYPOINT, not the food itself: when the food is
+ * in another room, steering straight at it drives the body into the wall between (it can't see
+ * the doorway). navWaypoint routes through the room graph and returns the next doorway on the way.
+ * That raw waypoint is a STEP function (it jumps when the plan advances), so we steer toward a
+ * SMOOTHED aim (s.navAim) eased toward it — the desired heading then sweeps continuously and the
+ * turn rounds the corner instead of pivoting. (A jellyfish drifts by its own jet, not its heading,
+ * so attraction barely moves it — but it still eats on contact.)
+ */
+function steerTowardFood(
+	editor: Editor,
+	tank: Cluster,
+	s: SwimState,
+	creature: CreatureShape,
+	dt: number
+): { food: { id: TLShapeId; box: Box } | undefined; waypoint: Vec | null } {
+	const food = nearestFood(editor, tank, s.cx, s.cy)
+	if (!food) {
+		// No food in reach → drop the route commitment AND the smoothed aim so the next hunt
+		// re-plans fresh and the aim doesn't lerp from a stale point.
+		s.navNextRoom = null
+		s.navAim = null
+		return { food, waypoint: null }
+	}
+
+	// "Deep inside the next room" is measured with a small inset so the plan only advances once
+	// the body has truly cleared the doorway — half the smaller body extent, the natural scale
+	// for "past the threshold" without being so large a small room fails it.
+	const bodyInset = Math.min(creature.props.w, creature.props.h) / 2
+	const waypoint = navWaypoint(tank, s, s.cx, s.cy, food.box.center, bodyInset)
+
+	// EASE a smoothed aim point toward the raw waypoint, then steer at the SMOOTHED point. Snap
+	// the aim straight to the waypoint on the first tick (no prior aim) so it starts correct.
+	if (!s.navAim) s.navAim = new Vec(waypoint.x, waypoint.y)
+	else {
+		const k = Math.min(1, AIM_EASE * dt)
+		s.navAim = new Vec(s.navAim.x + (waypoint.x - s.navAim.x) * k, s.navAim.y + (waypoint.y - s.navAim.y) * k)
+	}
+
+	// Steer the heading toward the smoothed aim, scaled like wall-avoidance — but FADE the
+	// strength out as the aim comes within MIN_AIM_DIST, where the bearing to it gets
+	// numerically unstable (a near point swings its angle fast). The fade lets the fish coast
+	// straight through a close aim instead of jerking toward a whipping bearing.
+	const aimDist = Math.hypot(s.navAim.x - s.cx, s.navAim.y - s.cy)
+	const nearFade = Math.min(1, aimDist / MIN_AIM_DIST) // 0 at the body → 1 past the radius
+	const want = Math.atan2(s.navAim.y - s.cy, s.navAim.x - s.cx)
+	let diff = want - s.heading
+	diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // shortest angular path
+	s.heading += diff * Math.min(1, FOOD_ATTRACT_RATE * dt) * nearFade
+
+	// EAT on contact: once the centre is within EAT_SLACK of the food box, mark it eaten
+	// (color → black). This is a normal store write, already inside the loop's editor.run(...,
+	// { history: 'ignore' }) so it syncs to every client. A color change doesn't move the box,
+	// so the cached cluster stays valid.
+	if (food.box.containsPoint(new Vec(s.cx, s.cy), EAT_SLACK)) {
+		editor.updateShape({ id: food.id, type: 'geo', props: { color: EATEN_COLOR } })
+	}
+
+	return { food, waypoint }
+}
+
+/**
+ * WALL AVOIDANCE (not bounce) — nudges s.heading toward the tank interior as the body's centre
+ * nears an OUTER wall, gently within the margin and more firmly the closer it gets, so the
+ * creature curves away before reaching the edge.
+ *
+ * CLUSTER-AWARE: it steers away from the OUTER boundary of the whole connected region, never
+ * from a seam where two rooms meet. The earlier "pick one home box and skip walls touching a
+ * neighbour" approach mis-fired in the overlap zone — it treated a real outer wall as open
+ * (because the *other* box sat past it on a different side) and suppressed the steering, so the
+ * creature ran into the wall and got hard-clamped ("hits and stops"). Instead we measure, in
+ * each of the four directions, how far the centre can travel before leaving the UNION of rooms
+ * (clusterClearance). A seam contributes a large clearance (the next room continues) → no push;
+ * only a true outer edge is near → only it steers. Margin scales to the local room so rooms of
+ * any size steer naturally.
+ */
+function steerFromWalls(tank: Cluster, s: SwimState, dt: number): void {
+	const home = boxContaining(tank, s.cx, s.cy) ?? nearestBox(tank, s.cx, s.cy)
+	const margin = Math.min(home.width, home.height) * AVOID_MARGIN
+	if (margin <= 0) return
+
+	const dxL = clusterClearance(tank, s.cx, s.cy, -1, 0) // room to the LEFT
+	const dxR = clusterClearance(tank, s.cx, s.cy, 1, 0) // room to the RIGHT
+	const dyT = clusterClearance(tank, s.cx, s.cy, 0, -1) // room UP
+	const dyB = clusterClearance(tank, s.cx, s.cy, 0, 1) // room DOWN
+	// Per axis, combine the two opposing walls into ONE smooth push (axisPush): a one-sided
+	// shove when only one wall is near, a CENTERING force in a narrow corridor (both near) —
+	// which has no sign-flip, so the heading isn't whipped between walls (the corridor "glitch").
+	const ax = axisPush(dxL, dxR, margin)
+	const ay = axisPush(dyT, dyB, margin)
+	if (ax === 0 && ay === 0) return
+
+	// Rotate `heading` toward the away-direction by an amount scaled to depth.
+	const depth = Math.min(1, Math.hypot(ax, ay))
+	const want = Math.atan2(ay, ax)
+	let diff = want - s.heading
+	diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // shortest angular path
+	s.heading += diff * Math.min(1, AVOID_RATE * dt * depth)
 }
 
 /**
@@ -1010,17 +1039,10 @@ function navWaypoint(cluster: Cluster, s: SwimState, x: number, y: number, targe
 	if (s.navNextRoom !== null && s.navNextRoom < N) {
 		const committed = s.navNextRoom
 		if (!deepInsideRoom(cluster, committed, x, y, bodyInset)) {
-			// Still en route to the committed room: steer toward it (centre once in the doorway,
-			// else the doorway opening). The doorway is between whatever room we're physically in
-			// and the committed one; fall back to the committed room's centre if not found.
-			const here = roomIndexAt(cluster, x, y)
-			const door = cluster.doorways.get(here * N + committed) ?? cluster.doorways.get(committed * N + here)
-			if (door) {
-				const inDoorway = x >= door.minX && x <= door.maxX && y >= door.minY && y <= door.maxY
-				if (inDoorway) return cluster.boxes[committed].center
-				return new Vec(clamp(x, door.minX, door.maxX), clamp(y, door.minY, door.maxY))
-			}
-			return cluster.boxes[committed].center
+			// Still en route to the committed room: steer through the doorway between whatever
+			// room we're physically in and the committed one (no re-plan, so a thin overlap
+			// can't flip the target).
+			return aimThroughDoor(cluster, roomIndexAt(cluster, x, y), committed, x, y)
 		}
 		// Arrived deep inside the committed room → fall through to re-plan the NEXT hop from here.
 	}
@@ -1034,10 +1056,23 @@ function navWaypoint(cluster: Cluster, s: SwimState, x: number, y: number, targe
 	}
 	const next = path[1]
 	s.navNextRoom = next
-	const door = cluster.doorways.get(start * N + next)
-	if (!door) return cluster.boxes[next].center
+	return aimThroughDoor(cluster, start, next, x, y)
+}
+
+/**
+ * The point to STEER TOWARD to cross from `from` into the adjacent `to` room: aim at the
+ * doorway opening while approaching it, then at the next room's centre once the body is
+ * inside the overlap (so it commits through rather than hugging the threshold). Falls back
+ * to the next room's centre if the two rooms have no recorded doorway (shouldn't happen on
+ * a planned hop, but keeps the nav total). Clamping (x,y) into the doorway rect gives the
+ * nearest point of the opening, so a creature off to one side aims at the part it can reach.
+ */
+function aimThroughDoor(cluster: Cluster, from: number, to: number, x: number, y: number): Vec {
+	const N = cluster.boxes.length
+	const door = cluster.doorways.get(from * N + to) ?? cluster.doorways.get(to * N + from)
+	if (!door) return cluster.boxes[to].center
 	const inDoorway = x >= door.minX && x <= door.maxX && y >= door.minY && y <= door.maxY
-	if (inDoorway) return cluster.boxes[next].center
+	if (inDoorway) return cluster.boxes[to].center
 	return new Vec(clamp(x, door.minX, door.maxX), clamp(y, door.minY, door.maxY))
 }
 
