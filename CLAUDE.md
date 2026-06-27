@@ -216,13 +216,55 @@ These are the things your training data probably gets wrong. The repo is on
    exported in this version — mirror stroke sizes as a local const; use
    `editor.getCurrentTheme()`. `CreatureShape.tsx` is the reference.
 
+9. **An ANIMATED shape's cost = (animated NODE count) + (PAINT volume) per frame —
+   minimise BOTH; design toward ONE `<path>` whose `d` you rewrite each frame.**
+   This is measured, not folklore (we stress-tested bloom→hydra→frond→plume→ribbon
+   to find it). It is the single most important rule for any shape that moves every
+   frame. The rules, in priority order:
+   - **Animate by rewriting `d` on as FEW `<path>`s as possible — ideally one.**
+     The cheapest possible animated shape is a SINGLE `<path>` whose `d` is a
+     POLYLINE (`M x y L x y L …`, points computed in JS each tick) rewritten with one
+     `setAttribute('d', …)`. `RibbonShape.tsx` is the reference: one path, ~220
+     points, a drifting parametric curve — maximally dynamic, runs ~250 shapes smooth.
+   - **If a shape has many strokes that SHARE paint (same stroke/width/dash), MERGE
+     them into one `<path>`.** SVG `d` allows disconnected sub-paths — every `M`
+     lifts the pen — so N filaments become one multi-subpath `d` and ONE write, not
+     N. `PlumeShape.tsx` draws 32 barbs this way (`d = barb1 + barb2 + …`).
+   - **Compute motion in JS, emit a polyline — NEVER animate a Bézier `d`, and NEVER
+     set `willChange`.** Those are the two cliffs that made the original bloom
+     unusable: per-frame Bézier `d` re-tessellates every frame, and `willChange` on
+     many elements spawns thousands of GPU layers. Polyline `d` (straight `L`
+     segments) is cheap to re-rasterise; lots of points are fine (points are JS +
+     a little paint, NOT DOM-write cost).
+   - **PAINT is the OTHER half of the cost and it's easy to forget.** Filled
+     polygons, wide strokes, and dotted dashes (each round cap is a paint op) cost
+     real per-frame rasterisation that merging paths does NOT reduce. Keep strokes
+     thin and open where the look allows. Do NOT degrade a style purely for perf if
+     the dense look IS the shape's identity (we tried thinning the plume's dots — it
+     gutted the aesthetic; we reverted). Accept a lower ceiling for paint-heavy
+     shapes instead.
+   - **Drive animation off the shared clock + a reactor, freeze when culled.**
+     Subscribe once with `useReactor`/`useQuickReactor` to `creatureClock`
+     (`client/creature/clock.ts`) — NOT a per-shape `requestAnimationFrame` — and
+     early-return when `editor.getCulledShapes().has(shape.id)`. The motion is a
+     PURE function of synced `seed`/`speed` + the clock, so it stays sync-free
+     (gotcha #5/#7): nothing per-frame goes in the store.
+   - Reference ladder by cost (all measured ~250/150/50 shapes-smooth): **`RibbonShape`
+     / `FrondShape`** (one or few thin open polylines — the cheapest, copy these for a
+     new animated shape) → **`HydraShape`** (filled ribbon limbs — paint premium) →
+     **`PlumeShape`** (dense dotted feather — paint-bound, the heaviest). Start from
+     Ribbon/Frond unless the look demands otherwise.
+
 ---
 
 ## RECIPE: add a custom shape
 
 1. Copy `client/shapes/CreatureShape.tsx` (uses native style props — gotcha #8)
    to `client/shapes/<Name>Shape.tsx`. Use `_TEMPLATE.shape.tsx.txt` for a bare
-   skeleton.
+   skeleton. **If the shape ANIMATES every frame, copy `RibbonShape.tsx` or
+   `FrondShape.tsx` instead and follow gotcha #9** — one `<path>`, polyline `d`
+   rewritten per tick off the shared clock. Design for one path from the start;
+   retrofitting a multi-`<path>` shape to merge later is wasted work.
 2. Rename the type, props, validators, and `static type`. Keep the
    `declare module 'tldraw'` augmentation block (gotcha #1).
 3. Add the prop validators to `shared/shape-schemas.ts` and reference them from
@@ -325,6 +367,10 @@ messages (server→client only). So:
   `editor.getPointerVelocity()`/`getShapeAtPoint()` for input/hit-testing, and
   perfect-freehand for hand-drawn strokes — unless the user asks otherwise. See
   gotcha #7, #8 and `CreatureShape.tsx`/`registerPhysics.ts`.
+- **Animated shapes are one `<path>` whose `d` you rewrite per frame.** Minimise
+  animated-node count and paint volume; polyline `d` (never Bézier), no
+  `willChange`, off the shared clock, freeze when culled. Copy `RibbonShape.tsx`.
+  This is gotcha #9 — the measured cost model; don't relearn it the hard way.
 - **Typecheck after every change** (`npx tsc --noEmit`). Don't hand back code
   that doesn't compile.
 - **Match the existing style** in the file you're editing: heavy explanatory
