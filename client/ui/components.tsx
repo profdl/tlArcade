@@ -22,6 +22,7 @@ import {
 	TLUiStylePanelProps,
 	TldrawUiMenuGroup,
 	TldrawUiMenuItem,
+	TldrawUiMenuSubmenu,
 	useEditor,
 	useRelevantStyles,
 	useStylePanelContext,
@@ -34,6 +35,7 @@ import { CreatureKindStyle, CREATURE_KINDS } from '../../shared/shape-schemas'
 import { creatureKindIcon } from '../creature/variants'
 import { useReferee } from '../referee/useReferee'
 import { runCreatureStressTest } from '../creature/stressTest'
+import { runShapeStressTest } from '../shapes/shapeStressTest'
 import { SwimDebugOverlay } from '../creature/SwimDebugOverlay'
 import { setSwimDebug, swimDebugEnabled } from '../creature/registerSwimming'
 
@@ -46,34 +48,75 @@ function GameMainMenu() {
 		<DefaultMainMenu>
 			{/* Our items live in their own group so they don't collide with tldraw's. */}
 			<TldrawUiMenuGroup id="game-toolkit">
-				<TldrawUiMenuItem
-					id="add-token"
-					label="Add token"
-					icon="plus"
-					readonlyOk={false}
-					onSelect={() => addAtCenter(editor, 'token', 24)}
-				/>
-				<TldrawUiMenuItem
-					id="add-container"
-					label="Add container"
-					icon="plus"
-					readonlyOk={false}
-					onSelect={() => addAtCenter(editor, 'container', 130, 80)}
-				/>
-				<TldrawUiMenuItem
-					id="add-grid"
-					label="Add grid"
-					icon="plus"
-					readonlyOk={false}
-					onSelect={() => addAtCenter(editor, 'grid', 200)}
-				/>
-				<TldrawUiMenuItem
-					id="add-creature"
-					label="Add creature"
-					icon="plus"
-					readonlyOk={false}
-					onSelect={() => addAtCenter(editor, 'creature', 60, 32)}
-				/>
+				{/* All shape-spawning actions live in one submenu so the top-level menu
+				    stays short. Add a new shape's "Add X" item here. */}
+				<TldrawUiMenuSubmenu id="add-shape" label="Add shape">
+					<TldrawUiMenuGroup id="add-shape-items">
+						<TldrawUiMenuItem
+							id="add-token"
+							label="Add token"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'token', 24)}
+						/>
+						<TldrawUiMenuItem
+							id="add-container"
+							label="Add container"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'container', 130, 80)}
+						/>
+						<TldrawUiMenuItem
+							id="add-grid"
+							label="Add grid"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'grid', 200)}
+						/>
+						<TldrawUiMenuItem
+							id="add-creature"
+							label="Add creature"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'creature', 60, 32)}
+						/>
+						<TldrawUiMenuItem
+							id="add-bloom"
+							label="Add bloom"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'bloom', 110)}
+						/>
+						<TldrawUiMenuItem
+							id="add-hydra"
+							label="Add hydra"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'hydra', 110)}
+						/>
+						<TldrawUiMenuItem
+							id="add-frond"
+							label="Add frond"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'frond', 110)}
+						/>
+						<TldrawUiMenuItem
+							id="add-plume"
+							label="Add plume"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'plume', 120, 150)}
+						/>
+						<TldrawUiMenuItem
+							id="add-ribbon"
+							label="Add ribbon"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'ribbon', 120)}
+						/>
+					</TldrawUiMenuGroup>
+				</TldrawUiMenuSubmenu>
 				<TldrawUiMenuItem
 					id="reset-board"
 					label="Clear board"
@@ -81,20 +124,59 @@ function GameMainMenu() {
 					readonlyOk={false}
 					onSelect={() => clearBoard(editor)}
 				/>
-				{/* TEMP dev-only: ramps creatures and logs real FPS to the console.
-				    Remove this item + client/creature/stressTest.ts when done. */}
+				{/* DEV-only debug tooling (stress tests + swim overlay) collected in one
+				    submenu so it stays out of the way. Each stress test ramps a shape and
+				    logs real FPS to the console; remove these + the stressTest helpers
+				    when done. */}
 				{import.meta.env.DEV && (
-					<TldrawUiMenuItem
-						id="stress-creatures"
-						label="Stress test (creatures → console)"
-						icon="dots-horizontal"
-						readonlyOk={false}
-						onSelect={() => void runCreatureStressTest(editor)}
-					/>
+					<TldrawUiMenuSubmenu id="debug-tools" label="Debug tools">
+						<TldrawUiMenuGroup id="debug-tools-items">
+							<TldrawUiMenuItem
+								id="stress-creatures"
+								label="Stress test (creatures → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runCreatureStressTest(editor)}
+							/>
+							<TldrawUiMenuItem
+								id="stress-blooms"
+								label="Stress test (blooms → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'bloom', [5, 10, 20, 40, 60, 100, 150, 250])}
+							/>
+							<TldrawUiMenuItem
+								id="stress-hydras"
+								label="Stress test (hydras → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'hydra')}
+							/>
+							<TldrawUiMenuItem
+								id="stress-fronds"
+								label="Stress test (fronds → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'frond')}
+							/>
+							<TldrawUiMenuItem
+								id="stress-plumes"
+								label="Stress test (plumes → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'plume')}
+							/>
+							<TldrawUiMenuItem
+								id="stress-ribbons"
+								label="Stress test (ribbons → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'ribbon')}
+							/>
+							<SwimDebugMenuItem />
+						</TldrawUiMenuGroup>
+					</TldrawUiMenuSubmenu>
 				)}
-				{/* DEV-only: toggle the food-attraction debug overlay (heading / cluster /
-				    food links). The label shows the current state; see SwimDebugOverlay. */}
-				{import.meta.env.DEV && <SwimDebugMenuItem />}
 			</TldrawUiMenuGroup>
 
 			{/* Keep everything tldraw normally shows. Remove this to REPLACE the menu. */}
@@ -122,7 +204,7 @@ function SwimDebugMenuItem() {
 }
 
 /** Drop a shape of `type` centred in the viewport (props default via getDefaultProps). */
-function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid' | 'creature', halfW: number, halfH = halfW) {
+function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid' | 'creature' | 'bloom' | 'hydra' | 'frond' | 'plume' | 'ribbon', halfW: number, halfH = halfW) {
 	const center = editor.getViewportPageBounds().center
 	const id = createShapeId()
 	editor.createShape({ id, type, x: center.x - halfW, y: center.y - halfH })

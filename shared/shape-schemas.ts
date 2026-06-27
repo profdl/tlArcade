@@ -137,6 +137,79 @@ export const creatureShapeValidators = {
 	fill: DefaultFillStyle,
 }
 
+export const bloomShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// Deterministic shape seed (arm twist + per-petal phase). Same value on every
+	// client = identical bloom. The animation itself is computed locally each frame
+	// from the shared clock (NOT synced); see client/shapes/BloomShape.tsx.
+	seed: T.number,
+	// Wave/breathing rate. Public knob: higher = faster pulse. Local clock multiplies.
+	speed: T.number,
+	// NATIVE tldraw STYLE props (same objects the built-ins use): the bloom shares
+	// the global palette + style panel automatically. createTLSchema auto-collects.
+	//   color → petal hue        size → stroke weight (s/m/l/xl)
+	//   dash  → arm line style
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
+export const hydraShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// Deterministic seed (arm count + per-arm phase/curl/length). Same value on every
+	// client = identical hydra. The animation is computed locally each frame from the
+	// shared clock (NOT synced); see client/shapes/HydraShape.tsx.
+	seed: T.number,
+	// Writhe rate. Public knob: higher = faster tentacles. Local clock multiplies.
+	speed: T.number,
+	// NATIVE tldraw STYLE props (line-art: color/size/dash, no fill).
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
+export const frondShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// Deterministic seed (arm count + per-arm phase/curl/length). Animation computed
+	// locally each frame from the shared clock; see client/shapes/FrondShape.tsx.
+	seed: T.number,
+	speed: T.number,
+	// NATIVE tldraw STYLE props (open-path line-art: color/size/dash, no fill).
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
+export const plumeShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// Deterministic seed (spine curve + barb count/length/phase). Animation computed
+	// locally each frame from the shared clock; see client/shapes/PlumeShape.tsx.
+	seed: T.number,
+	speed: T.number,
+	// NATIVE styles: color (hue) + size (weight) + dash (line style — defaults dotted,
+	// the signature look, but solid/dashed/draw are selectable in the style panel).
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
+export const ribbonShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// Deterministic seed (Lissajous frequencies + phases + drift rates). Animation
+	// computed locally each frame from the shared clock; see client/shapes/RibbonShape.tsx.
+	seed: T.number,
+	speed: T.number,
+	// NATIVE styles only: color/size/dash.
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
 export const gameShapeSchemas = {
 	token: { props: tokenShapeValidators },
 	tracker: { props: trackerShapeValidators },
@@ -145,6 +218,11 @@ export const gameShapeSchemas = {
 	container: { props: containerShapeValidators },
 	grid: { props: gridShapeValidators },
 	creature: { props: creatureShapeValidators },
+	bloom: { props: bloomShapeValidators },
+	hydra: { props: hydraShapeValidators },
+	frond: { props: frondShapeValidators },
+	plume: { props: plumeShapeValidators },
+	ribbon: { props: ribbonShapeValidators },
 	// ← add your shape's `{ props: <validators> }` here
 }
 

@@ -21,8 +21,13 @@ import {
 	defaultShapeUtils,
 } from 'tldraw'
 import { ContainmentBindingUtil } from '../containment/ContainmentBinding'
+import { BloomShapeUtil } from './BloomShape'
 import { CardShapeUtil } from './CardShape'
 import { ContainerShapeUtil } from './ContainerShape'
+import { FrondShapeUtil } from './FrondShape'
+import { HydraShapeUtil } from './HydraShape'
+import { PlumeShapeUtil } from './PlumeShape'
+import { RibbonShapeUtil } from './RibbonShape'
 import { CreatureShapeUtil } from './CreatureShape'
 import { DieShapeUtil } from './DieShape'
 import { GridShapeUtil } from './GridShape'
@@ -50,6 +55,11 @@ export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
 	ContainerShapeUtil,
 	GridShapeUtil,
 	CreatureShapeUtil,
+	BloomShapeUtil,
+	HydraShapeUtil,
+	FrondShapeUtil,
+	PlumeShapeUtil,
+	RibbonShapeUtil,
 	// ← add your `<Your>ShapeUtil` here
 ]
 
