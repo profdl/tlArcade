@@ -28,6 +28,9 @@ import { FrondShapeUtil } from './FrondShape'
 import { HydraShapeUtil } from './HydraShape'
 import { PlumeShapeUtil } from './PlumeShape'
 import { RibbonShapeUtil } from './RibbonShape'
+import { SpiderShapeUtil } from './SpiderShape'
+import { SpiderBlobsShapeUtil } from './SpiderBlobsShape'
+import { SpiderOvalShapeUtil } from './SpiderOvalShape'
 import { CreatureShapeUtil } from './CreatureShape'
 import { DieShapeUtil } from './DieShape'
 import { GridShapeUtil } from './GridShape'
@@ -60,6 +63,9 @@ export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
 	FrondShapeUtil,
 	PlumeShapeUtil,
 	RibbonShapeUtil,
+	SpiderShapeUtil,
+	SpiderBlobsShapeUtil,
+	SpiderOvalShapeUtil,
 	// ← add your `<Your>ShapeUtil` here
 ]
 

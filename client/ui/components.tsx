@@ -115,6 +115,27 @@ function GameMainMenu() {
 							readonlyOk={false}
 							onSelect={() => addAtCenter(editor, 'ribbon', 120)}
 						/>
+						<TldrawUiMenuItem
+							id="add-spider"
+							label="Add spider"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'spider', 100)}
+						/>
+						<TldrawUiMenuItem
+							id="add-spider-blobs"
+							label="Add spider (blobs, 1-stroke)"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'spiderBlobs', 100)}
+						/>
+						<TldrawUiMenuItem
+							id="add-spider-oval"
+							label="Add spider (oval, 1-stroke)"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'spiderOval', 100)}
+						/>
 					</TldrawUiMenuGroup>
 				</TldrawUiMenuSubmenu>
 				<TldrawUiMenuItem
@@ -173,6 +194,31 @@ function GameMainMenu() {
 								readonlyOk={false}
 								onSelect={() => void runShapeStressTest(editor, 'ribbon')}
 							/>
+							{/* Three spider designs, same harness/tiers → directly comparable:
+							    `spider` = one <path> ELEMENT, 10 sub-paths (baseline);
+							    `spiderBlobs` = ONE continuous stroke, two blobs + retraced legs;
+							    `spiderOval` = ONE continuous stroke, oval body + legs off the rim. */}
+							<TldrawUiMenuItem
+								id="stress-spiders"
+								label="Stress test (spider: sub-paths → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'spider')}
+							/>
+							<TldrawUiMenuItem
+								id="stress-spider-blobs"
+								label="Stress test (spider blobs: 1-stroke → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'spiderBlobs')}
+							/>
+							<TldrawUiMenuItem
+								id="stress-spider-oval"
+								label="Stress test (spider oval: 1-stroke → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runShapeStressTest(editor, 'spiderOval')}
+							/>
 							<SwimDebugMenuItem />
 						</TldrawUiMenuGroup>
 					</TldrawUiMenuSubmenu>
@@ -204,7 +250,7 @@ function SwimDebugMenuItem() {
 }
 
 /** Drop a shape of `type` centred in the viewport (props default via getDefaultProps). */
-function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid' | 'creature' | 'bloom' | 'hydra' | 'frond' | 'plume' | 'ribbon', halfW: number, halfH = halfW) {
+function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid' | 'creature' | 'bloom' | 'hydra' | 'frond' | 'plume' | 'ribbon' | 'spider' | 'spiderBlobs' | 'spiderOval', halfW: number, halfH = halfW) {
 	const center = editor.getViewportPageBounds().center
 	const id = createShapeId()
 	editor.createShape({ id, type, x: center.x - halfW, y: center.y - halfH })

@@ -210,6 +210,42 @@ export const ribbonShapeValidators = {
 	dash: DefaultDashStyle,
 }
 
+export const spiderShapeValidators = {
+	w: T.number,
+	h: T.number,
+	// Deterministic seed (per-leg jitter + step desync). Animation computed locally each
+	// frame from the shared clock; see client/shapes/SpiderShape.tsx.
+	seed: T.number,
+	speed: T.number,
+	// NATIVE styles only: color/size/dash (one open-path line creature, no fill).
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
+// Single-continuous-stroke spider variants (stress-test siblings of `spider`). Same
+// props; only the per-frame pen routing differs. See client/shapes/SpiderBlobsShape.tsx
+// (two blobs, legs retraced) and SpiderOvalShape.tsx (one oval, legs off the rim).
+export const spiderBlobsShapeValidators = {
+	w: T.number,
+	h: T.number,
+	seed: T.number,
+	speed: T.number,
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
+export const spiderOvalShapeValidators = {
+	w: T.number,
+	h: T.number,
+	seed: T.number,
+	speed: T.number,
+	color: DefaultColorStyle,
+	size: DefaultSizeStyle,
+	dash: DefaultDashStyle,
+}
+
 export const gameShapeSchemas = {
 	token: { props: tokenShapeValidators },
 	tracker: { props: trackerShapeValidators },
@@ -223,6 +259,9 @@ export const gameShapeSchemas = {
 	frond: { props: frondShapeValidators },
 	plume: { props: plumeShapeValidators },
 	ribbon: { props: ribbonShapeValidators },
+	spider: { props: spiderShapeValidators },
+	spiderBlobs: { props: spiderBlobsShapeValidators },
+	spiderOval: { props: spiderOvalShapeValidators },
 	// ← add your shape's `{ props: <validators> }` here
 }
 
