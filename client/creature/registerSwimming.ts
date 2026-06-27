@@ -36,7 +36,7 @@
  * Mount once from <Tldraw onMount> alongside the other behaviours; returns a
  * disposer.
  */
-import { Box, Editor, TLShapeId, Vec } from 'tldraw'
+import { Box, Editor, TLShapeId, Vec, atom } from 'tldraw'
 import { creatureClock, jellyfishPropulsion, jellyfishTilt, positionWriteHz, tailBeat } from './clock'
 import { CreatureShape } from '../shapes/CreatureShape'
 import type { CreatureKind } from '../../shared/shape-schemas'
@@ -107,6 +107,32 @@ const AVOID_MARGIN = 0.32
  * than actually elapsed and the swim would run slow. 64 covers it with headroom.
  */
 const MAX_DT = 64
+// ── FOOD: green geo shapes attract creatures ───────────────────────────────────
+/**
+ * A geo shape with one of these colors is FOOD: the creature steers toward it. When
+ * a creature reaches it, the food turns 'black' (EATEN_COLOR) and drops out of this
+ * set, so it stops attracting. We accept both tldraw greens so either palette pick
+ * reads as food.
+ */
+const FOOD_COLORS = new Set(['green', 'light-green'])
+/** What an eaten food turns into — a color NOT in FOOD_COLORS, so it stops attracting. */
+const EATEN_COLOR = 'black'
+/**
+ * How firmly the creature steers toward its food waypoint, in radians/ms. Set to MATCH
+ * AVOID_RATE (not below it): a doorway often sits in a room CORNER, where two nearby outer
+ * walls push back; if attraction were weaker than avoidance there, the creature would never
+ * commit to the opening and would hover beside it (the "stuck at the doorway" symptom). At
+ * parity, the toward-doorway pull balances the corner push and it threads through, while a
+ * food in open water still reads as a deliberate beeline over the idle meander.
+ */
+const FOOD_ATTRACT_RATE = 0.012
+/**
+ * A creature "reaches" (eats) food once its centre is within this slack of the food
+ * box (page px). A little positive slack so the body need only TOUCH the food, not have
+ * its centre cross the edge, to register the bite.
+ */
+const EAT_SLACK = 4
+
 /**
  * If the shape's stored centre jumps further than this from where we last left
  * it, treat it as a USER DRAG and resync to it (rather than our own integration).
@@ -162,6 +188,28 @@ type Cluster = {
 	seedId: TLShapeId
 	boxes: Box[]
 	union: Box
+	/**
+	 * Every native geo member's id, so the swim loop can read each one's CURRENT color
+	 * per tick and pick out the FOOD (green ones). Kept as ids — not pre-filtered to the
+	 * green ones — because a food's color changes at runtime (it turns black when eaten),
+	 * and the cluster cache only re-resolves on a membership miss. Reading the live color
+	 * each tick (a cheap getShape) means "eaten → no longer attracts" takes effect at once.
+	 */
+	memberIds: TLShapeId[]
+	/**
+	 * NAVIGATION GRAPH over the rooms (boxes), so a creature can find a PATH to food in
+	 * another room instead of swimming straight at it and grinding into the wall between.
+	 * Rooms are the box indices; two rooms are adjacent when their boxes OVERLAP with a
+	 * positive-area intersection — a real doorway the body can swim through (mere abutting,
+	 * which makes a cluster but not a passage, does NOT connect them here). Each adjacency
+	 * stores the DOORWAY point: the centre of the overlap rectangle, a point guaranteed
+	 * inside both rooms and thus a safe waypoint. The creature steers toward the doorway
+	 * leading to the next room on the BFS path, room by room, until it shares the food's
+	 * room — then it aims at the food directly. Built once per cluster resolve (boxes don't
+	 * move between resolves), so the per-tick nav is just a small BFS + lookup.
+	 */
+	adj: number[][] // adj[i] = indices of rooms reachable from room i
+	doorways: Map<number, Box> // key = i * boxes.length + j → overlap RECT between rooms i,j
 }
 
 /**
@@ -173,7 +221,48 @@ type Cluster = {
 declare global {
 	interface Window {
 		__SWIM_OFF?: boolean
+		/** DEV: mirror of swimDebugEnabled, so the overlay can be flipped from the console. */
+		__SWIM_DEBUG?: boolean
 	}
+}
+
+// ── DEBUG OVERLAY plumbing ─────────────────────────────────────────────────────
+/**
+ * Per-creature snapshot the SwimDebugOverlay draws, all in PAGE space (the overlay
+ * converts to screen with the camera). Published reactively from the swim loop each
+ * tick — but ONLY while debug is enabled, so it costs nothing in the normal path.
+ *   center  — the body centre we integrate on.
+ *   heading — current travel direction (radians); drawn as a ray from the centre.
+ *   boxes   — the tank cluster's member AABBs (as [minX,minY,w,h]); drawn as outlines.
+ *   food    — the centre of the food this creature is currently hunting (if any).
+ *   waypoint— the actual point it's steering toward right now: the food itself when in the
+ *             same room, or the next DOORWAY on the path through rooms. Drawn as the link,
+ *             so you can SEE it routing toward the opening rather than straight at the food.
+ */
+export type SwimDebugCreature = {
+	id: TLShapeId
+	center: { x: number; y: number }
+	heading: number
+	boxes: { x: number; y: number; w: number; h: number }[]
+	food: { x: number; y: number } | null
+	waypoint: { x: number; y: number } | null
+}
+
+/**
+ * Whether the debug overlay is active. A tldraw `atom` so the menu toggle, the swim
+ * loop, and the overlay all share ONE reactive source (same pattern as creatureClock).
+ * Off by default; the loop only publishes snapshots while this is true.
+ */
+export const swimDebugEnabled = atom('swimDebugEnabled', false)
+
+/** The latest debug snapshot (one entry per creature). Read by SwimDebugOverlay via useValue. */
+export const swimDebug = atom<SwimDebugCreature[]>('swimDebug', [])
+
+/** Flip the overlay on/off (used by the DEV menu item); also mirrors window.__SWIM_DEBUG. */
+export function setSwimDebug(on: boolean): void {
+	swimDebugEnabled.set(on)
+	if (typeof window !== 'undefined') window.__SWIM_DEBUG = on
+	if (!on) swimDebug.set([]) // clear so the overlay paints nothing once disabled
 }
 
 export function registerSwimming(editor: Editor): () => void {
@@ -218,17 +307,29 @@ export function registerSwimming(editor: Editor): () => void {
 		const dt = Math.min(sinceWrite, MAX_DT)
 		sinceWrite = 0
 
+		// DEBUG: collect a per-creature snapshot for the overlay, but only while it's
+		// enabled (atom set by the menu toggle, or the window mirror from the console).
+		// NOTE: only the elected LEAD client reaches here, so the overlay visualizes the
+		// driver's live state — exactly the client whose steering decisions matter.
+		const debugOn =
+			swimDebugEnabled.get() || (typeof window !== 'undefined' && !!window.__SWIM_DEBUG)
+		const snapshot: SwimDebugCreature[] = []
+
 		busy = true
 		try {
 			editor.run(
 				() => {
-					for (const creature of creatures) swimOne(editor, creature, state, dt)
+					for (const creature of creatures) {
+						const snap = swimOne(editor, creature, state, dt, debugOn)
+						if (debugOn && snap) snapshot.push(snap)
+					}
 				},
 				{ history: 'ignore' }
 			)
 		} finally {
 			busy = false
 		}
+		if (debugOn) swimDebug.set(snapshot)
 
 		// Forget state for creatures that left the page (deleted / undone).
 		if (state.size > creatures.length) {
@@ -244,10 +345,20 @@ export function registerSwimming(editor: Editor): () => void {
 	}
 }
 
-/** Move one creature one tick within its tank (or leave it still if tankless). */
-function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, SwimState>, dt: number) {
+/**
+ * Move one creature one tick within its tank (or leave it still if tankless). When
+ * `debug` is set, returns a snapshot for the overlay (heading/cluster/food target);
+ * otherwise returns null. Returning null also covers the early-outs (no tank etc.).
+ */
+function swimOne(
+	editor: Editor,
+	creature: CreatureShape,
+	all: Map<TLShapeId, SwimState>,
+	dt: number,
+	debug: boolean
+): SwimDebugCreature | null {
 	const bounds = editor.getShapePageBounds(creature.id)
-	if (!bounds) return
+	if (!bounds) return null
 
 	// Lazily seed this creature's heading + centre from its current synced state,
 	// so we begin integrating from where (and how) the shape actually is. CRUCIAL:
@@ -293,17 +404,50 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 		if (!found) {
 			// Left every tank → drop the cache and stop roaming (still undulates).
 			s.tank = null
-			return
+			return null
 		}
 		s.tank = found
 		tank = found
 	}
-	if (!tank) return // not in a tank → no roaming (it still undulates in place)
+	if (!tank) return null // not in a tank → no roaming (it still undulates in place)
 
 	// Meander: nudge the heading by a smooth, slowly-varying amount. Using the
 	// wander phase (advanced each tick) keeps turns gentle and frame-rate-stable.
 	s.wander += dt * 0.002
 	s.heading += Math.sin(s.wander) * TURN_RATE * dt
+
+	// FOOD ATTRACTION + EATING. Green geo shapes in the cluster are FOOD: steer toward
+	// the nearest one (overriding the aimless meander) and, on contact, "eat" it by
+	// turning it black — after which it's no longer green, so it stops attracting. We
+	// read live colors each tick (nearestFood → getShape), so the moment one is eaten
+	// the rest of the fleet retargets. Steering nudges `heading`; the wall-avoidance
+	// pass below runs AFTER, so a food tucked against a wall never steers the creature
+	// into the wall — avoidance gets the last word. (A jellyfish drifts by its own jet,
+	// not its heading, so attraction barely moves it — but it still eats on contact.)
+	const food = nearestFood(editor, tank, s.cx, s.cy)
+	// The point we actually steer toward: a PATH waypoint, not the food itself. When the
+	// food is in another room of the cluster, steering straight at it drives the creature
+	// into the wall between rooms (it can't see the doorway). navWaypoint routes through the
+	// room graph and returns the next DOORWAY on the way — so the creature heads for the
+	// opening, passes into the next room, then re-targets, until it shares the food's room
+	// and aims at the food directly. Kept for the debug overlay too (drawn as the link end).
+	let waypoint: Vec | null = null
+	if (food) {
+		waypoint = navWaypoint(tank, s.cx, s.cy, food.box.center)
+		// Steer the heading toward the waypoint, scaled like wall-avoidance.
+		const want = Math.atan2(waypoint.y - s.cy, waypoint.x - s.cx)
+		let diff = want - s.heading
+		diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // shortest angular path
+		s.heading += diff * Math.min(1, FOOD_ATTRACT_RATE * dt)
+
+		// EAT on contact: once the centre is within EAT_SLACK of the food box, mark it
+		// eaten (color → black). This is a normal store write; it's already inside the
+		// loop's editor.run(..., { history: 'ignore' }) so it syncs to every client.
+		// A color change doesn't move the box, so the cached cluster stays valid.
+		if (food.box.containsPoint(new Vec(s.cx, s.cy), EAT_SLACK)) {
+			editor.updateShape({ id: food.id, type: 'geo', props: { color: EATEN_COLOR } })
+		}
+	}
 
 	// WALL AVOIDANCE (not bounce): as the body's centre nears a wall, steer the
 	// heading toward the tank interior — gently when just inside the margin, more
@@ -414,6 +558,18 @@ function swimOne(editor: Editor, creature: CreatureShape, all: Map<TLShapeId, Sw
 		y: s.cy - half.y,
 		rotation,
 	})
+
+	// DEBUG snapshot (only built when the overlay is on): the post-step centre + heading,
+	// the cluster boxes, and the current food target. All page-space; the overlay maps it.
+	if (!debug) return null
+	return {
+		id: creature.id,
+		center: { x: s.cx, y: s.cy },
+		heading: s.heading,
+		boxes: tank.boxes.map((b) => ({ x: b.minX, y: b.minY, w: b.width, h: b.height })),
+		food: food ? { x: food.box.center.x, y: food.box.center.y } : null,
+		waypoint: waypoint ? { x: waypoint.x, y: waypoint.y } : null,
+	}
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -517,6 +673,7 @@ function resolveCluster(editor: Editor, creatureId: TLShapeId): Cluster | undefi
 	}
 
 	const boxes: Box[] = []
+	const memberIds: TLShapeId[] = [seed.id]
 	const visited = new Set<TLShapeId>([seed.id])
 	const frontier: Box[] = [seed.bounds]
 	boxes.push(seed.bounds)
@@ -526,6 +683,7 @@ function resolveCluster(editor: Editor, creatureId: TLShapeId): Cluster | undefi
 			if (visited.has(g.id)) continue
 			if (boxesTouch(cur, g.box)) {
 				visited.add(g.id)
+				memberIds.push(g.id)
 				boxes.push(g.box)
 				frontier.push(g.box)
 			}
@@ -544,7 +702,181 @@ function resolveCluster(editor: Editor, creatureId: TLShapeId): Cluster | undefi
 		if (b.maxY > maxY) maxY = b.maxY
 	}
 	const union = new Box(minX, minY, maxX - minX, maxY - minY)
-	return { seedId: seed.id, boxes, union }
+
+	// NAVIGATION GRAPH: connect rooms whose boxes OVERLAP (positive-area intersection — a
+	// passage the body can swim through), and record the doorway (overlap-rect centre) for
+	// each connection. Built once here; the per-tick path is a tiny BFS over `adj`.
+	const { adj, doorways } = buildRoomGraph(boxes)
+
+	return { seedId: seed.id, boxes, union, memberIds, adj, doorways }
+}
+
+/**
+ * Build the room adjacency graph + doorways for a cluster's boxes. Two rooms are linked
+ * when their boxes share a POSITIVE-AREA overlap — a real opening the creature can pass
+ * through (boxes that merely abut within TOUCH_SLACK make one cluster but have no interior
+ * passage, so they are NOT linked here; navigating "through" a hairline seam would mean
+ * threading a zero-width gap). The doorway for a link stores the overlap RECTANGLE (not just
+ * its centre) so navigation can both aim at the opening AND tell when the creature is inside
+ * it (time to aim into the next room). The overlap rect is inside both rooms throughout.
+ */
+function buildRoomGraph(boxes: Box[]): { adj: number[][]; doorways: Map<number, Box> } {
+	const n = boxes.length
+	const adj: number[][] = Array.from({ length: n }, () => [])
+	const doorways = new Map<number, Box>()
+	for (let i = 0; i < n; i++) {
+		for (let j = i + 1; j < n; j++) {
+			const a = boxes[i]
+			const b = boxes[j]
+			// Overlap rectangle (empty if they only abut / are disjoint).
+			const oxMin = Math.max(a.minX, b.minX)
+			const oxMax = Math.min(a.maxX, b.maxX)
+			const oyMin = Math.max(a.minY, b.minY)
+			const oyMax = Math.min(a.maxY, b.maxY)
+			if (oxMax - oxMin <= 0 || oyMax - oyMin <= 0) continue // no passable opening
+			const overlap = new Box(oxMin, oyMin, oxMax - oxMin, oyMax - oyMin)
+			adj[i].push(j)
+			adj[j].push(i)
+			doorways.set(i * n + j, overlap)
+			doorways.set(j * n + i, overlap)
+		}
+	}
+	return { adj, doorways }
+}
+
+/**
+ * The room (box index) a point (x, y) belongs to. In an OVERLAP zone the point is inside
+ * several boxes at once, so picking "the first box that contains it" classifies the same
+ * spot inconsistently and makes the nav target flip-flop at a doorway (the stuck-at-doorway
+ * bug). Instead we pick the box the point is DEEPEST inside — the one whose nearest wall is
+ * furthest away — so a creature sitting in the overlap is firmly assigned to whichever room
+ * it's more inside of, and the assignment changes smoothly as it crosses. Falls back to the
+ * nearest box centre when the point is in a gap between boxes.
+ */
+function roomIndexAt(cluster: Cluster, x: number, y: number): number {
+	let best = -1
+	let bestDepth = 0 // max over containing boxes of the distance to that box's nearest wall
+	for (let i = 0; i < cluster.boxes.length; i++) {
+		const b = cluster.boxes[i]
+		if (x < b.minX || x > b.maxX || y < b.minY || y > b.maxY) continue
+		const depth = Math.min(x - b.minX, b.maxX - x, y - b.minY, b.maxY - y)
+		if (best === -1 || depth > bestDepth) {
+			bestDepth = depth
+			best = i
+		}
+	}
+	if (best !== -1) return best
+	// Not inside any box (a gap) → nearest box centre.
+	let nearest = 0
+	let bestD = Infinity
+	for (let i = 0; i < cluster.boxes.length; i++) {
+		const c = cluster.boxes[i].center
+		const d = (c.x - x) * (c.x - x) + (c.y - y) * (c.y - y)
+		if (d < bestD) {
+			bestD = d
+			nearest = i
+		}
+	}
+	return nearest
+}
+
+/**
+ * BFS the room graph from `start` to `goal`, returning the path as a list of room indices
+ * (inclusive of both ends), or null if unreachable. Rooms are few (a handful of boxes),
+ * so plain BFS is ample and gives the fewest-doorways route.
+ */
+function roomPath(cluster: Cluster, start: number, goal: number): number[] | null {
+	if (start === goal) return [start]
+	const prev = new Map<number, number>()
+	const seen = new Set<number>([start])
+	const queue = [start]
+	while (queue.length > 0) {
+		const cur = queue.shift()!
+		for (const next of cluster.adj[cur]) {
+			if (seen.has(next)) continue
+			seen.add(next)
+			prev.set(next, cur)
+			if (next === goal) {
+				// Reconstruct the path goal → start, then reverse.
+				const path = [goal]
+				let p = goal
+				while (p !== start) {
+					p = prev.get(p)!
+					path.push(p)
+				}
+				return path.reverse()
+			}
+			queue.push(next)
+		}
+	}
+	return null // food's room not reachable through overlaps (only abutting seams between)
+}
+
+/**
+ * The point a creature at (x, y) should STEER TOWARD to make progress to `target` (the
+ * food's centre) through the rooms. If the creature and the target share a room (or there's
+ * no path), that's the target itself.
+ *
+ * Otherwise it routes through the BFS path room-by-room with a TWO-STAGE waypoint per
+ * doorway, which is what fixes the "stuck at the first doorway" bug:
+ *   1) APPROACH — while still away from the doorway, aim at the nearest point of the doorway
+ *      (overlap rect) so the creature heads for the opening, not the wall beside it.
+ *   2) PULL-THROUGH — once inside the doorway overlap, aim at the CENTRE OF THE NEXT ROOM,
+ *      so it keeps moving deeper instead of parking on the boundary (where a doorway-centre
+ *      target gave ~zero pull and wall-avoidance pinned it). Crossing flips roomIndexAt to
+ *      the next room, the BFS shortens, and it advances to the following doorway.
+ * Clamp-to-rect gives the nearest point of the doorway; project the room centre for stage 2.
+ */
+function navWaypoint(cluster: Cluster, x: number, y: number, target: Vec): Vec {
+	const start = roomIndexAt(cluster, x, y)
+	const goal = roomIndexAt(cluster, target.x, target.y)
+	if (start === goal) return target
+	const path = roomPath(cluster, start, goal)
+	if (!path || path.length < 2) return target // unreachable → fall back to direct
+
+	const next = path[1]
+	const door = cluster.doorways.get(path[0] * cluster.boxes.length + next)
+	if (!door) return target
+
+	// Inside the doorway overlap? → stage 2: aim at the next room's centre to pull through.
+	const inDoorway = x >= door.minX && x <= door.maxX && y >= door.minY && y <= door.maxY
+	if (inDoorway) return cluster.boxes[next].center
+
+	// Stage 1: aim at the nearest point of the doorway opening.
+	return new Vec(clamp(x, door.minX, door.maxX), clamp(y, door.minY, door.maxY))
+}
+
+/**
+ * The nearest FOOD shape in the cluster to (x, y), if any. Food = a member geo shape
+ * whose CURRENT color is green (FOOD_COLORS). We read each member's live color here (not
+ * from the cached cluster) so a food that was just eaten — turned black — instantly stops
+ * counting. Returns the food's id + page-space box, so the caller can both steer toward
+ * its centre and detect a bite against its box.
+ */
+function nearestFood(
+	editor: Editor,
+	cluster: Cluster,
+	x: number,
+	y: number
+): { id: TLShapeId; box: Box } | undefined {
+	let best: { id: TLShapeId; box: Box } | undefined
+	let bestD = Infinity
+	for (const id of cluster.memberIds) {
+		const shape = editor.getShape(id)
+		// A member can vanish (deleted) or stop being food (eaten → black); skip both.
+		if (!shape || shape.type !== 'geo') continue
+		if (!FOOD_COLORS.has((shape.props as { color?: string }).color ?? '')) continue
+		const box = editor.getShapePageBounds(id)
+		if (!box) continue
+		const dx = box.center.x - x
+		const dy = box.center.y - y
+		const d = dx * dx + dy * dy
+		if (d < bestD) {
+			bestD = d
+			best = { id, box }
+		}
+	}
+	return best
 }
 
 /** Is a point inside ANY member box of the cluster? (union is a fast pre-filter.) */

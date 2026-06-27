@@ -34,6 +34,8 @@ import { CreatureKindStyle, CREATURE_KINDS } from '../../shared/shape-schemas'
 import { creatureKindIcon } from '../creature/variants'
 import { useReferee } from '../referee/useReferee'
 import { runCreatureStressTest } from '../creature/stressTest'
+import { SwimDebugOverlay } from '../creature/SwimDebugOverlay'
+import { setSwimDebug, swimDebugEnabled } from '../creature/registerSwimming'
 
 function GameMainMenu() {
 	// `useEditor()` is how a UI component reaches the editor. Close over it in the
@@ -90,11 +92,32 @@ function GameMainMenu() {
 						onSelect={() => void runCreatureStressTest(editor)}
 					/>
 				)}
+				{/* DEV-only: toggle the food-attraction debug overlay (heading / cluster /
+				    food links). The label shows the current state; see SwimDebugOverlay. */}
+				{import.meta.env.DEV && <SwimDebugMenuItem />}
 			</TldrawUiMenuGroup>
 
 			{/* Keep everything tldraw normally shows. Remove this to REPLACE the menu. */}
 			<DefaultMainMenuContent />
 		</DefaultMainMenu>
+	)
+}
+
+/**
+ * DEV menu item that toggles the swim debug overlay. Reads swimDebugEnabled
+ * reactively so its label reflects the current state (and stays in sync if the
+ * overlay is flipped from the console via window.__SWIM_DEBUG → setSwimDebug).
+ */
+function SwimDebugMenuItem() {
+	const on = useValue('swimDebugEnabled', () => swimDebugEnabled.get(), [])
+	return (
+		<TldrawUiMenuItem
+			id="swim-debug"
+			label={on ? 'Swim debug: ON' : 'Swim debug: off'}
+			icon={on ? 'toggle-on' : 'toggle-off'}
+			readonlyOk
+			onSelect={() => setSwimDebug(!swimDebugEnabled.get())}
+		/>
 	)
 }
 
@@ -275,5 +298,7 @@ export function createGameComponents(roomId: string | undefined): TLComponents {
 		MainMenu: GameMainMenu,
 		ContextMenu: makeGameContextMenu(roomId),
 		StylePanel: GameStylePanel,
+		// DEV food-attraction visualization; renders nothing unless toggled on.
+		InFrontOfTheCanvas: SwimDebugOverlay,
 	}
 }
