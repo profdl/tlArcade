@@ -186,6 +186,17 @@ type SwimState = {
 	cy: number
 	speed: number
 	tank: Cluster | null
+	/**
+	 * NAV HYSTERESIS. The room index the creature is currently COMMITTED to crossing into
+	 * on its way to food, plus the doorway it's threading. Without this, navWaypoint re-ran a
+	 * fresh BFS every tick off `roomIndexAt`, which OSCILLATES inside a narrow doorway (the
+	 * thin overlap leaves the centre near-equally deep in both rooms), so the steering target
+	 * teleported between unrelated points tick-to-tick — the "glitches in a narrow space"
+	 * symptom. Instead we LOCK onto the committed next room + its doorway and only re-plan once
+	 * the creature is firmly inside that next room (past the overlap), so the target is stable
+	 * while transiting. Cleared when there's no food or the plan is reached/invalid.
+	 */
+	navNextRoom: number | null
 }
 
 /**
@@ -388,6 +399,7 @@ function swimOne(
 			cy: bounds.center.y,
 			speed: 0, // eases up from rest on the first strokes
 			tank: null,
+			navNextRoom: null,
 		}
 		all.set(creature.id, s)
 	} else {
@@ -449,7 +461,11 @@ function swimOne(
 	// and aims at the food directly. Kept for the debug overlay too (drawn as the link end).
 	let waypoint: Vec | null = null
 	if (food) {
-		waypoint = navWaypoint(tank, s.cx, s.cy, food.box.center)
+		// "Deep inside the next room" is measured with a small inset so the plan only advances
+		// once the body has truly cleared the doorway — half the smaller body extent, which is
+		// the natural scale for "past the threshold" without being so large a small room fails it.
+		const bodyInset = Math.min(creature.props.w, creature.props.h) / 2
+		waypoint = navWaypoint(tank, s, s.cx, s.cy, food.box.center, bodyInset)
 		// Steer the heading toward the waypoint, scaled like wall-avoidance.
 		const want = Math.atan2(waypoint.y - s.cy, waypoint.x - s.cx)
 		let diff = want - s.heading
@@ -463,6 +479,9 @@ function swimOne(
 		if (food.box.containsPoint(new Vec(s.cx, s.cy), EAT_SLACK)) {
 			editor.updateShape({ id: food.id, type: 'geo', props: { color: EATEN_COLOR } })
 		}
+	} else {
+		// No food in reach → drop any stale route commitment so the next hunt re-plans fresh.
+		s.navNextRoom = null
 	}
 
 	// WALL AVOIDANCE (not bounce): as the body's centre nears a wall, steer the
@@ -840,36 +859,78 @@ function roomPath(cluster: Cluster, start: number, goal: number): number[] | nul
 }
 
 /**
- * The point a creature at (x, y) should STEER TOWARD to make progress to `target` (the
- * food's centre) through the rooms. If the creature and the target share a room (or there's
- * no path), that's the target itself.
- *
- * Otherwise it routes through the BFS path room-by-room with a TWO-STAGE waypoint per
- * doorway, which is what fixes the "stuck at the first doorway" bug:
- *   1) APPROACH — while still away from the doorway, aim at the nearest point of the doorway
- *      (overlap rect) so the creature heads for the opening, not the wall beside it.
- *   2) PULL-THROUGH — once inside the doorway overlap, aim at the CENTRE OF THE NEXT ROOM,
- *      so it keeps moving deeper instead of parking on the boundary (where a doorway-centre
- *      target gave ~zero pull and wall-avoidance pinned it). Crossing flips roomIndexAt to
- *      the next room, the BFS shortens, and it advances to the following doorway.
- * Clamp-to-rect gives the nearest point of the doorway; project the room centre for stage 2.
+ * Is (x, y) inside box `i`, and at least `inset` from all its walls? The "deep inside" test
+ * the nav hysteresis uses to decide the creature has truly entered a room. The inset is CAPPED
+ * to just under each half-extent, so even a room SMALLER than the body still has a reachable
+ * deep zone near its centre — otherwise a big creature could commit to a small room and, never
+ * counting as "deep inside", never advance its plan (a fresh kind of stuck).
  */
-function navWaypoint(cluster: Cluster, x: number, y: number, target: Vec): Vec {
-	const start = roomIndexAt(cluster, x, y)
+function deepInsideRoom(cluster: Cluster, i: number, x: number, y: number, inset: number): boolean {
+	const b = cluster.boxes[i]
+	const ix = Math.min(inset, b.width / 2 - 1)
+	const iy = Math.min(inset, b.height / 2 - 1)
+	return x >= b.minX + ix && x <= b.maxX - ix && y >= b.minY + iy && y <= b.maxY - iy
+}
+
+/**
+ * The point a creature should STEER TOWARD to reach `target` (the food's centre) through the
+ * rooms, with HYSTERESIS so the target stays stable while transiting a doorway. Without the
+ * hysteresis, this re-ran a fresh BFS off `roomIndexAt` every tick — and in a NARROW doorway
+ * the centre is near-equally deep in both rooms, so `roomIndexAt` oscillates and the target
+ * teleported between unrelated points each tick (the "glitches in a narrow space" symptom).
+ *
+ * Stable scheme, using s.navNextRoom (the committed room we're crossing into):
+ *   • Same room as the goal → clear the commitment, aim at the food directly.
+ *   • If we hold a commitment and haven't yet arrived DEEP inside that room, KEEP it: aim at
+ *     its doorway (approach) or its centre (once within the overlap) — no re-plan, so a thin
+ *     overlap can't flip the target. We only re-plan once firmly inside the committed room.
+ *   • Otherwise (no/!reached commitment) plan a fresh BFS and commit to path[1].
+ * The DEEP-inside test (inset by the body half-size) is the key: it ignores the overlap-zone
+ * jitter and only advances the plan when the creature has truly entered the next room.
+ */
+function navWaypoint(cluster: Cluster, s: SwimState, x: number, y: number, target: Vec, bodyInset: number): Vec {
 	const goal = roomIndexAt(cluster, target.x, target.y)
-	if (start === goal) return target
+
+	// In the food's room (anywhere inside its box) → done routing; aim straight at the food.
+	if (deepInsideRoom(cluster, goal, x, y, 0)) {
+		s.navNextRoom = null
+		return target
+	}
+
+	const N = cluster.boxes.length
+
+	// Keep an existing commitment until we're firmly inside that room (immune to doorway jitter).
+	if (s.navNextRoom !== null && s.navNextRoom < N) {
+		const committed = s.navNextRoom
+		if (!deepInsideRoom(cluster, committed, x, y, bodyInset)) {
+			// Still en route to the committed room: steer toward it (centre once in the doorway,
+			// else the doorway opening). The doorway is between whatever room we're physically in
+			// and the committed one; fall back to the committed room's centre if not found.
+			const here = roomIndexAt(cluster, x, y)
+			const door = cluster.doorways.get(here * N + committed) ?? cluster.doorways.get(committed * N + here)
+			if (door) {
+				const inDoorway = x >= door.minX && x <= door.maxX && y >= door.minY && y <= door.maxY
+				if (inDoorway) return cluster.boxes[committed].center
+				return new Vec(clamp(x, door.minX, door.maxX), clamp(y, door.minY, door.maxY))
+			}
+			return cluster.boxes[committed].center
+		}
+		// Arrived deep inside the committed room → fall through to re-plan the NEXT hop from here.
+	}
+
+	// Plan a fresh route from the room we're firmly in and commit to the next hop.
+	const start = roomIndexAt(cluster, x, y)
 	const path = roomPath(cluster, start, goal)
-	if (!path || path.length < 2) return target // unreachable → fall back to direct
-
+	if (!path || path.length < 2) {
+		s.navNextRoom = null
+		return target // unreachable → fall back to direct
+	}
 	const next = path[1]
-	const door = cluster.doorways.get(path[0] * cluster.boxes.length + next)
-	if (!door) return target
-
-	// Inside the doorway overlap? → stage 2: aim at the next room's centre to pull through.
+	s.navNextRoom = next
+	const door = cluster.doorways.get(start * N + next)
+	if (!door) return cluster.boxes[next].center
 	const inDoorway = x >= door.minX && x <= door.maxX && y >= door.minY && y <= door.maxY
 	if (inDoorway) return cluster.boxes[next].center
-
-	// Stage 1: aim at the nearest point of the doorway opening.
 	return new Vec(clamp(x, door.minX, door.maxX), clamp(y, door.minY, door.maxY))
 }
 
