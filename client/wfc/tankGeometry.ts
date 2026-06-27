@@ -46,8 +46,8 @@ export const DOOR_MOUTH = 0.34
  * every remaining room stays reachable. ~0.3 gives a pleasantly ragged outline.
  */
 export const REMOVE_PROB = 0.3
-/** How many food pellets to scatter in the playable region. */
-export const FOOD_COUNT = 24
+/** How many food pellets to scatter in the playable region — kept sparse (5 max). */
+export const FOOD_COUNT = 5
 /** Side length of a (square) food pellet. */
 export const FOOD = 40
 
@@ -60,8 +60,26 @@ export const GREEN = { color: 'green', fill: 'solid' } as const
 /** What KIND of rect this is — for tests/debugging; all three emit as `geo` rectangles. */
 export type RectKind = 'room' | 'door' | 'food'
 
-/** A resolved rectangle to emit, in page space. `id` comes from the caller's factory. */
-export type TankRect<Id> = { id: Id; kind: RectKind; x: number; y: number; w: number; h: number; props: Record<string, unknown> }
+/**
+ * A resolved rectangle/shape to emit, in page space. `id` comes from the caller's factory.
+ * `x,y` is the shape's TOP-LEFT (tldraw rotates a shape about its top-left origin), `w,h`
+ * the local box, `rotation` an optional angle in radians (default 0 / unrotated). When a
+ * shape is rotated, `x,y` is still its un-rotated top-left; the chaos generator derives it
+ * from the desired centre + rotation the same way the swim loop does.
+ */
+export type TankRect<Id> = { id: Id; kind: RectKind; x: number; y: number; w: number; h: number; rotation?: number; props: Record<string, unknown> }
+
+/**
+ * Half-extents of a `w×h` box rotated by θ — i.e. its axis-aligned bounding box. The swim
+ * loop confines/clusters by this AABB (not the true rotated outline), so the chaos
+ * generator computes doorway overlaps against THIS box. Mirrors confineToCluster's formula
+ * in registerSwimming.ts: (|cosθ|·w + |sinθ|·h)/2 and (|sinθ|·w + |cosθ|·h)/2.
+ */
+export function rotatedHalfExtents(w: number, h: number, rotation: number): { hx: number; hy: number } {
+	const c = Math.abs(Math.cos(rotation))
+	const s = Math.abs(Math.sin(rotation))
+	return { hx: (c * w + s * h) / 2, hy: (s * w + c * h) / 2 }
+}
 
 /**
  * Build every rectangle for a tank of `width × height` rooms, top-left room at page

@@ -14,11 +14,17 @@
 import { Editor, TLShapeId, TLShapePartial, createShapeId } from 'tldraw'
 import { buildTankRects, tankExtent, type TankRect } from './tankGeometry.ts'
 import { buildChaosTankRects } from './chaosGeometry.ts'
+import { mulberry32 } from './collapse.ts'
+
+/** How many creatures to drop into random rooms when a tank is generated. */
+const SPAWN_CREATURE_COUNT = 5
 
 /** Write a list of resolved rects to the store as synced geo shapes, sent to the BACK
  *  (so creatures render above them), in ONE history-ignored batch. Returns their ids. */
 function writeRects(editor: Editor, rects: TankRect<TLShapeId>[]): TLShapeId[] {
-	const partials: TLShapePartial[] = rects.map((r) => ({ id: r.id, type: 'geo', x: r.x, y: r.y, props: r.props } as TLShapePartial))
+	const partials: TLShapePartial[] = rects.map(
+		(r) => ({ id: r.id, type: 'geo', x: r.x, y: r.y, rotation: r.rotation ?? 0, props: r.props } as TLShapePartial)
+	)
 	editor.run(
 		() => {
 			editor.createShapes(partials)
@@ -27,6 +33,44 @@ function writeRects(editor: Editor, rects: TankRect<TLShapeId>[]): TLShapeId[] {
 		{ history: 'ignore' }
 	)
 	return rects.map((r) => r.id)
+}
+
+/**
+ * Drop SPAWN_CREATURE_COUNT fish into random ROOMS of a just-generated tank. Each lands at a
+ * room's CENTRE (reliably inside the painted shape) so the swim loop adopts it. The rooms are
+ * picked via a seeded shuffle off the tank seed, so a generated tank is reproducible. Created
+ * AFTER (and not sent to back) so they render above the tank, like any dropped piece.
+ */
+function spawnCreaturesInRooms(editor: Editor, rects: TankRect<TLShapeId>[], seed: number): void {
+	const roomRects = rects.filter((r) => r.kind === 'room')
+	if (roomRects.length === 0) return
+	const rng = mulberry32((seed ^ 0x1d2c6f) >>> 0)
+
+	// Shuffle room indices and take the first N (so creatures land in DISTINCT rooms).
+	const idx = roomRects.map((_, i) => i)
+	for (let i = idx.length - 1; i > 0; i--) {
+		const j = Math.floor(rng() * (i + 1))
+		;[idx[i], idx[j]] = [idx[j], idx[i]]
+	}
+	const chosen = idx.slice(0, Math.min(SPAWN_CREATURE_COUNT, roomRects.length))
+
+	editor.run(
+		() => {
+			for (const i of chosen) {
+				const r = roomRects[i]
+				// Room centre in page space. r.x,r.y is the (un-rotated) top-left; rotating the
+				// half-box offset gives the centre — but for placement the AABB centre suffices
+				// since the shape contains it. Use the simple centre of the local box rotated.
+				const cos = Math.cos(r.rotation ?? 0)
+				const sin = Math.sin(r.rotation ?? 0)
+				const cx = r.x + (r.w / 2) * cos - (r.h / 2) * sin
+				const cy = r.y + (r.w / 2) * sin + (r.h / 2) * cos
+				// Creature shapes are ~60×32; offset so the body centres on the room centre.
+				editor.createShape({ id: createShapeId(), type: 'creature', x: cx - 30, y: cy - 16, props: { kind: 'fish' } })
+			}
+		},
+		{ history: 'ignore' }
+	)
 }
 
 /**
@@ -48,7 +92,9 @@ export function generateTank(editor: Editor, width = 12, height = 12, seed = Dat
 	const originY = vp.center.y - extent.h / 2
 
 	const rects = buildTankRects(() => createShapeId(), width, height, seed, originX, originY)
-	return writeRects(editor, rects)
+	const ids = writeRects(editor, rects)
+	spawnCreaturesInRooms(editor, rects, seed)
+	return ids
 }
 
 /**
@@ -64,5 +110,7 @@ export function generateChaosTank(editor: Editor, width = 12, height = 12, seed 
 	const originY = vp.center.y - extent.h / 2
 
 	const rects = buildChaosTankRects(() => createShapeId(), width, height, seed, originX, originY)
-	return writeRects(editor, rects)
+	const ids = writeRects(editor, rects)
+	spawnCreaturesInRooms(editor, rects, seed)
+	return ids
 }

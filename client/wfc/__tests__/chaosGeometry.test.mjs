@@ -8,7 +8,7 @@
  *   • every emitted geo shape value is in the valid tldraw geo enum.
  * Pure — buildChaosTankRects takes an id factory, so no tldraw import is needed.
  */
-import { buildChaosTankRects, ROOM_SHAPES } from '../chaosGeometry.ts'
+import { buildChaosTankRects, ROOM_SHAPES, DOOR_MOUTH_MIN } from '../chaosGeometry.ts'
 
 // Valid tldraw geo enum (from @tldraw/tlschema) — every emitted shape must be one of these.
 const VALID_GEO = new Set([
@@ -17,7 +17,26 @@ const VALID_GEO = new Set([
 	'arrow-down', 'x-box', 'check-box', 'heart',
 ])
 
-const box = (r) => ({ minX: r.x, minY: r.y, maxX: r.x + r.w, maxY: r.y + r.h })
+// The TRUE axis-aligned bounding box of a (possibly rotated) rect. x,y is the un-rotated
+// top-left; tldraw rotates about that origin. We rotate all four corners and take min/max —
+// this is the box the swim loop confines/clusters by, so overlap must be tested on THIS.
+const box = (r) => {
+	const rot = r.rotation ?? 0
+	const cos = Math.cos(rot)
+	const sin = Math.sin(rot)
+	const corners = [
+		[0, 0],
+		[r.w, 0],
+		[r.w, r.h],
+		[0, r.h],
+	].map(([lx, ly]) => ({ x: r.x + lx * cos - ly * sin, y: r.y + lx * sin + ly * cos }))
+	return {
+		minX: Math.min(...corners.map((c) => c.x)),
+		minY: Math.min(...corners.map((c) => c.y)),
+		maxX: Math.max(...corners.map((c) => c.x)),
+		maxY: Math.max(...corners.map((c) => c.y)),
+	}
+}
 function positiveOverlap(a, b) {
 	const oxMin = Math.max(a.minX, b.minX)
 	const oxMax = Math.min(a.maxX, b.maxX)
@@ -70,6 +89,33 @@ for (const seed of [1, 2, 3, 7, 42, 100, 2024]) {
 	const shapesUsed = new Set(roomRects.map((r) => r.props.geo))
 	const varied = shapesUsed.size >= 4
 
+	// ROTATION: rooms are actually tilted (a spread of non-zero rotations), not axis-aligned.
+	const rotated = roomRects.filter((r) => Math.abs(r.rotation ?? 0) > 0.01).length
+	const roomsRotated = rotated >= roomRects.length * 0.5
+
+	// BIG LANDMARK ROOMS: a few rooms are ≥2.5× the MEDIAN room's side (the ×3–4 chambers).
+	const sides = roomRects.map((r) => (r.w + r.h) / 2).sort((a, b) => a - b)
+	const medianSide = sides[Math.floor(sides.length / 2)]
+	const bigRooms = roomRects.filter((r) => (r.w + r.h) / 2 >= medianSide * 2.5).length
+	const hasBigRooms = bigRooms >= 2 && bigRooms <= 4
+
+	// DOORWAY WIDTH: every doorway's mouth (its local h — the bar is w=len long, h=mouth wide)
+	// is at least DOOR_MOUTH_MIN, so a fish body fits through every opening.
+	const doorRawRects = rects.filter((r) => r.kind === 'door')
+	const allWideEnough = doorRawRects.every((d) => d.h >= DOOR_MOUTH_MIN - 1e-6)
+
+	// REACH-TO-CENTRE: every door's AABB contains BOTH its rooms' centres — i.e. it plunges
+	// through the shapes, not just into their corners. Each door must contain at least TWO room
+	// CENTRES (its pair). Room centre = AABB centre. This is the fix for doors falling short of
+	// non-rectangular/rotated room outlines.
+	const doorRects = rects.filter((r) => r.kind === 'door')
+	const roomCenters = rooms.map((r) => ({ x: (r.minX + r.maxX) / 2, y: (r.minY + r.maxY) / 2 }))
+	let doorsReachCenters = true
+	for (const d of doorRects.map(box)) {
+		const contains = roomCenters.filter((c) => c.x >= d.minX && c.x <= d.maxX && c.y >= d.minY && c.y <= d.maxY).length
+		if (contains < 2) doorsReachCenters = false
+	}
+
 	// Every emitted geo value is valid.
 	const allValidGeo = rects.every((r) => VALID_GEO.has(r.props.geo))
 
@@ -81,6 +127,10 @@ for (const seed of [1, 2, 3, 7, 42, 100, 2024]) {
 
 	console.log(`seed ${String(seed).padStart(4)}: EVERY room reachable from every other:`, allRoomsReachable)
 	console.log(`seed ${String(seed).padStart(4)}: every doorway bridges its two rooms (positive area):`, everyDoorBridges)
+	console.log(`seed ${String(seed).padStart(4)}: most rooms are rotated/tilted (${rotated}/${roomRects.length}):`, roomsRotated)
+	console.log(`seed ${String(seed).padStart(4)}: has 2–4 big landmark rooms (${bigRooms}):`, hasBigRooms)
+	console.log(`seed ${String(seed).padStart(4)}: every door reaches BOTH room centres (plunges in):`, doorsReachCenters)
+	console.log(`seed ${String(seed).padStart(4)}: every doorway is ≥${DOOR_MOUTH_MIN}px wide (fish fits):`, allWideEnough)
 	console.log(`seed ${String(seed).padStart(4)}: rooms use ≥4 distinct geo shapes (${shapesUsed.size}):`, varied)
 	console.log(`seed ${String(seed).padStart(4)}: rooms + doors are uniform light-orange Fill—Fill:`, uniformOrange)
 	console.log(`seed ${String(seed).padStart(4)}: every emitted geo value is valid:`, allValidGeo)
