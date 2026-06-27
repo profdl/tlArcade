@@ -29,7 +29,7 @@ import {
  * automatically and lets you switch a creature in place, exactly like the built-in
  * `geo` shape switches rectangle↔ellipse. (CLAUDE.md gotcha #8: prefer native styles.)
  */
-export const CREATURE_KINDS = ['fish', 'snake', 'jellyfish', 'crab', 'ant'] as const
+export const CREATURE_KINDS = ['fish', 'snake', 'jellyfish', 'crab', 'ant', 'lineFish'] as const
 export type CreatureKind = (typeof CREATURE_KINDS)[number]
 
 export const CreatureKindStyle = StyleProp.defineEnum('creature:kind', {
@@ -210,21 +210,6 @@ export const ribbonShapeValidators = {
 	dash: DefaultDashStyle,
 }
 
-export const lineFishValidators = {
-	w: T.number,
-	h: T.number,
-	// Deterministic seed (spine wiggle freq + eye jitter). The undulation is computed
-	// locally each frame from the shared clock; see client/shapes/LineFishShape.tsx.
-	seed: T.number,
-	speed: T.number,
-	// NATIVE styles only: color (ink) + size (line weight) + dash. The body is the
-	// freehand fish reduced to a single CENTRELINE per segment (no outline, no fill),
-	// baked ONCE and undulated by transforms — Ribbon-class cost. dash restyles the line.
-	color: DefaultColorStyle,
-	size: DefaultSizeStyle,
-	dash: DefaultDashStyle,
-}
-
 export const canvasSnakeValidators = {
 	w: T.number,
 	h: T.number,
@@ -291,7 +276,6 @@ export const gameShapeSchemas = {
 	plume: { props: plumeShapeValidators },
 	ribbon: { props: ribbonShapeValidators },
 	canvasSnake: { props: canvasSnakeValidators },
-	lineFish: { props: lineFishValidators },
 	spider: { props: spiderShapeValidators },
 	spiderBlobs: { props: spiderBlobsShapeValidators },
 	spiderOval: { props: spiderOvalShapeValidators },

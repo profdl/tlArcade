@@ -208,12 +208,24 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 	// motion is added by transforms below, so paths never rebuild per frame.
 	const geom = useMemo(() => variant.geometry(w, h, seed), [variant, w, h, seed])
 
+	// LINE variants (the line-fish) paint each chain segment as an OPEN centreline; every
+	// other variant paints a CLOSED, filled silhouette ring. This is the ONLY rendering
+	// difference between a line-fish and a normal creature — geometry, animation, swim,
+	// and freeze gate are all shared below (see RenderMode in variants/types.ts).
+	const isLine = variant.render === 'line'
+
 	// One freehand (or polygon) path per segment of every chain, built once.
 	const isDraw = dash === 'draw'
 	const chainDs = useMemo(
 		() =>
 			geom.chains.map((chain) =>
 				chain.segments.map((pts) => {
+					if (isLine) {
+						// OPEN centreline: a plain polyline (`M … L …`, no closing Z). Stroked, not
+						// filled — see lineProps below. 'draw' stays a clean stroked line here too
+						// (we DON'T run getStroke/close it), so the look is one drawn line that swims.
+						return polylinePath(pts)
+					}
 					if (isDraw) {
 						const sp = getStrokePoints(pts, { size: strokeWidth, streamline: 0.4, last: true })
 						return getSvgPathFromStrokePoints(sp, true)
@@ -221,7 +233,7 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 					return polygonPath(pts)
 				})
 			),
-		[geom, isDraw, strokeWidth]
+		[geom, isLine, isDraw, strokeWidth]
 	)
 
 	// IMPERATIVE ANIMATION. useReactor subscribes to the shared clock once and runs at
@@ -290,8 +302,10 @@ function CreatureBody({ shape }: { shape: CreatureShape }) {
 		[editor, shape.id, seed, speed, geom, variant]
 	)
 
+	// LINE variants stroke an open centreline and never fill (filling an open path would
+	// shade the area under the line). Every other variant fills its closed silhouette.
 	const pathProps = {
-		fill: fillColor,
+		fill: isLine ? 'none' : fillColor,
 		stroke,
 		strokeWidth,
 		strokeDasharray: dashArray(dash, strokeWidth),
@@ -722,4 +736,12 @@ const PUMP_LAG = 0.9
 export function polygonPath(pts: Pt[]): string {
 	const r2 = (n: number) => Math.round(n * 100) / 100
 	return 'M ' + pts.map((p) => `${r2(p.x)},${r2(p.y)}`).join(' L ') + ' Z'
+}
+
+/** Join points into an OPEN straight-segment SVG path (no closing Z) — the line-fish's
+ *  centreline. Same cheap polyline `d` as polygonPath but left open so it strokes as a
+ *  line, not a filled ring. */
+export function polylinePath(pts: Pt[]): string {
+	const r2 = (n: number) => Math.round(n * 100) / 100
+	return 'M ' + pts.map((p) => `${r2(p.x)},${r2(p.y)}`).join(' L ')
 }

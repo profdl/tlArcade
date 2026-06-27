@@ -39,24 +39,21 @@
 import { Box, Editor, TLShapeId, TLShapePartial, Vec, atom } from 'tldraw'
 import { creatureClock, jellyfishPropulsion, jellyfishTilt, positionWriteHz, tailBeat } from './clock'
 import { CreatureShape } from '../shapes/CreatureShape'
-import { LineFishShape } from '../shapes/LineFishShape'
 import type { CreatureKind } from '../../shared/shape-schemas'
 
 /**
- * The shapes this loop swims. Both are drawn head-LEFT (forward = −x) and share the same
- * w/h/seed/speed prop shape, so the whole tank/steering/navigation machinery is identical —
- * only orientation (kind/facing) and the typed write differ, handled by swimKind below. The
- * `creature` shape has a `kind`; the `lineFish` is always a plain fish (no kind), so it maps
- * to FACING.fish and never the jelly path.
+ * The shape this loop swims: the `creature` shape, of any `kind`. (The line-fish is just
+ * `kind:'lineFish'` — same prop shape, same tank/steering/navigation; it behaves as a fish
+ * for facing/propulsion, see FACING below.)
  */
-type SwimmableShape = CreatureShape | LineFishShape
+type SwimmableShape = CreatureShape
 
 /** Shape types this loop drives. One source of truth for the filter + type guard below. */
-const SWIMMABLE_TYPES = new Set<string>(['creature', 'lineFish'])
+const SWIMMABLE_TYPES = new Set<string>(['creature'])
 
-/** The orientation kind for facing/propulsion. A lineFish behaves as a fish. */
+/** The orientation kind for facing/propulsion. */
 function swimKind(shape: SwimmableShape): CreatureKind {
-	return shape.type === 'creature' ? shape.props.kind : 'fish'
+	return shape.props.kind
 }
 
 /**
@@ -70,6 +67,7 @@ function swimKind(shape: SwimmableShape): CreatureKind {
  */
 const FACING: Record<CreatureKind, { facingOffset: number; upright: boolean }> = {
 	fish: { facingOffset: 0, upright: false },
+	lineFish: { facingOffset: 0, upright: false }, // a fish reduced to its centreline — faces head-first
 	snake: { facingOffset: 0, upright: false },
 	crab: { facingOffset: Math.PI / 2, upright: false }, // lead with the side → sideways
 	jellyfish: { facingOffset: 0, upright: true }, // bell stays up; drifts, doesn't aim

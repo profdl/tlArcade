@@ -122,6 +122,19 @@ export type MotionParams = {
 }
 
 /**
+ * HOW the renderer PAINTS a variant's chains — the only thing that separates a
+ * line-fish from a normal creature. Both share the identical geometry/animation/
+ * swim machinery; they differ ONLY here:
+ *   'fill' — each chain segment is a CLOSED silhouette ring, filled (the default —
+ *            fish/snake/crab/etc. are solid bodies).
+ *   'line' — each chain segment is drawn as an OPEN centreline polyline (no closing
+ *            edge, stroked not filled), so the creature reads as a single drawn LINE
+ *            that swims rather than a filled shape. A variant whose `segments` are
+ *            centreline point-runs (not outline rings) sets this.
+ */
+export type RenderMode = 'fill' | 'line'
+
+/**
  * A variant = a geometry generator + its motion params. Pure and stateless; the
  * generator is called once per shape (memoized on w/h/seed) and must be
  * deterministic in `seed` so every client draws the identical creature.
@@ -129,4 +142,7 @@ export type MotionParams = {
 export type CreatureVariant = {
 	geometry: (w: number, h: number, seed: number) => CreatureGeometry
 	motion: MotionParams
+	/** How to paint the chains — see RenderMode. Defaults to 'fill' (a solid body)
+	 *  when omitted; the line-fish variant sets 'line'. */
+	render?: RenderMode
 }

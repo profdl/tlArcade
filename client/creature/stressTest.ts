@@ -20,6 +20,12 @@
  * Remove this file and its menu item (client/ui/components.tsx) when done.
  */
 import { Editor, TLShapeId, createShapeId } from 'tldraw'
+import type { CreatureKind } from '../../shared/shape-schemas'
+
+/** Which creature KIND this harness ramps (all freeze unless over a tank). The
+ *  line-fish is now a `creature` of kind 'lineFish', so the harness ramps kinds of
+ *  the ONE creature shape — not separate shape types. */
+const DEFAULT_KIND: CreatureKind = 'fish'
 
 /** Population sizes to sample, cumulative. */
 const TIERS = [10, 50, 100, 150, 200, 300, 500, 750, 1000]
@@ -70,7 +76,7 @@ function spawnTank(editor: Editor): { id: TLShapeId; minX: number; minY: number;
 }
 
 /** One ramp pass: spawn up to each tier and sample FPS. Returns per-tier results. */
-async function rampPass(editor: Editor, tank: ReturnType<typeof spawnTank>, label: string): Promise<TierResult[]> {
+async function rampPass(editor: Editor, tank: ReturnType<typeof spawnTank>, label: string, kind: CreatureKind): Promise<TierResult[]> {
 	const results: TierResult[] = []
 	let current = 0
 	for (const target of TIERS) {
@@ -86,7 +92,7 @@ async function rampPass(editor: Editor, tank: ReturnType<typeof spawnTank>, labe
 		}
 		editor.run(
 			() => {
-				for (const c of ids) editor.createShape({ id: c.id, type: 'creature', x: c.x, y: c.y })
+				for (const c of ids) editor.createShape({ id: c.id, type: 'creature', x: c.x, y: c.y, props: { kind } })
 			},
 			{ history: 'ignore' }
 		)
@@ -97,7 +103,7 @@ async function rampPass(editor: Editor, tank: ReturnType<typeof spawnTank>, labe
 		results.push({ count: target, meanFps, worstFps, frameMs })
 		// eslint-disable-next-line no-console
 		console.log(
-			`  [${label}] ${String(target).padStart(4)} creatures  →  ${meanFps.toFixed(0).padStart(3)} fps mean   ` +
+			`  [${label}] ${String(target).padStart(4)} ${kind}  →  ${meanFps.toFixed(0).padStart(3)} fps mean   ` +
 				`${worstFps.toFixed(0).padStart(3)} fps worst-5%   ${frameMs.toFixed(1)} ms/frame`
 		)
 	}
@@ -111,7 +117,7 @@ async function rampPass(editor: Editor, tank: ReturnType<typeof spawnTank>, labe
  * a lot with swim OFF, the swim loop is the cost; if it barely moves, rendering is.
  * Prints a side-by-side delta table.
  */
-export async function runCreatureStressTest(editor: Editor) {
+export async function runCreatureStressTest(editor: Editor, kind: CreatureKind = DEFAULT_KIND) {
 	// Clean slate so prior shapes don't skew the numbers.
 	const existing = Array.from(editor.getCurrentPageShapeIds())
 	if (existing.length) editor.deleteShapes(existing)
@@ -121,7 +127,7 @@ export async function runCreatureStressTest(editor: Editor) {
 
 	// eslint-disable-next-line no-console
 	console.log(
-		`%c[creature stress] A/B ramp ${TIERS.join(' → ')} in a ${Math.round(tank.w)}×${Math.round(tank.h)} tank`,
+		`%c[${kind} stress] A/B ramp ${TIERS.join(' → ')} in a ${Math.round(tank.w)}×${Math.round(tank.h)} tank`,
 		'font-weight:bold'
 	)
 	// eslint-disable-next-line no-console
@@ -131,7 +137,7 @@ export async function runCreatureStressTest(editor: Editor) {
 	window.__SWIM_OFF = false
 	// eslint-disable-next-line no-console
 	console.log('%c— PASS 1: FULL (swim loop ON) —', 'font-weight:bold')
-	const full = await rampPass(editor, tank, 'full')
+	const full = await rampPass(editor, tank, 'full', kind)
 
 	// Reset population for a clean second pass.
 	const mid = Array.from(editor.getCurrentPageShapeIds()).filter((id) => id !== tank.id)
@@ -142,7 +148,7 @@ export async function runCreatureStressTest(editor: Editor) {
 	window.__SWIM_OFF = true
 	// eslint-disable-next-line no-console
 	console.log('%c— PASS 2: RENDER-ONLY (swim loop OFF) —', 'font-weight:bold')
-	const renderOnly = await rampPass(editor, tank, 'rndr')
+	const renderOnly = await rampPass(editor, tank, 'rndr', kind)
 	window.__SWIM_OFF = false // restore
 
 	// Side-by-side delta.
@@ -152,7 +158,7 @@ export async function runCreatureStressTest(editor: Editor) {
 			const f = full[i]
 			const r = renderOnly[i]
 			return {
-				creatures: count,
+				[kind]: count,
 				'FULL mean': Math.round(f.meanFps),
 				'FULL ms': f.frameMs.toFixed(1),
 				'RENDER-ONLY mean': Math.round(r.meanFps),
@@ -166,7 +172,7 @@ export async function runCreatureStressTest(editor: Editor) {
 		'If RENDER-ONLY is much faster than FULL, the swim loop (O(N) hit-tests/tick) is the ' +
 		'bottleneck — cheap to fix. If they track closely, rendering is the wall — needs the overlay.'
 	// eslint-disable-next-line no-console
-	console.log(`%c[creature stress] ${verdict}`, 'font-weight:bold;color:#2a7')
+	console.log(`%c[${kind} stress] ${verdict}`, 'font-weight:bold;color:#2a7')
 	return { full, renderOnly }
 }
 

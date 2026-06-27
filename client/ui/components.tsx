@@ -127,7 +127,7 @@ function GameMainMenu() {
 							label="Add line fish (centreline per segment)"
 							icon="plus"
 							readonlyOk={false}
-							onSelect={() => addAtCenter(editor, 'lineFish', 60, 32)}
+							onSelect={() => addAtCenter(editor, 'creature', 60, 32, { kind: 'lineFish' })}
 						/>
 						<TldrawUiMenuItem
 							id="add-spider"
@@ -168,10 +168,17 @@ function GameMainMenu() {
 						<TldrawUiMenuGroup id="debug-tools-items">
 							<TldrawUiMenuItem
 								id="stress-creatures"
-								label="Stress test (creatures → console)"
+								label="Stress test (creature-fish in tank → console)"
 								icon="dots-horizontal"
 								readonlyOk={false}
-								onSelect={() => void runCreatureStressTest(editor)}
+								onSelect={() => void runCreatureStressTest(editor, 'fish')}
+							/>
+							<TldrawUiMenuItem
+								id="stress-line-fish"
+								label="Stress test (line-fish in tank → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runCreatureStressTest(editor, 'lineFish')}
 							/>
 							<TldrawUiMenuItem
 								id="stress-blooms"
@@ -264,10 +271,16 @@ function SwimDebugMenuItem() {
 }
 
 /** Drop a shape of `type` centred in the viewport (props default via getDefaultProps). */
-function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid' | 'creature' | 'bloom' | 'hydra' | 'frond' | 'plume' | 'ribbon' | 'spider' | 'spiderBlobs' | 'spiderOval' | 'canvasSnake' | 'lineFish', halfW: number, halfH = halfW) {
+function addAtCenter(
+	editor: Editor,
+	type: 'token' | 'container' | 'grid' | 'creature' | 'bloom' | 'hydra' | 'frond' | 'plume' | 'ribbon' | 'spider' | 'spiderBlobs' | 'spiderOval' | 'canvasSnake',
+	halfW: number,
+	halfH = halfW,
+	props?: Record<string, unknown>
+) {
 	const center = editor.getViewportPageBounds().center
 	const id = createShapeId()
-	editor.createShape({ id, type, x: center.x - halfW, y: center.y - halfH })
+	editor.createShape({ id, type, x: center.x - halfW, y: center.y - halfH, props })
 	// A grid is a backdrop — keep it beneath the pieces.
 	if (type === 'grid') editor.sendToBack([id])
 }
