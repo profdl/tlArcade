@@ -20,7 +20,7 @@
  *
  * Call `registerContainment(editor)` once from <Tldraw onMount>; it returns a disposer.
  */
-import { Editor, TLShape, TLShapeId, createBindingId } from 'tldraw'
+import { Editor, TLShape, TLShapeId, TLShapePartial, createBindingId } from 'tldraw'
 import { ContainerShape } from '../shapes/ContainerShape'
 import { ChildSize, layoutChildren } from './layout'
 
@@ -154,6 +154,6 @@ function relayout(editor: Editor, containerId: TLShapeId) {
 	)
 	childIds.forEach((id, i) => {
 		const child = editor.getShape(id)
-		if (child) editor.updateShape({ id, type: child.type, x: placements[i].x, y: placements[i].y })
+		if (child) editor.updateShape({ id, type: child.type, x: placements[i].x, y: placements[i].y } as TLShapePartial)
 	})
 }

@@ -13,7 +13,7 @@
  * Driven from the DEV-only "Stress test (…)" menu items in client/ui/components.tsx.
  * Remove this file + those items when done.
  */
-import { Editor, TLShape, TLShapeId, createShapeId } from 'tldraw'
+import { Editor, TLShape, TLShapeId, TLShapePartial, createShapeId } from 'tldraw'
 
 const DEFAULT_TIERS = [10, 25, 50, 100, 150, 250, 400, 600]
 const SETTLE_MS = 1200
@@ -73,7 +73,7 @@ export async function runShapeStressTest(editor: Editor, type: TLShape['type'], 
 		editor.run(
 			() => {
 				if (prev.length) editor.deleteShapes(prev)
-				for (const s of shapes) editor.createShape({ id: s.id, type, x: s.x, y: s.y })
+				for (const s of shapes) editor.createShape({ id: s.id, type, x: s.x, y: s.y } as TLShapePartial)
 			},
 			{ history: 'ignore' }
 		)

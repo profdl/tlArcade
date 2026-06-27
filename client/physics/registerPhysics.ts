@@ -32,7 +32,7 @@
  *
  * Mount once from <Tldraw onMount> alongside the others; it returns a disposer.
  */
-import { Editor, TLShapeId, Vec } from 'tldraw'
+import { Editor, TLShapeId, TLShapePartial, Vec } from 'tldraw'
 import { GridShape } from '../shapes/GridShape'
 
 /** Friction as velocity retained per millisecond (≈0.993/ms ≈ 0.9 per 16ms frame). */
@@ -137,7 +137,9 @@ export function registerPhysics(editor: Editor): () => void {
 						nvy = -Math.abs(nvy) * RESTITUTION
 					}
 
-					editor.updateShape({ id, type: shape.type, x: nx, y: ny })
+					// Cast: the runtime object is a valid partial, but updateShape's ~30-way
+					// overload can't resolve against the wide shape union (it does at scale).
+					editor.updateShape({ id, type: shape.type, x: nx, y: ny } as TLShapePartial)
 
 					nvx *= decay
 					nvy *= decay

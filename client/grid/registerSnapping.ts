@@ -10,7 +10,7 @@
  * the flush drains, skip while still dragging, guard against re-entry. Call once
  * from <Tldraw onMount>; returns a disposer.
  */
-import { Editor, TLShapeId } from 'tldraw'
+import { Editor, TLShapeId, TLShapePartial } from 'tldraw'
 import { GridShape } from '../shapes/GridShape'
 import { makeGrid } from './geometry'
 
@@ -69,7 +69,7 @@ function snapToGrid(editor: Editor, id: TLShapeId) {
 	const nextX = gridBounds.x + cell.x - bounds.width / 2
 	const nextY = gridBounds.y + cell.y - bounds.height / 2
 	if (Math.abs(nextX - shape.x) < 0.5 && Math.abs(nextY - shape.y) < 0.5) return
-	editor.updateShape({ id, type: shape.type, x: nextX, y: nextY })
+	editor.updateShape({ id, type: shape.type, x: nextX, y: nextY } as TLShapePartial)
 }
 
 /** The topmost grid whose bounds contain a page point. */
