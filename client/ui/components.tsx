@@ -34,7 +34,7 @@ import { DieShape } from '../shapes/DieShape'
 import { CreatureKindStyle, CREATURE_KINDS } from '../../shared/shape-schemas'
 import { creatureKindIcon } from '../creature/variants'
 import { useReferee } from '../referee/useReferee'
-import { runCreatureStressTest } from '../creature/stressTest'
+import { runCreatureStressTest, runSwimOptStressTest } from '../creature/stressTest'
 import { runShapeStressTest } from '../shapes/shapeStressTest'
 import { SwimDebugOverlay } from '../creature/SwimDebugOverlay'
 import { setSwimDebug, swimDebugEnabled } from '../creature/registerSwimming'
@@ -186,6 +186,13 @@ function GameMainMenu() {
 								icon="dots-horizontal"
 								readonlyOk={false}
 								onSelect={() => void runCreatureStressTest(editor, 'inkFish')}
+							/>
+							<TldrawUiMenuItem
+								id="stress-swim-opts"
+								label="Stress test (swim opts A/B/C → console)"
+								icon="dots-horizontal"
+								readonlyOk={false}
+								onSelect={() => void runSwimOptStressTest(editor, 'fish')}
 							/>
 							<TldrawUiMenuItem
 								id="stress-blooms"

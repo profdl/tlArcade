@@ -21,6 +21,7 @@
  */
 import { Editor, TLShapeId, createShapeId } from 'tldraw'
 import type { CreatureKind } from '../../shared/shape-schemas'
+import { getSwimOpts, setSwimOpts, type SwimOpts } from './registerSwimming'
 
 /** Which creature KIND this harness ramps (all freeze unless over a tank). The
  *  line-fish is now a `creature` of kind 'lineFish', so the harness ramps kinds of
@@ -174,6 +175,121 @@ export async function runCreatureStressTest(editor: Editor, kind: CreatureKind =
 	// eslint-disable-next-line no-console
 	console.log(`%c[${kind} stress] ${verdict}`, 'font-weight:bold;color:#2a7')
 	return { full, renderOnly }
+}
+
+// ── A/B/C OPTIMIZATION COMPARISON ──────────────────────────────────────────────
+/**
+ * Population to hold while measuring each optimization's effect. Picked in the range
+ * where the A/B/C ramp showed the SWIM LOOP (not rendering) dominating the frame — so a
+ * change in hit-testing cost actually moves the number. ~500 is past the render wall but
+ * not so deep that everything pins at single-digit FPS (where deltas are unreadable).
+ */
+const OPT_TEST_COUNT = 500
+/** Longer FPS window than the ramp — we're chasing smaller deltas, so average more frames. */
+const OPT_SAMPLE_MS = 4000
+
+/** Spawn `n` creatures of `kind`, scattered across the tank. */
+function spawnCreatures(editor: Editor, tank: ReturnType<typeof spawnTank>, n: number, kind: CreatureKind): void {
+	const ids: { id: TLShapeId; x: number; y: number }[] = []
+	for (let i = 0; i < n; i++) {
+		const fx = 0.06 + 0.88 * pseudo(i * 2 + 1)
+		const fy = 0.06 + 0.88 * pseudo(i * 2 + 2)
+		ids.push({ id: createShapeId(), x: tank.minX + fx * tank.w - 30, y: tank.minY + fy * tank.h - 16 })
+	}
+	editor.run(
+		() => {
+			for (const c of ids) editor.createShape({ id: c.id, type: 'creature', x: c.x, y: c.y, props: { kind } })
+		},
+		{ history: 'ignore' }
+	)
+}
+
+/**
+ * Measure how much EACH hit-testing optimization (A=spatial index, B=shared clusters,
+ * C=amortized clearance) contributes, by holding a fixed heavy population and sampling
+ * FPS under different flag combinations of the swim loop.
+ *
+ * The configs are chosen to attribute cost cleanly:
+ *   • "none"        — all three OFF: the pre-optimization baseline.
+ *   • "A only" / "B only" / "C only" — each opt alone vs the baseline = its OWN contribution.
+ *   • "all"         — all three ON: the shipped path; vs "none" = the total win.
+ * Comparing "all" against each "X off" (the leave-one-out you can read by eye from the
+ * single-opt rows) shows whether the opts are additive or overlap. The swim loop reads the
+ * flags live each tick, so flipping them needs no respawn — same fish, same positions,
+ * only the hit-testing path changes, which is the cleanest possible isolation.
+ */
+export async function runSwimOptStressTest(editor: Editor, kind: CreatureKind = DEFAULT_KIND) {
+	const saved = getSwimOpts() // restore the user's flags when we're done
+
+	// Clean slate, one tank, one fixed population for the whole comparison.
+	const existing = Array.from(editor.getCurrentPageShapeIds())
+	if (existing.length) editor.deleteShapes(existing)
+	const tank = spawnTank(editor)
+	editor.setCurrentTool('select')
+	window.__SWIM_OFF = false
+	spawnCreatures(editor, tank, OPT_TEST_COUNT, kind)
+	await wait(SETTLE_MS)
+
+	// eslint-disable-next-line no-console
+	console.log(
+		`%c[${kind} opt-test] ${OPT_TEST_COUNT} ${kind} in a ${Math.round(tank.w)}×${Math.round(tank.h)} tank — ` +
+			`A=spatialIndex B=sharedClusters C=amortizeClearance D=batchWrites`,
+		'font-weight:bold'
+	)
+
+	const OFF: SwimOpts = {
+		useSpatialIndex: false,
+		useSharedClusters: false,
+		amortizeClearance: false,
+		batchWrites: false,
+	}
+	const configs: { label: string; opts: SwimOpts }[] = [
+		{ label: 'none (baseline)', opts: { ...OFF } },
+		{ label: 'A only', opts: { ...OFF, useSpatialIndex: true } },
+		{ label: 'B only', opts: { ...OFF, useSharedClusters: true } },
+		{ label: 'C only', opts: { ...OFF, amortizeClearance: true } },
+		{ label: 'D only', opts: { ...OFF, batchWrites: true } },
+		{
+			label: 'all (A+B+C+D)',
+			opts: { useSpatialIndex: true, useSharedClusters: true, amortizeClearance: true, batchWrites: true },
+		},
+	]
+
+	const rows: { config: string; meanFps: number; worstFps: number; frameMs: number }[] = []
+	let baselineMs = 0
+	for (const cfg of configs) {
+		setSwimOpts(cfg.opts)
+		await wait(SETTLE_MS) // let the new path settle (cluster cache rebuild, etc.)
+		const { meanFps, worstFps, frameMs } = await sampleFps(OPT_SAMPLE_MS)
+		rows.push({ config: cfg.label, meanFps, worstFps, frameMs })
+		if (cfg.label.startsWith('none')) baselineMs = frameMs
+		// eslint-disable-next-line no-console
+		console.log(
+			`  [${cfg.label.padEnd(15)}]  ${meanFps.toFixed(0).padStart(3)} fps mean   ` +
+				`${worstFps.toFixed(0).padStart(3)} fps worst-5%   ${frameMs.toFixed(1)} ms/frame`
+		)
+	}
+
+	// Table with each config's ms saved vs the baseline (positive = faster).
+	// eslint-disable-next-line no-console
+	console.table(
+		rows.map((r) => ({
+			config: r.config,
+			'mean fps': Math.round(r.meanFps),
+			'worst-5% fps': Math.round(r.worstFps),
+			'ms/frame': r.frameMs.toFixed(1),
+			'ms saved vs baseline': (baselineMs - r.frameMs).toFixed(1),
+		}))
+	)
+	// eslint-disable-next-line no-console
+	console.log(
+		`%c[${kind} opt-test] Each single-opt row minus "none" = that opt's own win; "all" minus "none" = total. ` +
+			`If single wins sum to ≈ the total, they're additive; if "all" < the sum, they overlap.`,
+		'font-weight:bold;color:#2a7'
+	)
+
+	setSwimOpts(saved) // restore
+	return rows
 }
 
 /** Stable pseudo-random in [0,1) from an integer — scatter without Math.random. */

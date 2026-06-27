@@ -276,6 +276,13 @@ type SwimState = {
 	 * turn rounds the corner. Null until the first hunt seeds it; reset when food is lost.
 	 */
 	navAim: Vec | null
+	/**
+	 * Opt C: cached wall-clearance rays [left, right, up, down] from the last recompute,
+	 * reused for CLEARANCE_REFRESH_TICKS ticks before being recast (staggered by id). null
+	 * until the first recompute. Clearance changes slowly (a fish moves a few px/tick), so
+	 * reusing it for a few frames is invisible but quarters the per-tick ray-casts.
+	 */
+	clearance: [number, number, number, number] | null
 }
 
 /**
@@ -324,8 +331,81 @@ declare global {
 		__SWIM_OFF?: boolean
 		/** DEV: mirror of swimDebugEnabled, so the overlay can be flipped from the console. */
 		__SWIM_DEBUG?: boolean
+		/** DEV: per-optimization toggles, mirror of swimOpts (see below). */
+		__SWIM_OPTS?: Partial<SwimOpts>
 	}
 }
+
+// ── PER-OPTIMIZATION TOGGLES (for A/B/C/D performance measurement) ──────────────
+/**
+ * Four independently-switchable swim-loop optimizations, so the stress harness can
+ * measure how much EACH one contributes (flip one flag at a time). All default ON; the
+ * "Stress test (swim opts …)" menu item flips them and prints a side-by-side table.
+ *
+ * MEASURED RESULT (500 fish, ONE static tank — the common case): the whole spread from
+ * baseline to all-on was only ~1.3ms of a ~30ms frame (~4%). A/B/C each landed BELOW the
+ * run-to-run noise floor (their sign flipped between runs); D was the only consistent win
+ * (~1ms, and the only one that improved worst-5%). The dominant ~17ms swim cost is NOT
+ * hit-testing OR write batching — it's the store/reactive machinery reacting to N moving
+ * shapes each tick (inherent to the sync-for-free architecture). So these are kept as
+ * FUTURE-PROOFING, not proven wins: A is a clean native-API swap; B/C are expected to pay
+ * off in MULTI-ROOM / many-geo tanks (which a single rectangle doesn't exercise) and in
+ * cache-miss-heavy scenarios (creatures crossing tanks); re-measure with the harness there.
+ *
+ *   useSpatialIndex   — A: resolve the tank under a creature via tldraw's native R-tree
+ *                          (editor.getShapeIdsInsideBounds) instead of getShapeAtPoint,
+ *                          which additionally z-sorts/masks/label-tests every page shape.
+ *   useSharedClusters — B: build the connected-component tank CLUSTERS once per geo-topology
+ *                          change (shared by every creature) instead of each creature
+ *                          re-running the O(geo²) flood-fill on its own cache miss.
+ *   amortizeClearance — C: cache each creature's 4 wall-clearance rays in its SwimState and
+ *                          recompute them only every Nth tick, STAGGERED by id, instead of
+ *                          casting all four every tick.
+ *   batchWrites       — D: collect every creature's new position into ONE editor.updateShapes
+ *                          call per tick, instead of a per-creature editor.updateShape (each
+ *                          of which opens its own transaction + emits + single-record store
+ *                          .put). The only consistent win measured (~1ms / improved worst-5%);
+ *                          smaller than expected because the store.put of N records still
+ *                          drives the downstream reactive cost that dominates either way.
+ */
+export type SwimOpts = {
+	useSpatialIndex: boolean
+	useSharedClusters: boolean
+	amortizeClearance: boolean
+	batchWrites: boolean
+}
+
+/** The LIVE flags. Mutated in place by setSwimOpts so the running loop picks changes up
+ *  immediately (the tick closure reads this object every frame). */
+const swimOpts: SwimOpts = {
+	useSpatialIndex: true,
+	useSharedClusters: true,
+	amortizeClearance: true,
+	batchWrites: true,
+}
+
+/** Set one or more optimization flags (used by the stress harness + the console mirror).
+ *  Pass a partial; unspecified flags keep their current value. Returns the new full set. */
+export function setSwimOpts(opts: Partial<SwimOpts>): SwimOpts {
+	Object.assign(swimOpts, opts)
+	if (typeof window !== 'undefined') window.__SWIM_OPTS = { ...swimOpts }
+	return { ...swimOpts }
+}
+
+/** Read the current flags (the stress harness restores them after a run). */
+export function getSwimOpts(): SwimOpts {
+	return { ...swimOpts }
+}
+
+/**
+ * Opt C tuning: how many ticks a creature reuses its cached wall-clearance before
+ * recomputing. The recompute is STAGGERED by id (each creature recomputes on a
+ * different tick) so the cost spreads evenly instead of spiking on one frame. Higher =
+ * cheaper but staler avoidance; 4 keeps walls responsive at ~60fps (recompute ~15×/s)
+ * while quartering the ray-casts. Clearance changes slowly (a fish moves a few px/tick),
+ * so a few ticks of staleness is invisible.
+ */
+const CLEARANCE_REFRESH_TICKS = 4
 
 // ── DEBUG OVERLAY plumbing ─────────────────────────────────────────────────────
 /**
@@ -373,10 +453,20 @@ export function registerSwimming(editor: Editor): () => void {
 	// whole accumulated dt in one write, then reset — so throttling the write rate
 	// down (for big fleets) doesn't slow the swim, it just makes it coarser.
 	let sinceWrite = 0
+	// Monotonic tick counter — drives opt C's staggered clearance refresh (each creature
+	// recomputes its rays when (tick + idHash) % CLEARANCE_REFRESH_TICKS === 0).
+	let tickNo = 0
+	// Opt B: the SHARED cluster cache. Built once per geo-topology change and reused by
+	// every creature, instead of each creature flood-filling on its own miss. Lives for
+	// the loop's lifetime; self-invalidates when the geo shapes' ids/bounds change.
+	const clusterCache = new ClusterCache()
 
 	const onTick = (elapsedMs: number) => {
 		if (busy || elapsedMs <= 0) return
 		if (typeof window !== 'undefined' && window.__SWIM_OFF) return // profiling: render-only
+		// DEV: let the console flip optimization flags via window.__SWIM_OPTS (mirrors setSwimOpts).
+		if (typeof window !== 'undefined' && window.__SWIM_OPTS) Object.assign(swimOpts, window.__SWIM_OPTS)
+		tickNo++
 		// Never integrate while the pointer is down — writing positions under a live
 		// drag breaks hit-testing and the pointer-up release (same gate as physics).
 		if (editor.inputs.getIsPointing()) return
@@ -415,15 +505,21 @@ export function registerSwimming(editor: Editor): () => void {
 		const debugOn =
 			swimDebugEnabled.get() || (typeof window !== 'undefined' && !!window.__SWIM_DEBUG)
 		const snapshot: SwimDebugCreature[] = []
+		// Opt D: collect every creature's position partial and write them in ONE updateShapes
+		// after the loop (one transaction/emit/store.put instead of N). When opt D is off,
+		// swimOne writes inline and returns partial:null, so this stays empty.
+		const partials: TLShapePartial[] = []
 
 		busy = true
 		try {
 			editor.run(
 				() => {
 					for (const creature of creatures) {
-						const snap = swimOne(editor, creature, state, dt, debugOn)
-						if (debugOn && snap) snapshot.push(snap)
+						const step = swimOne(editor, creature, state, dt, debugOn, tickNo, clusterCache)
+						if (step.partial) partials.push(step.partial)
+						if (debugOn && step.snapshot) snapshot.push(step.snapshot)
 					}
+					if (partials.length > 0) editor.updateShapes(partials)
 				},
 				{ history: 'ignore' }
 			)
@@ -451,15 +547,24 @@ export function registerSwimming(editor: Editor): () => void {
  * `debug` is set, returns a snapshot for the overlay (heading/cluster/food target);
  * otherwise returns null. Returning null also covers the early-outs (no tank etc.).
  */
+/**
+ * The result of stepping one creature: its new position PARTIAL (to be written — batched
+ * by the caller, or already written inline when opt D is off, in which case partial is
+ * null), plus the optional debug snapshot. Either field may be null (no tank → no move).
+ */
+type SwimStep = { partial: TLShapePartial | null; snapshot: SwimDebugCreature | null }
+
 function swimOne(
 	editor: Editor,
 	creature: SwimmableShape,
 	all: Map<TLShapeId, SwimState>,
 	dt: number,
-	debug: boolean
-): SwimDebugCreature | null {
+	debug: boolean,
+	tickNo: number,
+	clusterCache: ClusterCache
+): SwimStep {
 	const bounds = editor.getShapePageBounds(creature.id)
-	if (!bounds) return null
+	if (!bounds) return EMPTY_STEP
 
 	// Lazily seed this creature's heading + centre from its current synced state,
 	// so we begin integrating from where (and how) the shape actually is. CRUCIAL:
@@ -481,6 +586,7 @@ function swimOne(
 			tank: null,
 			navNextRoom: null,
 			navAim: null,
+			clearance: null,
 		}
 		all.set(creature.id, s)
 	} else {
@@ -505,16 +611,21 @@ function swimOne(
 	let tank = s.tank
 	const inCached = tank !== null && clusterContains(tank, bounds.center) && !!editor.getShape(tank.seedId)
 	if (!inCached) {
-		const found = resolveCluster(editor, creature.id)
+		// Opt B: get the cluster from the SHARED cache (built once per topology change) —
+		// find the geo under the centre, then look up its precomputed connected component.
+		// Opt OFF: each creature flood-fills on its own miss (the original resolveCluster).
+		const found = swimOpts.useSharedClusters
+			? clusterCache.clusterFor(editor, creature.id)
+			: resolveCluster(editor, creature.id)
 		if (!found) {
 			// Left every tank → drop the cache and stop roaming (still undulates).
 			s.tank = null
-			return null
+			return EMPTY_STEP
 		}
 		s.tank = found
 		tank = found
 	}
-	if (!tank) return null // not in a tank → no roaming (it still undulates in place)
+	if (!tank) return EMPTY_STEP // not in a tank → no roaming (it still undulates in place)
 
 	// Remember the heading BEFORE this tick's steering so we can cap the total turn (below).
 	// All of meander + food + wall-avoidance adjust s.heading; the cap is applied once, to
@@ -533,7 +644,14 @@ function swimOne(
 
 	// WALL AVOIDANCE (not bounce): nudge the heading toward the tank interior as the body
 	// nears an OUTER wall, so it curves away before contact. Runs AFTER food steering.
-	steerFromWalls(tank, s, dt)
+	// Opt C: recompute the 4 clearance rays only every CLEARANCE_REFRESH_TICKS ticks,
+	// STAGGERED by id (so the cost spreads across frames, not all on one); reuse the cache
+	// otherwise. When the opt is off, recompute every tick (the original behaviour).
+	const refresh =
+		!swimOpts.amortizeClearance ||
+		s.clearance === null ||
+		(tickNo + idStagger(creature.id)) % CLEARANCE_REFRESH_TICKS === 0
+	steerFromWalls(tank, s, dt, refresh)
 
 	// SMOOTH THE TURN — speed cap PLUS acceleration limit. The steppers above mutated s.heading
 	// into the DESIRED heading; treat the net change as the turn the steering wants this tick.
@@ -621,27 +739,41 @@ function swimOne(
 	const half = new Vec(creature.props.w / 2, creature.props.h / 2).rot(rotation) // centre→top-left, rotated
 	// Cast: both swimmable types are valid partials, but updateShape's wide overload can't
 	// resolve against the union by `creature.type` alone (the repo's standard escape hatch).
-	editor.updateShape({
+	const partial = {
 		id: creature.id,
 		type: creature.type,
 		x: s.cx - half.x,
 		y: s.cy - half.y,
 		rotation,
-	} as TLShapePartial)
+	} as TLShapePartial
+
+	// Opt D: when batching is ON, the caller collects this partial and writes ALL creatures
+	// in ONE editor.updateShapes (one transaction + emit + store.put, not N). When OFF, write
+	// inline per-creature (the original path) and report it as already-written (partial: null).
+	if (!swimOpts.batchWrites) {
+		editor.updateShape(partial)
+	}
+	const partialOut = swimOpts.batchWrites ? partial : null
 
 	// DEBUG snapshot (only built when the overlay is on): the post-step centre + heading,
 	// the cluster boxes, and the current food target. All page-space; the overlay maps it.
-	if (!debug) return null
+	if (!debug) return { partial: partialOut, snapshot: null }
 	return {
-		id: creature.id,
-		center: { x: s.cx, y: s.cy },
-		heading: s.heading,
-		boxes: tank.boxes.map((b) => ({ x: b.minX, y: b.minY, w: b.width, h: b.height })),
-		food: food ? { x: food.box.center.x, y: food.box.center.y } : null,
-		// Show the SMOOTHED aim (what the body actually steers at), not the raw step waypoint.
-		waypoint: s.navAim ? { x: s.navAim.x, y: s.navAim.y } : waypoint ? { x: waypoint.x, y: waypoint.y } : null,
+		partial: partialOut,
+		snapshot: {
+			id: creature.id,
+			center: { x: s.cx, y: s.cy },
+			heading: s.heading,
+			boxes: tank.boxes.map((b) => ({ x: b.minX, y: b.minY, w: b.width, h: b.height })),
+			food: food ? { x: food.box.center.x, y: food.box.center.y } : null,
+			// Show the SMOOTHED aim (what the body actually steers at), not the raw step waypoint.
+			waypoint: s.navAim ? { x: s.navAim.x, y: s.navAim.y } : waypoint ? { x: waypoint.x, y: waypoint.y } : null,
+		},
 	}
 }
+
+/** A no-op step (no move, no snapshot) for swimOne's early-outs. */
+const EMPTY_STEP: SwimStep = { partial: null, snapshot: null }
 
 function clamp(n: number, lo: number, hi: number): number {
 	return n < lo ? lo : n > hi ? hi : n
@@ -728,15 +860,22 @@ function steerTowardFood(
  * only a true outer edge is near → only it steers. Margin scales to the local room so rooms of
  * any size steer naturally.
  */
-function steerFromWalls(tank: Cluster, s: SwimState, dt: number): void {
+function steerFromWalls(tank: Cluster, s: SwimState, dt: number, refresh: boolean): void {
 	const home = boxContaining(tank, s.cx, s.cy) ?? nearestBox(tank, s.cx, s.cy)
 	const margin = Math.min(home.width, home.height) * AVOID_MARGIN
 	if (margin <= 0) return
 
-	const dxL = clusterClearance(tank, s.cx, s.cy, -1, 0) // room to the LEFT
-	const dxR = clusterClearance(tank, s.cx, s.cy, 1, 0) // room to the RIGHT
-	const dyT = clusterClearance(tank, s.cx, s.cy, 0, -1) // room UP
-	const dyB = clusterClearance(tank, s.cx, s.cy, 0, 1) // room DOWN
+	// Opt C: recast the 4 rays only on a refresh tick; otherwise reuse the cached values.
+	// The cache (s.clearance) is seeded on the first call (refresh is forced true then).
+	if (refresh || s.clearance === null) {
+		s.clearance = [
+			clusterClearance(tank, s.cx, s.cy, -1, 0), // LEFT
+			clusterClearance(tank, s.cx, s.cy, 1, 0), // RIGHT
+			clusterClearance(tank, s.cx, s.cy, 0, -1), // UP
+			clusterClearance(tank, s.cx, s.cy, 0, 1), // DOWN
+		]
+	}
+	const [dxL, dxR, dyT, dyB] = s.clearance
 	// Per axis, combine the two opposing walls into ONE smooth push (axisPush): a one-sided
 	// shove when only one wall is near, a CENTERING force in a narrow corridor (both near) —
 	// which has no sign-flip, so the heading isn't whipped between walls (the corridor "glitch").
@@ -824,14 +963,46 @@ export function tankUnderCached(editor: Editor, id: TLShapeId, cache: { current:
 function tankUnderWithId(editor: Editor, id: TLShapeId): { id: TLShapeId; bounds: Box } | undefined {
 	const bounds = editor.getShapePageBounds(id)
 	if (!bounds) return undefined
-	const tank = editor.getShapeAtPoint(bounds.center, {
-		filter: (s) => s.type === 'geo',
-		hitInside: true,
-	})
-	if (!tank) return undefined
-	const tankBounds = editor.getShapePageBounds(tank.id)
-	if (!tankBounds) return undefined
-	return { id: tank.id, bounds: tankBounds }
+	const found = geoUnderPoint(editor, bounds.center)
+	if (!found) return undefined
+	return { id: found.id, bounds: found.bounds }
+}
+
+/**
+ * The native geo shape whose page-space AABB contains `point` (the innermost/smallest
+ * such, so a creature inside a small room nested in a big one picks the room). Opt A:
+ * when useSpatialIndex is on, query tldraw's native R-tree (getShapeIdsInsideBounds)
+ * for the few candidates overlapping the point, then keep the geos that truly contain it
+ * — far cheaper than getShapeAtPoint, which additionally z-sorts every page shape and
+ * runs label/mask/hollow-area logic we don't need. Opt OFF: the original getShapeAtPoint.
+ *
+ * Both paths agree on the result: "the geo box under this point". We pick the SMALLEST
+ * area on a tie so nesting resolves to the tightest enclosing tank (getShapeAtPoint's
+ * hollow-area tiebreak does the same), keeping behaviour identical with the opt on or off.
+ */
+function geoUnderPoint(editor: Editor, point: { x: number; y: number }): { id: TLShapeId; bounds: Box } | undefined {
+	if (!swimOpts.useSpatialIndex) {
+		const tank = editor.getShapeAtPoint(point, { filter: (s) => s.type === 'geo', hitInside: true })
+		if (!tank) return undefined
+		const tankBounds = editor.getShapePageBounds(tank.id)
+		return tankBounds ? { id: tank.id, bounds: tankBounds } : undefined
+	}
+	// R-tree: a zero-size box at the point returns every shape whose AABB overlaps it.
+	const candidateIds = editor.getShapeIdsInsideBounds(new Box(point.x, point.y, 0, 0))
+	let best: { id: TLShapeId; bounds: Box } | undefined
+	let bestArea = Infinity
+	for (const cid of candidateIds) {
+		const shape = editor.getShape(cid)
+		if (!shape || shape.type !== 'geo') continue
+		const b = editor.getShapePageBounds(cid)
+		if (!b || !b.containsPoint(point)) continue // AABB overlap → confirm true contains
+		const area = b.width * b.height
+		if (area < bestArea) {
+			bestArea = area
+			best = { id: cid, bounds: b }
+		}
+	}
+	return best
 }
 
 // ── TANK CLUSTERS: navigation spanning touching geo shapes ─────────────────────
@@ -865,20 +1036,32 @@ function boxesTouch(a: Box, b: Box): boolean {
 function resolveCluster(editor: Editor, creatureId: TLShapeId): Cluster | undefined {
 	const seed = tankUnderWithId(editor, creatureId)
 	if (!seed) return undefined
+	return buildClusterFromSeed(seed.id, seed.bounds, collectGeos(editor))
+}
 
-	// Collect every geo shape's AABB once, then flood-fill from the seed over touches.
+/** Collect every native geo shape on the page with its page-space AABB. The one O(N)
+ *  sweep both the per-creature resolveCluster and the shared ClusterCache build on. */
+function collectGeos(editor: Editor): { id: TLShapeId; box: Box }[] {
 	const geos: { id: TLShapeId; box: Box }[] = []
 	for (const shape of editor.getCurrentPageShapes()) {
 		if (shape.type !== 'geo') continue
 		const box = editor.getShapePageBounds(shape.id)
 		if (box) geos.push({ id: shape.id, box })
 	}
+	return geos
+}
 
-	const boxes: Box[] = []
-	const memberIds: TLShapeId[] = [seed.id]
-	const visited = new Set<TLShapeId>([seed.id])
-	const frontier: Box[] = [seed.bounds]
-	boxes.push(seed.bounds)
+/**
+ * Flood-fill the connected component of touching geo boxes reachable from `seedId`, then
+ * build its Cluster (boxes, union AABB, member ids, room nav-graph). Pure over the given
+ * `geos` snapshot — shared by resolveCluster (per-creature) and ClusterCache (build-all),
+ * so both produce byte-identical clusters; only WHEN/HOW OFTEN it runs differs.
+ */
+function buildClusterFromSeed(seedId: TLShapeId, seedBounds: Box, geos: { id: TLShapeId; box: Box }[]): Cluster {
+	const boxes: Box[] = [seedBounds]
+	const memberIds: TLShapeId[] = [seedId]
+	const visited = new Set<TLShapeId>([seedId])
+	const frontier: Box[] = [seedBounds]
 	while (frontier.length > 0) {
 		const cur = frontier.pop()!
 		for (const g of geos) {
@@ -910,7 +1093,73 @@ function resolveCluster(editor: Editor, creatureId: TLShapeId): Cluster | undefi
 	// each connection. Built once here; the per-tick path is a tiny BFS over `adj`.
 	const { adj, doorways } = buildRoomGraph(boxes)
 
-	return { seedId: seed.id, boxes, union, memberIds, adj, doorways }
+	return { seedId, boxes, union, memberIds, adj, doorways }
+}
+
+/**
+ * Opt B: the SHARED tank-cluster cache. Partitions ALL the page's geo shapes into their
+ * connected components (clusters) ONCE per geo-topology change, and indexes every member
+ * geo id → its cluster. So when N creatures share one tank, the O(geo²) flood-fill runs
+ * ONCE for the whole page on a topology change — not once per creature per cache-miss.
+ *
+ * Invalidation is by a cheap TOPOLOGY SIGNATURE (sorted "id:minX,minY,w,h" of every geo):
+ * if a geo is added/removed/moved/resized the signature changes and we rebuild; otherwise
+ * the cached clusters are reused across ticks. Creatures moving does NOT invalidate it
+ * (only geo shapes form tanks), so in the steady state of "many fish in a static tank"
+ * this rebuilds ~never. This is the boids "shared neighbour list" idea: the walls are the
+ * neighbours, they change far less than the swimmers, so compute them once and share.
+ */
+class ClusterCache {
+	private sig = ''
+	private byGeoId = new Map<TLShapeId, Cluster>()
+
+	/** The cluster a creature lives in: find the geo under its centre (opt A's lookup),
+	 *  then return that geo's precomputed connected component. Rebuilds all clusters first
+	 *  iff the geo topology changed since the last build. */
+	clusterFor(editor: Editor, creatureId: TLShapeId): Cluster | undefined {
+		const seed = tankUnderWithId(editor, creatureId)
+		if (!seed) return undefined
+		this.ensureBuilt(editor)
+		return this.byGeoId.get(seed.id)
+	}
+
+	/** Rebuild the cluster partition iff the geo topology signature changed. */
+	private ensureBuilt(editor: Editor): void {
+		const geos = collectGeos(editor)
+		const sig = topologySignature(geos)
+		if (sig === this.sig && this.byGeoId.size > 0) return // unchanged → reuse
+		this.sig = sig
+		this.byGeoId.clear()
+		// Partition every geo into connected components; each unvisited geo seeds a cluster
+		// whose every member is then indexed to it (so any member id resolves O(1)).
+		const assigned = new Set<TLShapeId>()
+		for (const g of geos) {
+			if (assigned.has(g.id)) continue
+			const cluster = buildClusterFromSeed(g.id, g.box, geos)
+			for (const memberId of cluster.memberIds) {
+				assigned.add(memberId)
+				this.byGeoId.set(memberId, cluster)
+			}
+		}
+	}
+}
+
+/** A stable signature of the geo topology: sorted "id:minX,minY,w,h" of every geo box.
+ *  Changes iff a geo is added/removed/moved/resized → the only events that alter tanks. */
+function topologySignature(geos: { id: TLShapeId; box: Box }[]): string {
+	return geos
+		.map((g) => `${g.id}:${g.box.minX | 0},${g.box.minY | 0},${g.box.width | 0},${g.box.height | 0}`)
+		.sort()
+		.join('|')
+}
+
+/** A small per-id offset in [0, CLEARANCE_REFRESH_TICKS) so creatures recompute their
+ *  wall-clearance on DIFFERENT ticks (opt C), spreading the cost instead of spiking it
+ *  on one frame. Deterministic hash of the shape id string. */
+function idStagger(id: TLShapeId): number {
+	let h = 0
+	for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
+	return Math.abs(h) % CLEARANCE_REFRESH_TICKS
 }
 
 /**
