@@ -91,11 +91,21 @@ const TURN_RATE = 0.0004
  * change toward it so the body can never spin instantly. Without it, a steering TARGET that
  * jumps — e.g. the food waypoint flipping from a doorway to the next room's centre, an angle
  * swing of up to ~180° — would snap the rotation in a single tick (the per-tick ease factor
- * AVOID_RATE·dt approaches 1 at the dt cap). ~0.006 rad/ms ≈ 0.34°/ms ≈ a graceful ~90°
- * turn over ~260ms regardless of how abruptly the target moves, so doorway hand-offs read as
- * a smooth bank, not a snap.
+ * AVOID_RATE·dt approaches 1 at the dt cap). ~0.004 rad/ms ≈ 0.23°/ms ≈ a graceful ~90°
+ * turn over ~390ms regardless of how abruptly the target moves, so doorway hand-offs read as
+ * a smooth bank, not a snap. Tuned DOWN from 0.006 for lazier, more fish-like banking; if a
+ * creature starts clipping a tight doorway corner before correcting, nudge it back up.
  */
-const MAX_TURN_SPEED = 0.006
+const MAX_TURN_SPEED = 0.004
+/**
+ * Per-ms low-pass factor for the ANGULAR VELOCITY (s.turnRate) easing toward the turn the
+ * steering wants this tick — an ACCELERATION limit on top of the speed cap. Without it the
+ * turn rate can step 0 → MAX_TURN_SPEED the instant a target switches, so the body snaps into
+ * a constant-rate turn (the "sudden turn" that survives the speed cap). Easing the rate ramps
+ * each turn in and out — an S-curve bank. ~0.01/ms ≈ a ~100ms spin-up: quick enough to still
+ * dodge walls, slow enough that a target switch no longer reads as a jerk. Lower = lazier.
+ */
+const TURN_ACCEL = 0.01
 /**
  * How firmly the creature steers away from a wall, in radians/ms at full depth. Tuned
  * UP from the original gentle 0.004: at the old rate a creature aimed straight at a wall
@@ -137,6 +147,25 @@ const EATEN_COLOR = 'black'
  * food in open water still reads as a deliberate beeline over the idle meander.
  */
 const FOOD_ATTRACT_RATE = 0.012
+/**
+ * How fast the SMOOTHED aim point (s.navAim) eases toward the raw nav waypoint, per ms. The
+ * raw waypoint jumps when the plan advances (doorway → next room → food); easing the aim
+ * across that jump turns the desired-heading step into a continuous sweep, so the body rounds
+ * the corner instead of pivoting. ~0.006/ms ≈ a ~165ms glide — long enough to visibly round a
+ * doorway hand-off, short enough that the aim still leads the body to its actual target.
+ */
+const AIM_EASE = 0.006
+/**
+ * Minimum LOOK-AHEAD distance (page px) for food steering. The desired heading is the bearing
+ * to the aim point, `atan2(aim − pos)` — which is numerically UNSTABLE when the aim sits right
+ * on top of the body: a tiny position change swings the bearing wildly. That's the residual
+ * jerk at a doorway hand-off — the fish is parked on the old aim (the doorway) just as it
+ * switches, so the bearing to the gliding aim whips around. We fade the steering strength to
+ * zero as the aim comes within this radius, so a near, fast-swinging bearing barely nudges the
+ * heading and the fish coasts straight through on its existing course until the aim leads far
+ * enough ahead again to give a stable bearing. ~1.5 body-lengths' worth in typical use.
+ */
+const MIN_AIM_DIST = 60
 /**
  * A creature "reaches" (eats) food once its centre is within this slack of the food
  * box (page px). A little positive slack so the body need only TOUCH the food, not have
@@ -181,6 +210,15 @@ const DRAG_RESYNC_DIST = 8
  */
 type SwimState = {
 	heading: number
+	/**
+	 * Current ANGULAR VELOCITY (radians/ms) — the heading's rate of change, low-passed toward
+	 * the per-tick desired turn. Capping the turn (MAX_TURN_SPEED) bounds the rate but lets it
+	 * jump 0 → max the instant a target switches: a constant turn that snaps ON reads as a
+	 * "sudden turn". Easing the RATE (an acceleration limit, TURN_ACCEL) makes the body ramp
+	 * into and out of every turn — an S-curve bank with no angular-velocity discontinuity — so
+	 * a target switch starts the turn gently instead of abruptly.
+	 */
+	turnRate: number
 	wander: number
 	cx: number
 	cy: number
@@ -197,6 +235,16 @@ type SwimState = {
 	 * while transiting. Cleared when there's no food or the plan is reached/invalid.
 	 */
 	navNextRoom: number | null
+	/**
+	 * SMOOTHED AIM POINT (page space), low-passed toward the raw nav waypoint each tick. The
+	 * raw waypoint is a STEP function — it jumps the instant the plan advances (doorway → next
+	 * room's centre, or → the food). Steering at the raw point makes the desired heading jump
+	 * too, so the body pivots abruptly (only bounded, not rounded, by the turn-rate cap). We
+	 * instead steer toward THIS, which eases toward the raw waypoint (aimEase), so when the
+	 * waypoint switches the aim glides across and the `want` angle changes continuously — the
+	 * turn rounds the corner. Null until the first hunt seeds it; reset when food is lost.
+	 */
+	navAim: Vec | null
 }
 
 /**
@@ -394,12 +442,14 @@ function swimOne(
 	if (!s) {
 		s = {
 			heading: creature.rotation - Math.PI,
+			turnRate: 0, // starts not turning; eases up as steering demands
 			wander: creature.props.seed * 10,
 			cx: bounds.center.x,
 			cy: bounds.center.y,
 			speed: 0, // eases up from rest on the first strokes
 			tank: null,
 			navNextRoom: null,
+			navAim: null,
 		}
 		all.set(creature.id, s)
 	} else {
@@ -411,6 +461,7 @@ function swimOne(
 			s.cx = bounds.center.x
 			s.cy = bounds.center.y
 			s.heading = creature.rotation - Math.PI
+			s.turnRate = 0 // start fresh from the placed angle, not mid-turn
 		}
 	}
 
@@ -466,11 +517,25 @@ function swimOne(
 		// the natural scale for "past the threshold" without being so large a small room fails it.
 		const bodyInset = Math.min(creature.props.w, creature.props.h) / 2
 		waypoint = navWaypoint(tank, s, s.cx, s.cy, food.box.center, bodyInset)
-		// Steer the heading toward the waypoint, scaled like wall-avoidance.
-		const want = Math.atan2(waypoint.y - s.cy, waypoint.x - s.cx)
+		// EASE a smoothed aim point toward the raw waypoint, then steer at the SMOOTHED point.
+		// When the waypoint jumps (plan advances), the aim glides across the gap so the desired
+		// heading sweeps continuously and the turn rounds the corner instead of pivoting. Snap
+		// the aim straight to the waypoint on the first tick (no prior aim) so it starts correct.
+		if (!s.navAim) s.navAim = new Vec(waypoint.x, waypoint.y)
+		else {
+			const k = Math.min(1, AIM_EASE * dt)
+			s.navAim = new Vec(s.navAim.x + (waypoint.x - s.navAim.x) * k, s.navAim.y + (waypoint.y - s.navAim.y) * k)
+		}
+		// Steer the heading toward the smoothed aim, scaled like wall-avoidance — but FADE the
+		// strength out as the aim comes within MIN_AIM_DIST, where the bearing to it gets
+		// numerically unstable (a near point swings its angle fast). The fade lets the fish
+		// coast straight through a close aim instead of jerking toward a whipping bearing.
+		const aimDist = Math.hypot(s.navAim.x - s.cx, s.navAim.y - s.cy)
+		const nearFade = Math.min(1, aimDist / MIN_AIM_DIST) // 0 at the body → 1 past the radius
+		const want = Math.atan2(s.navAim.y - s.cy, s.navAim.x - s.cx)
 		let diff = want - s.heading
 		diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // shortest angular path
-		s.heading += diff * Math.min(1, FOOD_ATTRACT_RATE * dt)
+		s.heading += diff * Math.min(1, FOOD_ATTRACT_RATE * dt) * nearFade
 
 		// EAT on contact: once the centre is within EAT_SLACK of the food box, mark it
 		// eaten (color → black). This is a normal store write; it's already inside the
@@ -480,8 +545,10 @@ function swimOne(
 			editor.updateShape({ id: food.id, type: 'geo', props: { color: EATEN_COLOR } })
 		}
 	} else {
-		// No food in reach → drop any stale route commitment so the next hunt re-plans fresh.
+		// No food in reach → drop the route commitment AND the smoothed aim so the next hunt
+		// re-plans fresh and the aim doesn't lerp from a stale point.
 		s.navNextRoom = null
+		s.navAim = null
 	}
 
 	// WALL AVOIDANCE (not bounce): as the body's centre nears a wall, steer the
@@ -508,10 +575,15 @@ function swimOne(
 		const dxR = clusterClearance(tank, s.cx, s.cy, 1, 0) // room to the RIGHT
 		const dyT = clusterClearance(tank, s.cx, s.cy, 0, -1) // room UP
 		const dyB = clusterClearance(tank, s.cx, s.cy, 0, 1) // room DOWN
-		if (dxL < margin) ax += 1 - dxL / margin // little room left → push right
-		if (dxR < margin) ax -= 1 - dxR / margin // little room right → push left
-		if (dyT < margin) ay += 1 - dyT / margin // little room up → push down
-		if (dyB < margin) ay -= 1 - dyB / margin // little room down → push up
+		// Per axis, combine the two opposing walls into ONE smooth push. When only one side is
+		// near, this is the old one-sided shove. When BOTH sides are near — a NARROW CORRIDOR —
+		// summing two near-equal opposing shoves left a tiny residual that FLIPPED SIGN as the
+		// body wobbled off-centre, whipping the heading side to side (the corridor "glitch").
+		// axisPush instead returns a centering force from the relative clearance: zero at the
+		// centreline, smoothly toward the roomier side, so a corridor gently centres the body
+		// instead of bouncing it between walls.
+		ax = axisPush(dxL, dxR, margin)
+		ay = axisPush(dyT, dyB, margin)
 	}
 	if (ax !== 0 || ay !== 0) {
 		// Rotate `heading` toward the away-direction by an amount scaled to depth.
@@ -522,16 +594,18 @@ function swimOne(
 		s.heading += diff * Math.min(1, AVOID_RATE * dt * depth)
 	}
 
-	// CAP THE TURN RATE. The steering above can propose an abrupt heading change — most
-	// visibly when the food waypoint flips between rooms (a near-180° swing) — which, written
-	// straight to rotation, snaps the body. Clamp the NET turn this tick to MAX_TURN_SPEED·dt
-	// (shortest angular path), so the body banks toward the new heading smoothly no matter how
-	// suddenly the target jumped. The cap is generous enough not to slow normal wander/avoid.
-	let turn = s.heading - prevHeading
-	turn = Math.atan2(Math.sin(turn), Math.cos(turn)) // shortest signed delta in (−π, π]
-	const maxTurn = MAX_TURN_SPEED * dt
-	if (turn > maxTurn) s.heading = prevHeading + maxTurn
-	else if (turn < -maxTurn) s.heading = prevHeading - maxTurn
+	// SMOOTH THE TURN — speed cap PLUS acceleration limit. The steppers above mutated s.heading
+	// into the DESIRED heading; treat the net change as the turn the steering wants this tick.
+	//   1) Desired angular velocity = shortest(desired − prev) / dt, clamped to ±MAX_TURN_SPEED.
+	//   2) Ease the actual rate (s.turnRate) toward that desired rate (TURN_ACCEL) — so the body
+	//      ramps into and out of turns instead of snapping to a constant rate when a target
+	//      switches. This S-curve is what finally kills the "sudden turn" on a waypoint flip.
+	//   3) Apply the eased rate to prev → the new heading.
+	let desiredTurn = s.heading - prevHeading
+	desiredTurn = Math.atan2(Math.sin(desiredTurn), Math.cos(desiredTurn)) // shortest signed delta
+	const desiredRate = clamp(dt > 0 ? desiredTurn / dt : 0, -MAX_TURN_SPEED, MAX_TURN_SPEED)
+	s.turnRate += (desiredRate - s.turnRate) * Math.min(1, TURN_ACCEL * dt)
+	s.heading = prevHeading + s.turnRate * dt
 
 	// PROPULSION: modulate forward speed, read from the same clock+seed+speed the body
 	// renders with — so the canvas surge lines up with the VISIBLE animation on every
@@ -574,29 +648,35 @@ function swimOne(
 		s.cx += Math.cos(s.heading) * s.speed * dt
 		s.cy += Math.sin(s.heading) * s.speed * dt
 	}
-	// CONFINE to the cluster. The union of touching boxes is non-convex, so we can't
-	// clamp to one AABB. confineToCluster projects the centre back inside whichever box
-	// it's in (or nearest, when a step crossed a seam) — so the creature is held inside
-	// the whole multi-room region but can pass freely between abutting rooms. We inset by
-	// the half-extents so the BODY stays inside, but only as far as each box allows (a
-	// narrow room never insets past its own centre), matching the old single-tank clamp.
-	const halfW = creature.props.w / 2
-	const halfH = creature.props.h / 2
-	const confined = confineToCluster(tank, s.cx, s.cy, halfW, halfH)
+	// FACE THE HEADING (per-kind) — computed BEFORE confinement so the clamp can use the
+	// body's ROTATED footprint. The body is drawn head-LEFT in local space (forward = −x), so
+	// heading + π points the head along travel. A crab adds a 90° facingOffset so its SIDE
+	// leads (sideways scuttle); a jellyfish is `upright` — it stays bell-up but leans by the
+	// STROKE TILT (jellyTilt, computed above) so the bell points along its tilted jet.
+	const face = FACING[creature.props.kind] ?? FACING.fish
+	const rotation = face.upright ? jellyTilt : s.heading + Math.PI + face.facingOffset
+
+	// CONFINE to the cluster. The union of touching boxes is non-convex, so we can't clamp to
+	// one AABB. confineToCluster projects the centre back inside whichever box it's in (or
+	// nearest, when a step crossed a seam) — held inside the whole multi-room region but free
+	// to pass between rooms. We inset by the body's ROTATED AABB half-extents, NOT the raw
+	// w/2,h/2: a fish is wide and short, so when it's pointing DOWN a narrow vertical corridor
+	// its true horizontal footprint is ~h/2, not w/2. Insetting by the un-rotated w/2 there
+	// over-pushed it off both side walls every tick — a fight that jittered its position in the
+	// corridor. The rotated AABB matches the body's actual span on each axis, so the clamp is
+	// stable. half-extents of a w×h box rotated by θ: (|cosθ|w+|sinθ|h)/2, (|sinθ|w+|cosθ|h)/2.
+	const cosR = Math.abs(Math.cos(rotation))
+	const sinR = Math.abs(Math.sin(rotation))
+	const halfX = (cosR * creature.props.w + sinR * creature.props.h) / 2
+	const halfY = (sinR * creature.props.w + cosR * creature.props.h) / 2
+	const confined = confineToCluster(tank, s.cx, s.cy, halfX, halfY)
 	s.cx = confined.x
 	s.cy = confined.y
 
-	// FACE THE HEADING (per-kind). The body is drawn head-LEFT in local space
-	// (forward = −x), so heading + π points the head along travel. A crab adds a
-	// 90° facingOffset so its SIDE leads (sideways scuttle); a jellyfish is `upright`
-	// — it stays bell-up but leans by the STROKE TILT (jellyTilt, computed above) so the
-	// bell points along its tilted jet and zig-zags as it climbs. Derive the top-left
-	// from the desired CENTRE + rotation in ONE write so position and rotation never
-	// disagree. NOTE: tldraw rotates about the top-left ORIGIN, so the centre→top-left
-	// offset is (halfW, halfH) ROTATED by the angle.
-	const face = FACING[creature.props.kind] ?? FACING.fish
-	const rotation = face.upright ? jellyTilt : s.heading + Math.PI + face.facingOffset
-	const half = new Vec(halfW, halfH).rot(rotation) // centre→top-left offset, rotated
+	// Derive the top-left from the desired CENTRE + rotation in ONE write so position and
+	// rotation never disagree. tldraw rotates about the top-left ORIGIN, so the centre→top-left
+	// offset is (w/2, h/2) ROTATED by the angle.
+	const half = new Vec(creature.props.w / 2, creature.props.h / 2).rot(rotation) // centre→top-left, rotated
 	editor.updateShape<CreatureShape>({
 		id: creature.id,
 		type: 'creature',
@@ -614,12 +694,39 @@ function swimOne(
 		heading: s.heading,
 		boxes: tank.boxes.map((b) => ({ x: b.minX, y: b.minY, w: b.width, h: b.height })),
 		food: food ? { x: food.box.center.x, y: food.box.center.y } : null,
-		waypoint: waypoint ? { x: waypoint.x, y: waypoint.y } : null,
+		// Show the SMOOTHED aim (what the body actually steers at), not the raw step waypoint.
+		waypoint: s.navAim ? { x: s.navAim.x, y: s.navAim.y } : waypoint ? { x: waypoint.x, y: waypoint.y } : null,
 	}
 }
 
 function clamp(n: number, lo: number, hi: number): number {
 	return n < lo ? lo : n > hi ? hi : n
+}
+
+/**
+ * Combine the two opposing wall clearances on ONE axis into a single avoidance push, in
+ * [-1, 1]. `loClear` is the room toward the negative direction (left / up), `hiClear` toward
+ * the positive (right / down); the result is positive to push in the POSITIVE direction
+ * (toward the roomier side). Beyond `margin` a wall doesn't contribute.
+ *
+ *   • One side near  → the classic one-sided shove away from it (magnitude grows as it nears).
+ *   • BOTH sides near (a narrow corridor) → a CENTERING force from the relative clearance:
+ *       (hiClear − loClear) / margin, clamped — ZERO on the centreline and smoothly toward the
+ *       roomier wall. This is the fix for the corridor glitch: summing two near-equal opposing
+ *       shoves produced a tiny residual that flipped sign as the body wobbled, whipping the
+ *       heading; a difference-based centering force has no such sign-flip and settles the body
+ *       on the corridor's midline instead of bouncing it between the walls.
+ */
+function axisPush(loClear: number, hiClear: number, margin: number): number {
+	const loNear = loClear < margin
+	const hiNear = hiClear < margin
+	if (loNear && hiNear) {
+		// Narrow passage: centre smoothly between the two walls.
+		return clamp((hiClear - loClear) / margin, -1, 1)
+	}
+	if (loNear) return 1 - loClear / margin // wall on the negative side → push positive
+	if (hiNear) return -(1 - hiClear / margin) // wall on the positive side → push negative
+	return 0
 }
 
 /**
