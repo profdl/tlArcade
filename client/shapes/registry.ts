@@ -32,6 +32,7 @@ import { SpiderShapeUtil } from './SpiderShape'
 import { SpiderBlobsShapeUtil } from './SpiderBlobsShape'
 import { SpiderOvalShapeUtil } from './SpiderOvalShape'
 import { CanvasSnakeShapeUtil } from './CanvasSnakeShape'
+import { LineFishShapeUtil } from './LineFishShape'
 import { CreatureShapeUtil } from './CreatureShape'
 import { DieShapeUtil } from './DieShape'
 import { GridShapeUtil } from './GridShape'
@@ -68,6 +69,7 @@ export const gameShapeUtils: TLAnyShapeUtilConstructor[] = [
 	SpiderBlobsShapeUtil,
 	SpiderOvalShapeUtil,
 	CanvasSnakeShapeUtil,
+	LineFishShapeUtil,
 	// ← add your `<Your>ShapeUtil` here
 ]
 

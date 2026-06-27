@@ -123,6 +123,13 @@ function GameMainMenu() {
 							onSelect={() => addAtCenter(editor, 'canvasSnake', 130, 60)}
 						/>
 						<TldrawUiMenuItem
+							id="add-line-fish"
+							label="Add line fish (centreline per segment)"
+							icon="plus"
+							readonlyOk={false}
+							onSelect={() => addAtCenter(editor, 'lineFish', 60, 32)}
+						/>
+						<TldrawUiMenuItem
 							id="add-spider"
 							label="Add spider"
 							icon="plus"
@@ -257,7 +264,7 @@ function SwimDebugMenuItem() {
 }
 
 /** Drop a shape of `type` centred in the viewport (props default via getDefaultProps). */
-function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid' | 'creature' | 'bloom' | 'hydra' | 'frond' | 'plume' | 'ribbon' | 'spider' | 'spiderBlobs' | 'spiderOval' | 'canvasSnake', halfW: number, halfH = halfW) {
+function addAtCenter(editor: Editor, type: 'token' | 'container' | 'grid' | 'creature' | 'bloom' | 'hydra' | 'frond' | 'plume' | 'ribbon' | 'spider' | 'spiderBlobs' | 'spiderOval' | 'canvasSnake' | 'lineFish', halfW: number, halfH = halfW) {
 	const center = editor.getViewportPageBounds().center
 	const id = createShapeId()
 	editor.createShape({ id, type, x: center.x - halfW, y: center.y - halfH })

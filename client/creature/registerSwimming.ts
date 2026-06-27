@@ -36,10 +36,28 @@
  * Mount once from <Tldraw onMount> alongside the other behaviours; returns a
  * disposer.
  */
-import { Box, Editor, TLShapeId, Vec, atom } from 'tldraw'
+import { Box, Editor, TLShapeId, TLShapePartial, Vec, atom } from 'tldraw'
 import { creatureClock, jellyfishPropulsion, jellyfishTilt, positionWriteHz, tailBeat } from './clock'
 import { CreatureShape } from '../shapes/CreatureShape'
+import { LineFishShape } from '../shapes/LineFishShape'
 import type { CreatureKind } from '../../shared/shape-schemas'
+
+/**
+ * The shapes this loop swims. Both are drawn head-LEFT (forward = −x) and share the same
+ * w/h/seed/speed prop shape, so the whole tank/steering/navigation machinery is identical —
+ * only orientation (kind/facing) and the typed write differ, handled by swimKind below. The
+ * `creature` shape has a `kind`; the `lineFish` is always a plain fish (no kind), so it maps
+ * to FACING.fish and never the jelly path.
+ */
+type SwimmableShape = CreatureShape | LineFishShape
+
+/** Shape types this loop drives. One source of truth for the filter + type guard below. */
+const SWIMMABLE_TYPES = new Set<string>(['creature', 'lineFish'])
+
+/** The orientation kind for facing/propulsion. A lineFish behaves as a fish. */
+function swimKind(shape: SwimmableShape): CreatureKind {
+	return shape.type === 'creature' ? shape.props.kind : 'fish'
+}
 
 /**
  * How each creature kind ORIENTS itself relative to its travel direction. All
@@ -371,7 +389,7 @@ export function registerSwimming(editor: Editor): () => void {
 
 		const creatures = editor
 			.getCurrentPageShapes()
-			.filter((s): s is CreatureShape => s.type === 'creature')
+			.filter((s): s is SwimmableShape => SWIMMABLE_TYPES.has(s.type))
 		if (creatures.length === 0) return
 
 		// THROTTLE position writes ONLY for big fleets. Translation through space
@@ -436,7 +454,7 @@ export function registerSwimming(editor: Editor): () => void {
  */
 function swimOne(
 	editor: Editor,
-	creature: CreatureShape,
+	creature: SwimmableShape,
 	all: Map<TLShapeId, SwimState>,
 	dt: number,
 	debug: boolean
@@ -540,7 +558,8 @@ function swimOne(
 	//     jets. It surges from a dead glide (no GLIDE_FLOOR), pulse-and-coast.
 	//   • everything else — the tail-beat thrust (two smooth power strokes/cycle) with
 	//     a high GLIDE_FLOOR so a fish coasts between flicks instead of stalling.
-	const isJelly = creature.props.kind === 'jellyfish'
+	const kind = swimKind(creature)
+	const isJelly = kind === 'jellyfish'
 	const drive = isJelly
 		? jellyfishPropulsion(creatureClock.get(), creature.props.seed, creature.props.speed)
 		: GLIDE_FLOOR +
@@ -577,7 +596,7 @@ function swimOne(
 	// heading + π points the head along travel. A crab adds a 90° facingOffset so its SIDE
 	// leads (sideways scuttle); a jellyfish is `upright` — it stays bell-up but leans by the
 	// STROKE TILT (jellyTilt, computed above) so the bell points along its tilted jet.
-	const face = FACING[creature.props.kind] ?? FACING.fish
+	const face = FACING[kind] ?? FACING.fish
 	const rotation = face.upright ? jellyTilt : s.heading + Math.PI + face.facingOffset
 
 	// CONFINE to the cluster. The union of touching boxes is non-convex, so we can't clamp to
@@ -601,13 +620,15 @@ function swimOne(
 	// rotation never disagree. tldraw rotates about the top-left ORIGIN, so the centre→top-left
 	// offset is (w/2, h/2) ROTATED by the angle.
 	const half = new Vec(creature.props.w / 2, creature.props.h / 2).rot(rotation) // centre→top-left, rotated
-	editor.updateShape<CreatureShape>({
+	// Cast: both swimmable types are valid partials, but updateShape's wide overload can't
+	// resolve against the union by `creature.type` alone (the repo's standard escape hatch).
+	editor.updateShape({
 		id: creature.id,
-		type: 'creature',
+		type: creature.type,
 		x: s.cx - half.x,
 		y: s.cy - half.y,
 		rotation,
-	})
+	} as TLShapePartial)
 
 	// DEBUG snapshot (only built when the overlay is on): the post-step centre + heading,
 	// the cluster boxes, and the current food target. All page-space; the overlay maps it.
@@ -645,7 +666,7 @@ function steerTowardFood(
 	editor: Editor,
 	tank: Cluster,
 	s: SwimState,
-	creature: CreatureShape,
+	creature: SwimmableShape,
 	dt: number
 ): { food: { id: TLShapeId; box: Box } | undefined; waypoint: Vec | null } {
 	const food = nearestFood(editor, tank, s.cx, s.cy)
