@@ -38,6 +38,7 @@ import { runCreatureStressTest, runSwimOptStressTest } from '../creature/stressT
 import { runShapeStressTest } from '../shapes/shapeStressTest'
 import { SwimDebugOverlay } from '../creature/SwimDebugOverlay'
 import { setSwimDebug, swimDebugEnabled } from '../creature/registerSwimming'
+import { generateTank } from '../wfc/generateTank'
 
 function GameMainMenu() {
 	// `useEditor()` is how a UI component reaches the editor. Close over it in the
@@ -152,6 +153,19 @@ function GameMainMenu() {
 						/>
 					</TldrawUiMenuGroup>
 				</TldrawUiMenuSubmenu>
+				{/* WFC FISHTANK GENERATOR: collapse a fresh grid of rooms joined by 10%-overlap
+				    doorways (solid orange) with green food in the reachable region, written as
+				    plain synced geo shapes — so every client sees it and can drop creatures in.
+				    A new seed each click (Date.now()), so it's a different tank every time. */}
+				<TldrawUiMenuItem
+					id="generate-tank"
+					label="Generate fish tank (WFC)"
+					icon="plus"
+					readonlyOk={false}
+					onSelect={() => {
+						generateTank(editor)
+					}}
+				/>
 				<TldrawUiMenuItem
 					id="reset-board"
 					label="Clear board"
