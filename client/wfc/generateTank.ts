@@ -12,12 +12,27 @@
  * GREEN (must stay green — that's how the swim loop identifies food).
  */
 import { Editor, TLShapeId, TLShapePartial, createShapeId } from 'tldraw'
-import { buildTankRects, tankExtent } from './tankGeometry.ts'
+import { buildTankRects, tankExtent, type TankRect } from './tankGeometry.ts'
+import { buildChaosTankRects } from './chaosGeometry.ts'
+
+/** Write a list of resolved rects to the store as synced geo shapes, sent to the BACK
+ *  (so creatures render above them), in ONE history-ignored batch. Returns their ids. */
+function writeRects(editor: Editor, rects: TankRect<TLShapeId>[]): TLShapeId[] {
+	const partials: TLShapePartial[] = rects.map((r) => ({ id: r.id, type: 'geo', x: r.x, y: r.y, props: r.props } as TLShapePartial))
+	editor.run(
+		() => {
+			editor.createShapes(partials)
+			editor.sendToBack(rects.map((r) => r.id))
+		},
+		{ history: 'ignore' }
+	)
+	return rects.map((r) => r.id)
+}
 
 /**
- * Generate a tank and WRITE it to the store, centred on the viewport. Rooms + doorways
- * + food go to the BACK (so creatures dropped in render above them), in ONE
- * history-ignored batch (like stressTest.spawnTank). Returns the created shape ids.
+ * Generate a tidy WFC tank and WRITE it to the store, centred on the viewport. Because
+ * they're ordinary synced `geo` shapes, every client sees the tank and anyone can drop
+ * creatures into it (CLAUDE.md gotcha #7). All geometry lives in tankGeometry.ts.
  *
  * `seed` defaults to a time-derived value so each click makes a different tank; pass a
  * fixed seed to reproduce one.
@@ -33,14 +48,21 @@ export function generateTank(editor: Editor, width = 12, height = 12, seed = Dat
 	const originY = vp.center.y - extent.h / 2
 
 	const rects = buildTankRects(() => createShapeId(), width, height, seed, originX, originY)
-	const partials: TLShapePartial[] = rects.map((r) => ({ id: r.id, type: 'geo', x: r.x, y: r.y, props: r.props } as TLShapePartial))
+	return writeRects(editor, rects)
+}
 
-	editor.run(
-		() => {
-			editor.createShapes(partials)
-			editor.sendToBack(rects.map((r) => r.id))
-		},
-		{ history: 'ignore' }
-	)
-	return rects.map((r) => r.id)
+/**
+ * Generate a CHAOS tank — same reachable topology, but rooms are varied native geo shapes
+ * at random scales/colours, jittered off the grid, with deep (50%) doorways. See
+ * chaosGeometry.ts. Centred on the viewport (with a little extra margin for the jitter +
+ * up-to-1.35× room scale that can spill past the nominal grid extent).
+ */
+export function generateChaosTank(editor: Editor, width = 12, height = 12, seed = Date.now() & 0xffffffff): TLShapeId[] {
+	const vp = editor.getViewportPageBounds()
+	const extent = tankExtent(width, height)
+	const originX = vp.center.x - extent.w / 2
+	const originY = vp.center.y - extent.h / 2
+
+	const rects = buildChaosTankRects(() => createShapeId(), width, height, seed, originX, originY)
+	return writeRects(editor, rects)
 }

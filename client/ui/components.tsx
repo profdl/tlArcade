@@ -38,7 +38,7 @@ import { runCreatureStressTest, runSwimOptStressTest } from '../creature/stressT
 import { runShapeStressTest } from '../shapes/shapeStressTest'
 import { SwimDebugOverlay } from '../creature/SwimDebugOverlay'
 import { setSwimDebug, swimDebugEnabled } from '../creature/registerSwimming'
-import { generateTank } from '../wfc/generateTank'
+import { generateTank, generateChaosTank } from '../wfc/generateTank'
 
 function GameMainMenu() {
 	// `useEditor()` is how a UI component reaches the editor. Close over it in the
@@ -164,6 +164,17 @@ function GameMainMenu() {
 					readonlyOk={false}
 					onSelect={() => {
 						generateTank(editor)
+					}}
+				/>
+				{/* CHAOS variant: same reachable topology, but varied native geo shapes at random
+				    scales/colours, jittered off-grid, with deep 50%-overlap doorways. */}
+				<TldrawUiMenuItem
+					id="generate-tank-chaos"
+					label="Generate fish tank (chaos)"
+					icon="plus"
+					readonlyOk={false}
+					onSelect={() => {
+						generateChaosTank(editor)
 					}}
 				/>
 				<TldrawUiMenuItem

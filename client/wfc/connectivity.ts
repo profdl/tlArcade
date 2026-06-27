@@ -222,15 +222,25 @@ function presentRegionSize(present: Present, width: number, height: number, sx: 
  *
  * Deterministic for a given seed (so a tank reproduces). Pure: returns a new grid + mask,
  * input untouched. With removeProb 0 it's a no-op prune + the usual full connect.
+ *
+ * `initialMask` (optional) is the starting present-set: when given, only those cells are
+ * part of the map to begin with (the rest are already absent), and pruning thins WITHIN it.
+ * This is how an irregular ORGANIC-BLOB outline is fed in (see regionMask.ts) — the blob
+ * replaces the full square as the starting footprint, so the final map's boundary is ragged.
+ * The mask MUST be a single 4-connected region (regionMask guarantees this) or connectGrid
+ * can't stitch it; cells outside it never become rooms.
  */
-export function pruneAndConnect(grid: TileGrid, seed: number, removeProb: number): PrunedGrid {
+export function pruneAndConnect(grid: TileGrid, seed: number, removeProb: number, initialMask?: Present): PrunedGrid {
 	const height = grid.length
 	const width = grid[0]?.length ?? 0
-	const present = fullMask(width, height)
+	// Start from the blob mask if provided (a fresh copy so we don't mutate the caller's),
+	// else the full square. Pruning only ever removes cells, never adds them back.
+	const present = initialMask ? initialMask.map((row) => row.slice()) : fullMask(width, height)
 	if (width === 0 || height === 0) return { grid, present }
 
 	const rng = mulberry32(seed)
-	let presentCount = width * height
+	let presentCount = 0
+	for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (present[y][x]) presentCount++
 
 	// A seeded shuffle of all cell coordinates (Fisher–Yates), so removals aren't biased
 	// toward one corner / scan order.
@@ -243,6 +253,7 @@ export function pruneAndConnect(grid: TileGrid, seed: number, removeProb: number
 
 	for (const { x, y } of cells) {
 		if (presentCount <= 1) break // always keep at least one room
+		if (!present[y][x]) continue // already outside the map (blob mask) — nothing to remove
 		if (rng() >= removeProb) continue // this cell survives the dice roll
 		// Tentatively remove; keep the removal only if the rest stays one 4-connected region.
 		present[y][x] = false
