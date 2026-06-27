@@ -86,6 +86,17 @@ const JELLY_SINK = 0.054
 /** How sharply the heading meanders, in radians/ms. Gentle — barely curving. */
 const TURN_RATE = 0.0004
 /**
+ * Hard cap on how fast the heading may turn, in radians/ms — a maximum YAW RATE. Steering
+ * (meander + food + wall-avoidance) proposes a new heading each tick; this clamps the actual
+ * change toward it so the body can never spin instantly. Without it, a steering TARGET that
+ * jumps — e.g. the food waypoint flipping from a doorway to the next room's centre, an angle
+ * swing of up to ~180° — would snap the rotation in a single tick (the per-tick ease factor
+ * AVOID_RATE·dt approaches 1 at the dt cap). ~0.006 rad/ms ≈ 0.34°/ms ≈ a graceful ~90°
+ * turn over ~260ms regardless of how abruptly the target moves, so doorway hand-offs read as
+ * a smooth bank, not a snap.
+ */
+const MAX_TURN_SPEED = 0.006
+/**
  * How firmly the creature steers away from a wall, in radians/ms at full depth. Tuned
  * UP from the original gentle 0.004: at the old rate a creature aimed straight at a wall
  * turned only ~7°/write, so it could reach the wall and sit pinned by the confinement
@@ -411,6 +422,11 @@ function swimOne(
 	}
 	if (!tank) return null // not in a tank → no roaming (it still undulates in place)
 
+	// Remember the heading BEFORE this tick's steering so we can cap the total turn (below).
+	// All of meander + food + wall-avoidance adjust s.heading; the cap is applied once, to
+	// their combined effect, so no single step can spin the body instantly.
+	const prevHeading = s.heading
+
 	// Meander: nudge the heading by a smooth, slowly-varying amount. Using the
 	// wander phase (advanced each tick) keeps turns gentle and frame-rate-stable.
 	s.wander += dt * 0.002
@@ -486,6 +502,17 @@ function swimOne(
 		diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // shortest angular path
 		s.heading += diff * Math.min(1, AVOID_RATE * dt * depth)
 	}
+
+	// CAP THE TURN RATE. The steering above can propose an abrupt heading change — most
+	// visibly when the food waypoint flips between rooms (a near-180° swing) — which, written
+	// straight to rotation, snaps the body. Clamp the NET turn this tick to MAX_TURN_SPEED·dt
+	// (shortest angular path), so the body banks toward the new heading smoothly no matter how
+	// suddenly the target jumped. The cap is generous enough not to slow normal wander/avoid.
+	let turn = s.heading - prevHeading
+	turn = Math.atan2(Math.sin(turn), Math.cos(turn)) // shortest signed delta in (−π, π]
+	const maxTurn = MAX_TURN_SPEED * dt
+	if (turn > maxTurn) s.heading = prevHeading + maxTurn
+	else if (turn < -maxTurn) s.heading = prevHeading - maxTurn
 
 	// PROPULSION: modulate forward speed, read from the same clock+seed+speed the body
 	// renders with — so the canvas surge lines up with the VISIBLE animation on every
