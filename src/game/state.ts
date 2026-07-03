@@ -26,6 +26,23 @@ export type GameMode = 'line' | 'side'
 /** The active play style. Defaults to classic line-rider. */
 export const modeAtom = atom<GameMode>('lr-mode', 'line')
 
+/**
+ * In 'side' mode the implicit ground plane sits this many page-pixels BELOW the
+ * start point, so the character drops a short distance and settles onto the
+ * ground before running (more forgiving, and it lets the start marker read as
+ * floating above the ground). The physics ground segment (RunController), the
+ * visible ground line (Rider), and the test-ramp foot (App) all derive the
+ * ground Y as `start.y + SIDE_GROUND_DROP` from this one constant so they can't
+ * drift apart. Kept modest so the settle is a quick hop, not a long fall.
+ */
+export const SIDE_GROUND_DROP = 120
+
+/** The side-mode ground plane's page-Y for a given start point. One source of
+ * truth for the physics ground, the visible ground line, and the ramp foot. */
+export function sideGroundY(start: Vec2): number {
+	return start.y + SIDE_GROUND_DROP
+}
+
 /** Whether a run is in progress. */
 export const playingAtom = atom('lr-playing', false)
 

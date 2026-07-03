@@ -3,7 +3,7 @@ import { Tldraw, type TLComponents, type Editor, useValue, createShapeId, type I
 import 'tldraw/tldraw.css'
 import { Rider } from './game/Rider'
 import { LEGEND } from './game/geometry'
-import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom, modeAtom } from './game/state'
+import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom, modeAtom, sideGroundY } from './game/state'
 import './App.css'
 
 // How far above the viewport center to drop the sled when "set start" is hit,
@@ -116,7 +116,7 @@ function App() {
 		if (!editor) return
 		const start = startPointAtom.get()
 		const baseX = start.x + RAMP_AHEAD
-		const baseY = start.y // ramp foot sits on the ground plane
+		const baseY = sideGroundY(start) // ramp foot sits ON the ground plane (below the start)
 		const id = createShapeId()
 		editor.createShape({
 			id,

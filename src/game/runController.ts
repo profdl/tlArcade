@@ -24,7 +24,7 @@ import {
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
 import type { TrackSegment } from './geometry'
 import type { Vec2 } from './physics'
-import type { GameMode } from './state'
+import { sideGroundY, type GameMode } from './state'
 
 // Half-width of the implicit ground plane injected in side mode, page px. Wide
 // enough that a run never reaches its end (kept finite, not infinite, so
@@ -212,7 +212,8 @@ export class RunController {
 		this.segments = this.track.segments()
 		this.checkpoints = this.track.checkpoints()
 		if (this.runMode === 'side') {
-			const y = this.runStart.y
+			// Ground sits a fixed drop BELOW the start so the sled settles onto it.
+			const y = sideGroundY(this.runStart)
 			this.segments = [
 				...this.segments,
 				{

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { RunController, type TrackSource, type RunInputs } from './runController'
+import { sideGroundY } from './state'
 import { bodyCenter, type ContactEvent } from './physics'
 import type { TrackSegment } from './geometry'
 import type { Checkpoint } from './checkpoints'
@@ -267,7 +268,7 @@ describe('RunController: side mode (implicit ground + thrust)', () => {
 		expect(c.currentSegments).toEqual([floor])
 	})
 
-	it('side mode appends an implicit horizontal ground segment at the spawn Y', () => {
+	it('side mode appends an implicit horizontal ground segment a fixed drop below the spawn', () => {
 		const start = { x: 30, y: 90 }
 		const c = new RunController(stubTrack([floor]), inputs({ start }))
 		c.sync(inputs({ start, playing: true, mode: 'side' }))
@@ -275,23 +276,24 @@ describe('RunController: side mode (implicit ground + thrust)', () => {
 		expect(c.currentSegments).toHaveLength(2)
 		const ground = c.currentSegments[c.currentSegments.length - 1]
 		expect(ground.kind).toBe('solid')
-		// Horizontal at y = start.y, straddling start.x.
-		expect(ground.a.y).toBe(90)
-		expect(ground.b.y).toBe(90)
+		// Horizontal at the ground plane (start.y + drop, BELOW the spawn), straddling start.x.
+		expect(ground.a.y).toBe(sideGroundY(start))
+		expect(ground.b.y).toBe(sideGroundY(start))
+		expect(ground.a.y).toBeGreaterThan(start.y) // ground is below the start
 		expect(ground.a.x).toBeLessThan(30)
 		expect(ground.b.x).toBeGreaterThan(30)
 	})
 
-	it('the ground follows the spawn Y (re-frozen when the start moves)', () => {
+	it('the ground follows the spawn (re-frozen a fixed drop below it when the start moves)', () => {
 		const start1 = { x: 0, y: 100 }
 		const c = new RunController(stubTrack([]), inputs({ start: start1 }))
 		c.sync(inputs({ start: start1, playing: true, mode: 'side' }))
-		expect(c.currentSegments[0].a.y).toBe(100)
+		expect(c.currentSegments[0].a.y).toBe(sideGroundY(start1))
 		// Reset to a new start height, then play again -> ground re-freezes there.
 		const start2 = { x: 0, y: 250 }
 		c.sync(inputs({ start: start2, playing: false, mode: 'side' }))
 		c.sync(inputs({ start: start2, playing: true, mode: 'side' }))
-		expect(c.currentSegments[0].a.y).toBe(250)
+		expect(c.currentSegments[0].a.y).toBe(sideGroundY(start2))
 	})
 
 	it('drives the body forward along the ground in side mode', () => {

@@ -25,6 +25,7 @@ import {
   mutedAtom,
   showCollisionsAtom,
   modeAtom,
+  sideGroundY,
 } from "./state";
 
 const FIXED_DT = 1 / 120; // physics substep (s)
@@ -218,8 +219,14 @@ export function Rider() {
       const groundEl = groundRef.current;
       if (groundEl) {
         if (inputs.mode === "side") {
-          const groundY = isPlaying ? run.currentStart.y : inputs.start.y;
-          const y = editor.pageToViewport({ x: inputs.start.x, y: groundY }).y;
+          // Ground Y sits a fixed drop below the start (sideGroundY), so it draws
+          // where the sled settles, not at the spawn. Frozen run start while
+          // playing (matches the collision snapshot), live start while stopped.
+          const groundSrc = isPlaying ? run.currentStart : inputs.start;
+          const y = editor.pageToViewport({
+            x: inputs.start.x,
+            y: sideGroundY(groundSrc),
+          }).y;
           const w = editor.getViewportScreenBounds().w;
           groundEl.setAttribute("opacity", "1");
           groundEl.setAttribute("x1", "0");
