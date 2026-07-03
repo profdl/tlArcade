@@ -305,6 +305,35 @@ describe('RunController: side mode (implicit ground + thrust)', () => {
 		expect(bodyCenter(c.currentBody).x).toBeGreaterThan(50)
 	})
 
+	it('picks up a ramp drawn mid-run (side mode re-reads the live track each substep)', () => {
+		// Side mode leaves the canvas editable while playing, so the sled must
+		// collide against shapes added AFTER the run began (line mode freezes them).
+		const start = { x: 0, y: 0 }
+		const track = stubTrack([]) // no user track: just the implicit ground
+		const c = new RunController(track, inputs({ start }))
+		c.sync(inputs({ start, playing: true, mode: 'side' }))
+		c.stepFixed(DT, []) // one substep against ground-only
+		expect(c.currentSegments).toHaveLength(1) // just the injected ground
+
+		// Draw a ramp mid-run; the very next substep must include it.
+		const ramp: TrackSegment = { a: { x: 10, y: 10 }, b: { x: 60, y: -40 }, kind: 'solid', strength: 1 }
+		track.setSegments([ramp])
+		c.stepFixed(DT, [])
+		expect(c.currentSegments).toHaveLength(2) // ramp + ground, live
+		expect(c.currentSegments).toContainEqual(ramp)
+	})
+
+	it('line mode does NOT pick up a mid-run track edit (snapshot stays frozen)', () => {
+		// The complement of the side-mode test: line mode's canvas is read-only
+		// while playing, so its frozen snapshot must not track edits mid-run.
+		const track = stubTrack([floor])
+		const c = new RunController(track, inputs())
+		c.sync(inputs({ playing: true, mode: 'line' }))
+		track.setSegments([floor, { a: { x: 0, y: 0 }, b: { x: 1, y: 1 }, kind: 'ice' }])
+		c.stepFixed(DT, [])
+		expect(c.currentSegments).toEqual([floor]) // still just the run-start snapshot
+	})
+
 	it('a line-mode run does not drive the body forward (thrust is side-only)', () => {
 		const start = { x: 0, y: 0 }
 		const c = new RunController(stubTrack([floor]), inputs({ start }))

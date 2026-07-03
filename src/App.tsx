@@ -72,17 +72,22 @@ function App() {
 		ed.user.updateUserPreferences({ colorScheme: 'light' })
 	}, [])
 
-	// Toggle play/pause. While playing we lock editing (read-only) and clear
+	// Toggle play/pause. In line mode we lock editing (read-only) and clear
 	// selection so the user can't mutate the track mid-ride; restore on pause.
-	// Pausing then playing resumes the run where it left off (only Reset starts
-	// over) — see RunController.sync. All native.
+	// Side mode stays EDITABLE while playing — the whole point is to draw ramps
+	// mid-run — so we never set read-only there; RunController re-reads the live
+	// track each substep so a freshly drawn ramp becomes ridable at once. We still
+	// clear selection on play in both modes. Leaving play always drops read-only
+	// (a no-op if it was never set). Pausing then playing resumes the run where it
+	// left off (only Reset starts over) — see RunController.sync. All native.
 	const togglePlay = useCallback(() => {
 		if (!editor) return
 		const next = !playingAtom.get()
+		const readonlyWhilePlaying = next && modeAtom.get() === 'line'
 		editor.run(
 			() => {
 				editor.selectNone()
-				editor.updateInstanceState({ isReadonly: next })
+				editor.updateInstanceState({ isReadonly: readonlyWhilePlaying })
 			},
 			{ history: 'ignore' }
 		)
@@ -184,7 +189,6 @@ function App() {
 				{mode === 'side' && (
 					<button
 						className="lr-btn lr-icon"
-						disabled={playing}
 						title="Add a test ramp ahead of the start"
 						onClick={handleAddRamp}
 					>

@@ -207,23 +207,38 @@ export class RunController {
 	 * ground and ramps drawn above it launch via the same collision path. Rebuilt
 	 * from `runStart` here, so moving the start (which re-freezes on the next play)
 	 * moves the ground with it.
+	 *
+	 * Side mode ALSO leaves the canvas editable while playing (App only locks
+	 * line mode), so the sled re-reads the live track each substep — see stepFixed
+	 * and refreshSideSegments — and a ramp drawn mid-run becomes ridable at once.
+	 * This snapshot is still the seed (and what the debug overlay reads before the
+	 * first substep); the live refresh keeps `segments` in step with edits after.
 	 */
 	private snapshotTrack(): void {
-		this.segments = this.track.segments()
 		this.checkpoints = this.track.checkpoints()
-		if (this.runMode === 'side') {
-			// Ground sits a fixed drop BELOW the start so the sled settles onto it.
-			const y = sideGroundY(this.runStart)
-			this.segments = [
-				...this.segments,
-				{
-					a: { x: this.runStart.x - SIDE_GROUND_HALF_WIDTH, y },
-					b: { x: this.runStart.x + SIDE_GROUND_HALF_WIDTH, y },
-					kind: 'solid',
-					strength: 1,
-				},
-			]
-		}
+		this.segments = this.withSideGround(this.track.segments())
+	}
+
+	/**
+	 * The user track plus, in side mode, the implicit ground plane — one wide
+	 * horizontal solid segment a fixed drop BELOW the spawn, so the character
+	 * starts on the ground and ramps launch via the same collision path. In line
+	 * mode returns the segments unchanged. Rebuilt from `runStart` so the ground
+	 * tracks the spawn. Used both to seed the snapshot and to refresh it live each
+	 * substep in side mode.
+	 */
+	private withSideGround(segments: TrackSegment[]): TrackSegment[] {
+		if (this.runMode !== 'side') return segments
+		const y = sideGroundY(this.runStart)
+		return [
+			...segments,
+			{
+				a: { x: this.runStart.x - SIDE_GROUND_HALF_WIDTH, y },
+				b: { x: this.runStart.x + SIDE_GROUND_HALF_WIDTH, y },
+				kind: 'solid',
+				strength: 1,
+			},
+		]
 	}
 
 	/**
@@ -235,6 +250,15 @@ export class RunController {
 	 */
 	stepFixed(dt: number, contacts: ContactEvent[]): SubstepResult {
 		contacts.length = 0
+		// Side mode keeps the canvas editable while playing (App only locks line
+		// mode), so re-read the live track each substep: a ramp drawn mid-run
+		// becomes ridable immediately. `.get()` behind the TrackSource is memoized —
+		// it only recomputes when a shape actually changes — so this is cheap when
+		// nothing was edited. Line mode leaves the frozen snapshot untouched (its
+		// canvas is read-only), so its collision path is byte-identical to before.
+		if (this.runMode === 'side') {
+			this.segments = this.withSideGround(this.track.segments())
+		}
 		// Side mode drives the body with constant forward thrust (grounded-only) and
 		// self-recovers from a crash once it settles upright on the ground (see
 		// stepBody); line mode omits opts so the classic gravity-only sled is
