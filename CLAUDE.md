@@ -57,7 +57,13 @@ version:
   arrow + its two mouths from collision; `runController.stepFixed` applies the
   teleport after each substep, guarded by a `Body.portalCooldown` so it can't
   immediately re-enter. `scale` is carried on `Portal` but fixed at 1 (v1); the
-  exit/entrance size ratio will drive scale portals later. **Pure & framework-free.**
+  exit/entrance size ratio will drive scale portals later. A **multiplier** is
+  the same grammar with a second arrow out of the same entrance shape
+  (`geometry.ts`'s `groupPortalArrowsByEntrance` groups arrows by entrance id;
+  exactly 1 → `Portal`, 2+ → `Multiplier`): instead of teleporting, `splitBody`
+  clones the rig (`cloneBody` in physics.ts) and teleports the original out
+  `exits[0]` and the clone out `exits[1]`, both anchored on the same origin as a
+  normal `teleportBody` call. **Pure & framework-free.**
 - [src/game/physics.ts](src/game/physics.ts) — the sim. The rider is a **sled
   rig** (`makeBody`/`stepBody`): a runner base (`BACK`<->`FRONT`) plus a mast held
   upright by a spring (`applyUpright`), so it rides upright and **tracks the
@@ -82,12 +88,16 @@ version:
   until it resolves. All tunables in the `AUDIO` object.
 - [src/game/SnailArt.tsx](src/game/SnailArt.tsx) — the snail character SVG,
   normalized to a belly-centered, +x-facing local frame the rig places each frame.
-- [src/game/Rider.tsx](src/game/Rider.tsx) — fixed-timestep rAF loop; draws the
-  snail (`SnailArt`) as an SVG group, writing its transform (position from
-  `bodyCenter`, rotation from `bodyAngle`, scale from zoom) imperatively each
-  frame (no per-frame React render). Owns the audio engine: passes a reused
-  contact sink into `stepBody`, does enter-detection (diffs this substep's
-  contact keys vs. last) to fire impacts, and drives the ride voices.
+- [src/game/Rider.tsx](src/game/Rider.tsx) — fixed-timestep rAF loop; draws each
+  active rider's snail (`SnailArt`) as an SVG group from a **pre-mounted, fixed
+  pool of `MAX_RIDERS` slots** (a multiplier split changes the rider count
+  mid-run, and this pool means that never triggers a React re-render — see the
+  gotcha below), writing each slot's transform (position from `bodyCenter`,
+  rotation from `bodyAngle`, scale from zoom) imperatively every frame (no
+  per-frame React render) and hiding slots past the current rider count. Owns
+  the audio engine: passes a reused contact sink into `stepBody`, does
+  enter-detection (diffs this substep's contact keys vs. last) to fire impacts,
+  and drives the ride voices.
 
 ## Core design contract: native-first
 
@@ -151,6 +161,15 @@ native shapes over inventing custom records.
   would carry that arbitrary offset into the exit frame and could pop the rider
   out past a smaller exit mouth's bounds. See `portals.test.ts`'s "lands
   exactly on exit.center..." case.
+- **`RunController` owns an ARRAY of riders, not one.** A multiplier split
+  (see the portals.ts bullet above) can grow it up to `MAX_RIDERS`.
+  `currentBody`/`facing` still exist and mean "the PRIMARY rider (`riders[0]`)"
+  — every pre-multiplier call site (tests, stats, the start marker) keeps
+  working against that single body — but reach for `bodies`/`facings` when you
+  need every active rider (Rider.tsx's render pool and debug overlay, the
+  camera-follow centroid, checkpoint scoring). `stepFixed` steps a *snapshot* of
+  the rider count each substep so a rider spawned by a split doesn't also get
+  stepped (and potentially re-split) in the same substep it was created.
 - **New physics tunables go in the `PHYSICS` object**, not as inline literals.
 - **Only `COLLIDABLE_TYPES` shapes are track.** `collectSegmentsNow` allowlists
   `draw`/`line`/`geo`/`arrow`; text, images, frames, etc. are skipped so they

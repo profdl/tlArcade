@@ -47,7 +47,10 @@ src/
     portals.ts         Pure portal teleport: point-in-mouth test + rig
                        re-centering on the exit, velocity re-aimed by the
                        mouths' rotation difference. A portal is an arrow bound
-                       at both ends to geo shapes -- no reserved color.
+                       at both ends to geo shapes -- no reserved color. A
+                       multiplier is the same grammar with a second arrow out
+                       of the same entrance: instead of teleporting, it SPLITS
+                       the rider into two, one out each exit (splitBody).
     physics.ts         The sim: a sled rig (runner base + upright-sprung mast)
                        under gravity, colliding against line segments (Verlet
                        integration). Tracks the slope upright, ragdolls on a hard
@@ -59,6 +62,15 @@ src/
     Rider.tsx          Snapshots segments + checkpoints on play, runs a
                        fixed-timestep rAF loop, and draws the snail as an SVG
                        group positioned/rotated via pageToViewport + bodyAngle.
+    trayItems.ts       Presets for the drag-and-drop tray: Portal (two geo
+                       mouths bound by an arrow) and Multiplier (one entrance
+                       mouth bound to two exit mouths by two arrows) -- the
+                       same native shapes a hand-drawn one is made of.
+    ShapeTray.tsx      A left-side rail of draggable presets (adapted from
+                       tldraw's drag-and-drop-tray example). Dropping an item
+                       runs its own `create(editor, point)`, so multi-shape
+                       presets (the portal) work the same as single-shape ones.
+                       Hidden while a run is playing.
 ```
 
 ### Line types (by shape color)
@@ -95,3 +107,11 @@ at half strength (a weaker version of the same effect).
   the shapes' rotation difference. See [portals.ts](src/game/portals.ts).
   Same-size only for now; scale portals (shrink/grow through the portal) are
   next.
+- **Multipliers** *(done)*: wire a SECOND arrow out of an existing portal's
+  entrance to a different exit shape and it becomes a multiplier — instead of
+  teleporting, it splits the rider into two independent riders, one out each
+  exit, up to a hard `MAX_RIDERS` cap. `RunController` runs every active rider
+  through the same physics/scoring/collision path each substep; the camera
+  follows their centroid once there's more than one. See
+  [portals.ts](src/game/portals.ts)'s `splitBody` and
+  [runController.ts](src/game/runController.ts).

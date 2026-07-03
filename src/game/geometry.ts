@@ -1,7 +1,7 @@
 import { computed, getPointsFromDrawSegment, type Computed, type Editor, type TLShape, type TLDrawShape, type Vec } from 'tldraw'
 import type { LineKind, Segment, Vec2 } from './physics'
 import { makeCheckpoint, type Checkpoint } from './checkpoints'
-import type { Portal, PortalMouth } from './portals'
+import type { Portal, PortalMouth, Multiplier } from './portals'
 
 // The "kind" of a track line is derived from a native shape's color. This keeps
 // us fully on tldraw's native stack — users draw with the native pencil/geo
@@ -108,6 +108,11 @@ export function makeCheckpointsComputed(editor: Editor): Computed<Checkpoint[]> 
 /** Reactive view of the portals, bound to one editor. See makeSegmentsComputed. */
 export function makePortalsComputed(editor: Editor): Computed<Portal[]> {
 	return computed('lr-portals', () => collectPortalsNow(editor))
+}
+
+/** Reactive view of the multipliers, bound to one editor. See makeSegmentsComputed. */
+export function makeMultipliersComputed(editor: Editor): Computed<Multiplier[]> {
+	return computed('lr-multipliers', () => collectMultipliersNow(editor))
 }
 
 /**
@@ -264,7 +269,7 @@ function collectCheckpointsNow(editor: Editor): Checkpoint[] {
 	return checkpoints
 }
 
-// --- Portals ----------------------------------------------------------------
+// --- Portals & multipliers ---------------------------------------------------
 // A portal is authored natively as an ARROW bound at BOTH terminals to geo
 // shapes: the arrow's `start`-bound shape is the entrance mouth, its `end`-bound
 // shape the exit. No custom shape/record and no reserved color — the arrow's
@@ -272,6 +277,13 @@ function collectCheckpointsNow(editor: Editor): Checkpoint[] {
 // color->line-kind and note->checkpoint). The bound geos can be any color; being
 // a portal mouth overrides their usual role, so they (and the arrow) are excluded
 // from collision track in collectSegmentsNow.
+//
+// A MULTIPLIER is the same grammar with one more arrow: wire a SECOND arrow from
+// the same entrance shape to a different exit shape, and that entrance's arrows
+// are grouped together (by entrance id) into a Multiplier instead of two
+// independent Portals — see groupPortalArrowsByEntrance. This is deliberately
+// structural (arrow count on the entrance), not a new color or shape type, so
+// drawing a second arrow out of an existing portal's entrance "upgrades" it live.
 
 /** Only geo shapes may be portal mouths (a clear, bounded oriented-box region). */
 const PORTAL_MOUTH_TYPE = 'geo'
@@ -322,6 +334,22 @@ function collectPortalShapeIds(editor: Editor): Set<string> {
 	return ids
 }
 
+/**
+ * Group portal arrows by their entrance shape id. An entrance with exactly one
+ * arrow out of it is a plain Portal; one with two or more is a Multiplier (see
+ * collectMultipliersNow). Shared by collectPortalsNow/collectMultipliersNow so
+ * the two stay in sync on what counts as "how many arrows leave this entrance."
+ */
+function groupPortalArrowsByEntrance(arrows: PortalArrow[]): Map<string, PortalArrow[]> {
+	const groups = new Map<string, PortalArrow[]>()
+	for (const pa of arrows) {
+		const group = groups.get(pa.entrance.id)
+		if (group) group.push(pa)
+		else groups.set(pa.entrance.id, [pa])
+	}
+	return groups
+}
+
 /** Build a portal mouth (oriented box + rotation) from a geo shape's local
  * bounds and page transform, exactly as checkpoints build their catch box. */
 function mouthOf(editor: Editor, shape: TLShape): PortalMouth | null {
@@ -345,14 +373,43 @@ function mouthOf(editor: Editor, shape: TLShape): PortalMouth | null {
  * on collectSegmentsNow about passing shape.id to the reactive caches. `scale` is
  * fixed at 1 for v1 (same-size teleport); the exit/entrance size ratio will drive
  * it when scale portals land.
+ *
+ * Only entrances with EXACTLY ONE outgoing arrow count as a plain portal — an
+ * entrance with two or more is a Multiplier instead (collectMultipliersNow), so
+ * it's excluded here to avoid double-counting the same entrance as both.
  */
 function collectPortalsNow(editor: Editor): Portal[] {
 	const portals: Portal[] = []
-	for (const pa of scanPortalArrows(editor)) {
+	for (const group of groupPortalArrowsByEntrance(scanPortalArrows(editor)).values()) {
+		if (group.length !== 1) continue
+		const pa = group[0]
 		const entrance = mouthOf(editor, pa.entrance)
 		const exit = mouthOf(editor, pa.exit)
 		if (!entrance || !exit) continue
 		portals.push({ id: pa.arrowId, entrance, exit, scale: 1 })
 	}
 	return portals
+}
+
+/**
+ * Collect the page's multipliers: entrances wired to TWO OR MORE exits by
+ * separate arrows. Backs makeMultipliersComputed. When more than two arrows
+ * leave the same entrance (an unsupported but harmless configuration), only the
+ * first two — sorted by arrow id for a deterministic pick — become the
+ * multiplier's exits; the rest are still excluded from collision (via
+ * collectPortalShapeIds, which doesn't care about the grouping) but otherwise
+ * ignored.
+ */
+function collectMultipliersNow(editor: Editor): Multiplier[] {
+	const multipliers: Multiplier[] = []
+	for (const group of groupPortalArrowsByEntrance(scanPortalArrows(editor)).values()) {
+		if (group.length < 2) continue
+		const [pa0, pa1] = [...group].sort((a, b) => a.arrowId.localeCompare(b.arrowId))
+		const entrance = mouthOf(editor, pa0.entrance)
+		const exit0 = mouthOf(editor, pa0.exit)
+		const exit1 = mouthOf(editor, pa1.exit)
+		if (!entrance || !exit0 || !exit1) continue
+		multipliers.push({ id: pa0.entrance.id, entrance, exits: [exit0, exit1] })
+	}
+	return multipliers
 }

@@ -8,7 +8,7 @@
 // math stays unit-testable, mirroring physics.ts / checkpoints.ts. tldraw arrows
 // and their bound geo shapes are turned into these in geometry.ts.
 
-import type { Body, Vec2 } from './physics'
+import { cloneBody, type Body, type Vec2 } from './physics'
 
 /**
  * One portal mouth: an oriented (possibly rotated) box in page space, plus the
@@ -102,4 +102,40 @@ export function teleportBody(body: Body, portal: Portal, origin: Vec2): Body {
 		pt.prev.y = prev.y
 	}
 	return body
+}
+
+/**
+ * A multiplier: one entrance mouth wired (by two arrows, see geometry.ts's
+ * scanPortalArrows grouping) to TWO exit mouths. Entering it doesn't teleport the
+ * rider — it SPLITS it: the original rider continues out `exits[0]` and a cloned
+ * rider emerges from `exits[1]`, both moving at the same speed they entered with.
+ * Same mouth representation as Portal so both reuse pointInMouth/teleportBody.
+ */
+export interface Multiplier {
+	/** Stable id (the entrance shape's id, since that's what's structurally unique
+	 * per multiplier — two arrows share one entrance). */
+	id: string
+	entrance: PortalMouth
+	exits: [PortalMouth, PortalMouth]
+}
+
+/**
+ * Split `body` through `multiplier`: teleport the ORIGINAL body (mutated, like
+ * teleportBody) out `exits[0]` and return a freshly cloned body teleported out
+ * `exits[1]`. Both teleports anchor on the same `origin` — the body's own center
+ * at the moment of the split — for the identical reason teleportBody does (see its
+ * doc comment): so each half lands exactly on its own exit's center regardless of
+ * where inside the entrance box the split was detected, rather than carrying an
+ * arbitrary offset from the entrance mouth's center into either exit frame. The
+ * clone is a structural copy (cloneBody) so mutating either half afterward never
+ * touches the other. Does not touch portalCooldown on either body — the caller
+ * (RunController) arms it on both, exactly as it would after a normal portal exit.
+ */
+export function splitBody(body: Body, multiplier: Multiplier, origin: Vec2): [Body, Body] {
+	const clone = cloneBody(body)
+	const toFirst: Portal = { id: `${multiplier.id}:0`, entrance: multiplier.entrance, exit: multiplier.exits[0], scale: 1 }
+	const toSecond: Portal = { id: `${multiplier.id}:1`, entrance: multiplier.entrance, exit: multiplier.exits[1], scale: 1 }
+	teleportBody(body, toFirst, origin)
+	teleportBody(clone, toSecond, origin)
+	return [body, clone]
 }

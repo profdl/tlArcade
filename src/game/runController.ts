@@ -22,20 +22,38 @@ import {
 	type ContactEvent,
 } from './physics'
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
-import { pointInMouth, teleportBody, type Portal } from './portals'
+import { pointInMouth, teleportBody, splitBody, type Portal, type Multiplier } from './portals'
 import type { TrackSegment } from './geometry'
 import type { Vec2 } from './physics'
 
 /**
- * The track the controller rides, as the two reactive views the Rider already
- * builds (makeSegmentsComputed / makeCheckpointsComputed). Abstracted to this
- * minimal shape so the controller never imports tldraw and can be driven by a
- * stub in tests. `.get()` recomputes only when shapes change.
+ * The track the controller rides, as the reactive views the Rider already builds
+ * (makeSegmentsComputed / makeCheckpointsComputed / makePortalsComputed /
+ * makeMultipliersComputed). Abstracted to this minimal shape so the controller
+ * never imports tldraw and can be driven by a stub in tests. `.get()` recomputes
+ * only when shapes change.
  */
 export interface TrackSource {
 	segments(): TrackSegment[]
 	checkpoints(): Checkpoint[]
 	portals(): Portal[]
+	multipliers(): Multiplier[]
+}
+
+/**
+ * Hard cap on simultaneous riders. A multiplier past this cap is inert (its mouth
+ * isn't solid track, so a rider just passes over it, same as any other
+ * non-collidable shape) rather than splitting further — a backstop against a
+ * level design that chains/loops multipliers into runaway growth. Exported so
+ * Rider.tsx can size its snail render pool to match exactly.
+ */
+export const MAX_RIDERS = 8
+
+/** One simulated rider: its physics body plus its own held horizontal facing
+ * (bodyFacing applies a dead-band per body, so each rider needs its own). */
+interface RiderSlot {
+	body: Body
+	facingX: 1 | -1
 }
 
 /** Inputs the rAF loop reads from atoms and hands to the controller each frame. */
@@ -62,17 +80,21 @@ export interface SubstepResult {
  */
 export class RunController {
 	private readonly track: TrackSource
-	private body: Body
+	// One or more simulated riders. Almost always length 1; a multiplier split
+	// (see stepFixed) grows it, up to MAX_RIDERS. `currentBody`/`facing` below
+	// expose riders[0] — the "primary" rider — so every pre-multiplier caller
+	// (tests, stats, the start marker) keeps working unchanged.
+	private riders: RiderSlot[]
 	// Collision snapshot frozen at run start so a mid-run edit can't change what
 	// the sled hits (the track is read-only while playing; this defends it anyway).
 	private segments: TrackSegment[] = []
 	private checkpoints: Checkpoint[] = []
 	private portals: Portal[] = []
+	private multipliers: Multiplier[] = []
 	// Checkpoint ids scored this run; reset when a run begins so flags re-arm.
+	// Shared across every rider so a flag scores once per run no matter which
+	// rider reaches it first.
 	private collected = new Set<string>()
-	// Horizontal facing of the art: +1 as-authored, -1 mirrored. Held across
-	// frames (bodyFacing applies a dead-band) and reset to +1 with the body.
-	private facingX: 1 | -1 = 1
 
 	// Edge tracking so we only re-seat / snapshot on a transition, not every frame.
 	private wasPlaying = false
@@ -85,13 +107,21 @@ export class RunController {
 
 	constructor(track: TrackSource, inputs: RunInputs) {
 		this.track = track
-		this.body = makeBody(inputs.start)
+		this.riders = [{ body: makeBody(inputs.start), facingX: 1 }]
 		this.lastStart = inputs.start
 		this.lastReset = inputs.resetNonce
 	}
 
+	/** The primary rider's body — the original single-rider API. Use `bodies` to
+	 * see every active rider (after a multiplier split). */
 	get currentBody(): Body {
-		return this.body
+		return this.riders[0].body
+	}
+
+	/** Every active rider's body, in split order (index 0 is always the primary
+	 * rider `currentBody` also points to). */
+	get bodies(): Body[] {
+		return this.riders.map((r) => r.body)
 	}
 
 	/** The collision snapshot the sim is (or last) running against. */
@@ -108,12 +138,24 @@ export class RunController {
 		return this.portals
 	}
 
+	/** The multipliers the sim is (or last) running against. For the debug overlay. */
+	get currentMultipliers(): Multiplier[] {
+		return this.multipliers
+	}
+
 	get collectedCount(): number {
 		return this.collected.size
 	}
 
+	/** The primary rider's held facing. See `facings` for every rider's. */
 	get facing(): 1 | -1 {
-		return this.facingX
+		return this.riders[0].facingX
+	}
+
+	/** Every active rider's held horizontal facing, aligned index-for-index with
+	 * `bodies`. */
+	get facings(): (1 | -1)[] {
+		return this.riders.map((r) => r.facingX)
 	}
 
 	/**
@@ -156,10 +198,10 @@ export class RunController {
 		return { reseated, runStarted }
 	}
 
-	/** Rebuild the body at `start`, facing +x; does not touch the track snapshot. */
+	/** Rebuild to a single fresh rider at `start`, facing +x — collapses any
+	 * multiplier splits from a prior run. Does not touch the track snapshot. */
 	private reseat(start: Vec2): void {
-		this.body = makeBody(start)
-		this.facingX = 1
+		this.riders = [{ body: makeBody(start), facingX: 1 }]
 	}
 
 	/**
@@ -183,55 +225,92 @@ export class RunController {
 		this.segments = this.track.segments()
 		this.checkpoints = this.track.checkpoints()
 		this.portals = this.track.portals()
+		this.multipliers = this.track.multipliers()
 	}
 
 	/**
-	 * Advance the sled one fixed substep against the frozen snapshot, then test the
-	 * body center against the checkpoints (per substep so a fast sled can't tunnel
-	 * past a flag between rendered frames). `contacts` is the caller's reused buffer
-	 * (cleared here) so the loop stays allocation-free; the sim fills it and it's
-	 * returned for the loop's audio diffing.
+	 * Advance every active rider one fixed substep against the frozen snapshot,
+	 * then test each rider's center against the checkpoints (per substep so a fast
+	 * sled can't tunnel past a flag between rendered frames). `contacts` is the
+	 * caller's reused buffer (cleared here, then appended to by every rider) so the
+	 * loop stays allocation-free; the sim fills it and it's returned for the loop's
+	 * audio diffing.
 	 */
 	stepFixed(dt: number, contacts: ContactEvent[]): SubstepResult {
 		contacts.length = 0
-		stepBody(this.body, this.segments, dt, contacts)
 
-		// Portal teleport: once the cooldown clears, if the body center has entered a
-		// portal's entrance region, jump the whole rig to the exit (velocity re-aimed
-		// by the mouths' rotation difference, speed preserved) and re-arm the cooldown
-		// so it can't immediately re-enter the portal it just left. Runs after the
-		// physics substep so it acts on the settled pose, and before scoring so a
-		// portal that drops the sled onto a checkpoint still scores this substep.
-		if (this.body.portalCooldown > 0) {
-			this.body.portalCooldown--
-		} else if (this.portals.length > 0) {
-			const c = bodyCenter(this.body)
+		// Snapshot the rider count before stepping: a multiplier split this substep
+		// appends a new rider to `this.riders` at the end of the loop below, so it
+		// starts fresh next substep rather than also getting stepped (and possibly
+		// re-triggering) in the same pass it was created — the same one-teleport-
+		// per-substep discipline a normal portal exit already gets for free by
+		// running once per rider per call.
+		const n = this.riders.length
+		const spawned: RiderSlot[] = []
+		for (let i = 0; i < n; i++) {
+			const slot = this.riders[i]
+			stepBody(slot.body, this.segments, dt, contacts)
+
+			// Portal teleport / multiplier split: once the cooldown clears, if the
+			// rider's center has entered a portal's entrance region, jump it to the
+			// exit (velocity re-aimed by the mouths' rotation difference, speed
+			// preserved); if it's entered a multiplier's entrance instead, split it
+			// into two riders exiting both mouths, each carrying the entry velocity.
+			// Re-arm the cooldown on every body that just teleported/split so it can't
+			// immediately re-enter the mouth it just left/emerged from. Runs after the
+			// physics substep so it acts on the settled pose, and before scoring so a
+			// portal/multiplier that drops a rider onto a checkpoint still scores this
+			// substep.
+			if (slot.body.portalCooldown > 0) {
+				slot.body.portalCooldown--
+				continue
+			}
+			const c = bodyCenter(slot.body)
+			let teleported = false
 			for (const portal of this.portals) {
 				if (pointInMouth(c, portal.entrance)) {
-					teleportBody(this.body, portal, c)
-					this.body.portalCooldown = PHYSICS.portalCooldownSubsteps
+					teleportBody(slot.body, portal, c)
+					slot.body.portalCooldown = PHYSICS.portalCooldownSubsteps
+					teleported = true
+					break
+				}
+			}
+			if (teleported) continue
+			if (n + spawned.length >= MAX_RIDERS) continue
+			for (const multiplier of this.multipliers) {
+				if (pointInMouth(c, multiplier.entrance)) {
+					const [, clone] = splitBody(slot.body, multiplier, c)
+					slot.body.portalCooldown = PHYSICS.portalCooldownSubsteps
+					clone.portalCooldown = PHYSICS.portalCooldownSubsteps
+					spawned.push({ body: clone, facingX: slot.facingX })
 					break
 				}
 			}
 		}
+		this.riders.push(...spawned)
 
 		let scored = false
 		if (this.checkpoints.length > 0) {
-			const hits = collectCheckpointHits(bodyCenter(this.body), this.checkpoints, this.collected)
-			if (hits.length > 0) scored = true
+			for (const slot of this.riders) {
+				const hits = collectCheckpointHits(bodyCenter(slot.body), this.checkpoints, this.collected)
+				if (hits.length > 0) scored = true
+			}
 		}
 		return { contacts, scored }
 	}
 
 	/**
-	 * Update and return the art's horizontal facing from the runner's motion. Held
-	 * while crashed (a ragdoll has no meaningful "forward") and inside the speed
-	 * dead-band, so a slow/stationary snail doesn't strobe.
+	 * Update every rider's horizontal facing from its own motion (held while
+	 * crashed — a ragdoll has no meaningful "forward" — and inside the speed
+	 * dead-band, so a slow/stationary snail doesn't strobe), then return the
+	 * primary rider's. See `facings` for every rider's updated value.
 	 */
 	updateFacing(dt: number, deadband: number): 1 | -1 {
-		if (!this.body.crashed) {
-			this.facingX = bodyFacing(this.body, dt, deadband, this.facingX)
+		for (const slot of this.riders) {
+			if (!slot.body.crashed) {
+				slot.facingX = bodyFacing(slot.body, dt, deadband, slot.facingX)
+			}
 		}
-		return this.facingX
+		return this.riders[0].facingX
 	}
 }

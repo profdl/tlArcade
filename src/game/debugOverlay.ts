@@ -9,7 +9,7 @@
 import { toDomPrecision, type Editor } from 'tldraw'
 import { PHYSICS, type Body, type LineKind } from './physics'
 import type { TrackSegment } from './geometry'
-import type { Portal, PortalMouth } from './portals'
+import type { Portal, PortalMouth, Multiplier } from './portals'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
@@ -31,6 +31,10 @@ const DEBUG_SEGMENT_COLOR = '#1d1d1d'
 const DEBUG_RIG_COLOR = '#ff1493' // hot pink so the rig circles pop off the track
 const DEBUG_PORTAL_IN = '#12b886' // entrance mouth: green ("go in here")
 const DEBUG_PORTAL_OUT = '#e8590c' // exit mouth: orange-red ("come out here")
+// Multiplier mouths get their own colors (teal/amber, vs. the portal's
+// green/orange-red) so a multiplier reads distinctly from a plain portal.
+const DEBUG_MULTIPLIER_IN = '#0ca678'
+const DEBUG_MULTIPLIER_OUT = '#f08c00'
 
 /** The pooled child groups the overlay fills, one element type each. */
 export interface DebugGroups {
@@ -78,15 +82,17 @@ function poolChildren(g: SVGGElement, tag: string, count: number): NodeListOf<Ch
  *    1:1, so a thin opaque line would be invisible).
  *  - VERTEX dots: one per segment endpoint, so you can see where the actual
  *    collision points sit along the polyline.
- *  - RIG circles: one per sled-rig point at PHYSICS.bodyRadius — the real contact
- *    surface the sim uses, which is larger than the drawn snail.
+ *  - RIG circles: one per sled-rig point (across EVERY active rider, after a
+ *    multiplier split) at PHYSICS.bodyRadius — the real contact surface the sim
+ *    uses, which is larger than the drawn snail.
  */
 export function drawDebug(
 	groups: DebugGroups,
 	segments: TrackSegment[],
-	body: Body,
+	bodies: Body[],
 	editor: Editor,
-	portals: Portal[]
+	portals: Portal[],
+	multipliers: Multiplier[]
 ): void {
 	const zoom = editor.getZoomLevel()
 
@@ -128,10 +134,11 @@ export function drawDebug(
 		el.setAttribute('fill', DEBUG_KIND_COLOR[last.kind] ?? DEBUG_SEGMENT_COLOR)
 	}
 
-	// Rig contact circles at the true body radius.
-	const rigEls = poolChildren(groups.rig, 'circle', body.points.length)
-	for (let i = 0; i < body.points.length; i++) {
-		const c = editor.pageToViewport(body.points[i].pos)
+	// Rig contact circles at the true body radius, for every active rider's points.
+	const allPoints = bodies.flatMap((b) => b.points)
+	const rigEls = poolChildren(groups.rig, 'circle', allPoints.length)
+	for (let i = 0; i < allPoints.length; i++) {
+		const c = editor.pageToViewport(allPoints[i].pos)
 		const el = rigEls[i] as SVGElement
 		el.setAttribute('cx', `${toDomPrecision(c.x)}`)
 		el.setAttribute('cy', `${toDomPrecision(c.y)}`)
@@ -141,22 +148,42 @@ export function drawDebug(
 		el.setAttribute('stroke-width', '1.5')
 	}
 
-	// Portal mouths: entrance (green) + exit (orange-red) oriented boxes, two
-	// polygons per portal. The linking arrow is a native shape already visible on
-	// the canvas, so its direction needs no extra drawing here.
-	const portalEls = poolChildren(groups.portals, 'polygon', portals.length * 2)
+	// Portal + multiplier mouths, pooled into one group: two polygons per portal
+	// (entrance green, exit orange-red) then three per multiplier (entrance teal,
+	// two exits amber). The linking arrow(s) are native shapes already visible on
+	// the canvas, so their direction needs no extra drawing here.
+	const mouthEls = poolChildren(groups.portals, 'polygon', portals.length * 2 + multipliers.length * 3)
 	for (let i = 0; i < portals.length; i++) {
-		const inEl = portalEls[i * 2] as SVGElement
+		const inEl = mouthEls[i * 2] as SVGElement
 		inEl.setAttribute('points', mouthPolygonPoints(portals[i].entrance, editor))
 		inEl.setAttribute('fill', DEBUG_PORTAL_IN)
 		inEl.setAttribute('fill-opacity', '0.18')
 		inEl.setAttribute('stroke', DEBUG_PORTAL_IN)
 		inEl.setAttribute('stroke-width', '1.5')
-		const outEl = portalEls[i * 2 + 1] as SVGElement
+		const outEl = mouthEls[i * 2 + 1] as SVGElement
 		outEl.setAttribute('points', mouthPolygonPoints(portals[i].exit, editor))
 		outEl.setAttribute('fill', DEBUG_PORTAL_OUT)
 		outEl.setAttribute('fill-opacity', '0.18')
 		outEl.setAttribute('stroke', DEBUG_PORTAL_OUT)
 		outEl.setAttribute('stroke-width', '1.5')
+	}
+
+	for (let i = 0; i < multipliers.length; i++) {
+		const base = portals.length * 2 + i * 3
+		const m = multipliers[i]
+		const inEl = mouthEls[base] as SVGElement
+		inEl.setAttribute('points', mouthPolygonPoints(m.entrance, editor))
+		inEl.setAttribute('fill', DEBUG_MULTIPLIER_IN)
+		inEl.setAttribute('fill-opacity', '0.18')
+		inEl.setAttribute('stroke', DEBUG_MULTIPLIER_IN)
+		inEl.setAttribute('stroke-width', '1.5')
+		for (let j = 0; j < 2; j++) {
+			const outEl = mouthEls[base + 1 + j] as SVGElement
+			outEl.setAttribute('points', mouthPolygonPoints(m.exits[j], editor))
+			outEl.setAttribute('fill', DEBUG_MULTIPLIER_OUT)
+			outEl.setAttribute('fill-opacity', '0.18')
+			outEl.setAttribute('stroke', DEBUG_MULTIPLIER_OUT)
+			outEl.setAttribute('stroke-width', '1.5')
+		}
 	}
 }

@@ -108,6 +108,69 @@
 	color: #999;
 }
 
+/* Drag-and-drop tray: a left-side rail of track-piece presets. Sits below the
+   panel's z-index band conceptually but needs its own stacking context so
+   drop targets on the canvas don't intercept its pointer events. */
+.lr-tray {
+	position: absolute;
+	top: 56px;
+	left: 8px;
+	z-index: 400;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	background: rgba(255, 255, 255, 0.96);
+	backdrop-filter: blur(8px);
+	border: 1px solid #e5e5e5;
+	border-radius: 10px;
+	padding: 6px;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+	font-family: ui-sans-serif, system-ui, sans-serif;
+	pointer-events: auto;
+}
+.lr-tray-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 6px;
+	border-radius: 7px;
+	cursor: grab;
+	user-select: none;
+	touch-action: none;
+}
+.lr-tray-item:hover {
+	background: #f4f4f5;
+}
+.lr-tray-item small {
+	font-size: 10px;
+	color: #555;
+	white-space: nowrap;
+}
+.lr-tray-swatch {
+	width: 22px;
+	height: 12px;
+	border-radius: 3px;
+	border: 1px solid rgba(0, 0, 0, 0.15);
+	flex-shrink: 0;
+}
+/* Follows the cursor once a drag leaves the tray bounds; hidden otherwise. */
+.lr-tray-preview {
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 90px;
+	height: 14px;
+	border-radius: 3px;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+	z-index: 1000;
+	font-size: 9px;
+	color: #fff;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
 /* Legend drops below the control panel, sharing its card styling. */
 .lr-legend {
 	position: absolute;

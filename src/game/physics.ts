@@ -599,6 +599,22 @@ export function makeBody(center: Vec2): Body {
 }
 
 /**
+ * Deep-copy a body: a new points/constraints array (so mutating the clone never
+ * touches the original) with the same crashed/spinStreak/portalCooldown state.
+ * Used by the multiplier split (see portals.ts's splitBody) to spawn a second,
+ * independent rider from an existing one.
+ */
+export function cloneBody(body: Body): Body {
+	return {
+		points: body.points.map((p) => ({ pos: { ...p.pos }, prev: { ...p.prev } })),
+		constraints: body.constraints.map((c) => ({ ...c })),
+		crashed: body.crashed,
+		spinStreak: body.spinStreak,
+		portalCooldown: body.portalCooldown,
+	}
+}
+
+/**
  * The sled's facing angle (radians): the direction of the runner base from BACK
  * to FRONT. 0 = riding flat facing +x; tracks the slope as the runner sits on a
  * line. Used to orient the drawn character.

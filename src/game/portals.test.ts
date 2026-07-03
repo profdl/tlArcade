@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pointInMouth, teleportBody, type Portal, type PortalMouth } from './portals'
+import { pointInMouth, teleportBody, splitBody, type Portal, type PortalMouth, type Multiplier } from './portals'
 import { makeBody, bodyCenter, bodyVelocity, BACK, FRONT } from './physics'
 
 const DT = 1 / 120
@@ -108,5 +108,56 @@ describe('teleportBody', () => {
 		const after = bodyCenter(body)
 		expect(after.x).toBeCloseTo(portal.exit.cx, 5)
 		expect(after.y).toBeCloseTo(portal.exit.cy, 5)
+	})
+})
+
+describe('splitBody', () => {
+	const multiplier: Multiplier = {
+		id: 'm',
+		entrance: mouth({ cx: 0, cy: 0 }),
+		exits: [mouth({ cx: 300, cy: -100 }), mouth({ cx: -200, cy: 400, rotation: Math.PI / 2 })],
+	}
+
+	it('sends the original body out exits[0] and a clone out exits[1], each exactly on its own center', () => {
+		const body = makeBody({ x: 0, y: 0 })
+		setBodyVelocity(body, 200, 50)
+		const origin = bodyCenter(body)
+		const [first, second] = splitBody(body, multiplier, origin)
+		expect(first).toBe(body) // the original is mutated in place, like teleportBody
+
+		const firstCenter = bodyCenter(first)
+		expect(firstCenter.x).toBeCloseTo(multiplier.exits[0].cx, 5)
+		expect(firstCenter.y).toBeCloseTo(multiplier.exits[0].cy, 5)
+		const firstV = bodyVelocity(first, DT)
+		expect(firstV.x).toBeCloseTo(200, 3)
+		expect(firstV.y).toBeCloseTo(50, 3)
+
+		const secondCenter = bodyCenter(second)
+		expect(secondCenter.x).toBeCloseTo(multiplier.exits[1].cx, 5)
+		expect(secondCenter.y).toBeCloseTo(multiplier.exits[1].cy, 5)
+		// exits[1] is rotated 90° from the (unrotated) entrance, so its velocity
+		// rotates too, same as a regular portal's exit rotation.
+		const secondV = bodyVelocity(second, DT)
+		expect(secondV.x).toBeCloseTo(-50, 3)
+		expect(secondV.y).toBeCloseTo(200, 3)
+	})
+
+	it('the clone is independent: mutating one half never touches the other', () => {
+		const body = makeBody({ x: 0, y: 0 })
+		const [first, second] = splitBody(body, multiplier, bodyCenter(body))
+		second.points[BACK].pos.x += 9999
+		second.crashed = true
+		expect(first.points[BACK].pos.x).not.toBeCloseTo(second.points[BACK].pos.x, 0)
+		expect(first.crashed).toBe(false)
+	})
+
+	it('is rigid: both halves keep the original runner length', () => {
+		const body = makeBody({ x: 10, y: 20 })
+		const runnerLen = (b: ReturnType<typeof makeBody>) =>
+			Math.hypot(b.points[FRONT].pos.x - b.points[BACK].pos.x, b.points[FRONT].pos.y - b.points[BACK].pos.y)
+		const before = runnerLen(body)
+		const [first, second] = splitBody(body, multiplier, bodyCenter(body))
+		expect(runnerLen(first)).toBeCloseTo(before, 6)
+		expect(runnerLen(second)).toBeCloseTo(before, 6)
 	})
 })

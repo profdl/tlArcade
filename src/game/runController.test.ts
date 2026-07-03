@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { RunController, type TrackSource, type RunInputs } from './runController'
+import { RunController, MAX_RIDERS, type TrackSource, type RunInputs } from './runController'
 import { bodyCenter, type ContactEvent } from './physics'
 import type { TrackSegment } from './geometry'
 import type { Checkpoint } from './checkpoints'
-import { type Portal } from './portals'
+import { type Portal, type Multiplier } from './portals'
 
 // A controllable stub for the editor-bound reactive views. Returns whatever
 // arrays it's currently holding, so a test can change the "track" and assert when
@@ -11,23 +11,28 @@ import { type Portal } from './portals'
 function stubTrack(
 	segments: TrackSegment[] = [],
 	checkpoints: Checkpoint[] = [],
-	portals: Portal[] = []
+	portals: Portal[] = [],
+	multipliers: Multiplier[] = []
 ): TrackSource & {
 	segments: () => TrackSegment[]
 	setSegments: (s: TrackSegment[]) => void
 	setCheckpoints: (c: Checkpoint[]) => void
 	setPortals: (p: Portal[]) => void
+	setMultipliers: (m: Multiplier[]) => void
 } {
 	let segs = segments
 	let cps = checkpoints
 	let prts = portals
+	let mults = multipliers
 	return {
 		segments: () => segs,
 		checkpoints: () => cps,
 		portals: () => prts,
+		multipliers: () => mults,
 		setSegments: (s) => { segs = s },
 		setCheckpoints: (c) => { cps = c },
 		setPortals: (p) => { prts = p },
+		setMultipliers: (m) => { mults = m },
 	}
 }
 
@@ -305,6 +310,77 @@ describe('RunController: portals', () => {
 		c.sync(inputs({ playing: true }))
 		c.stepFixed(DT, [])
 		expect(bodyCenter(c.currentBody).x).toBeLessThan(100) // stayed near spawn
+	})
+})
+
+describe('RunController: multipliers', () => {
+	// Entrance covering the spawn, two exits far apart in different directions —
+	// so the body splits on the first substep and we can assert both landings +
+	// the re-trigger cooldown, mirroring the portal describe block above.
+	const multiplier: Multiplier = {
+		id: 'm1',
+		entrance: { cx: 0, cy: 0, halfW: 40, halfH: 40, rotation: 0 },
+		exits: [
+			{ cx: 500, cy: 0, halfW: 40, halfH: 40, rotation: 0 },
+			{ cx: -500, cy: 300, halfW: 40, halfH: 40, rotation: 0 },
+		],
+	}
+
+	it('splits into two riders, each landing exactly on its own exit', () => {
+		const c = new RunController(stubTrack([], [], [], [multiplier]), inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		expect(c.bodies).toHaveLength(1) // starts as a single rider at the entrance
+		c.stepFixed(DT, [])
+		expect(c.bodies).toHaveLength(2)
+		expect(bodyCenter(c.bodies[0]).x).toBeCloseTo(500, 1)
+		expect(bodyCenter(c.bodies[1]).x).toBeCloseTo(-500, 1)
+		expect(bodyCenter(c.bodies[1]).y).toBeCloseTo(300, 1)
+	})
+
+	it('arms a cooldown on both halves so neither immediately re-splits', () => {
+		const c = new RunController(stubTrack([], [], [], [multiplier]), inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		c.stepFixed(DT, [])
+		expect(c.bodies).toHaveLength(2)
+		expect(c.bodies[0].portalCooldown).toBeGreaterThan(0)
+		expect(c.bodies[1].portalCooldown).toBeGreaterThan(0)
+		c.stepFixed(DT, [])
+		expect(c.bodies).toHaveLength(2) // no further splitting while cooling down
+	})
+
+	it('does not split when the body center is outside every entrance', () => {
+		const far: Multiplier = { ...multiplier, entrance: { cx: 9999, cy: 9999, halfW: 5, halfH: 5, rotation: 0 } }
+		const c = new RunController(stubTrack([floor], [], [], [far]), inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		c.stepFixed(DT, [])
+		expect(c.bodies).toHaveLength(1)
+	})
+
+	it('scores a checkpoint reached by the SECOND (split-off) rider, sharing one collected set', () => {
+		const track = stubTrack([], [flagAt('f1', -500, 300)], [], [multiplier])
+		const c = new RunController(track, inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		const res = c.stepFixed(DT, [])
+		expect(res.scored).toBe(true)
+		expect(c.collectedCount).toBe(1)
+	})
+
+	it('caps total riders at MAX_RIDERS even with a self-looping multiplier', () => {
+		// Both exits loop straight back onto the (huge) entrance region, so every
+		// rider re-splits as soon as its cooldown clears — this drives the rider
+		// count to grow every ~portalCooldownSubsteps substeps until the cap holds it.
+		const selfLoop: Multiplier = {
+			id: 'loop',
+			entrance: { cx: 0, cy: 0, halfW: 5000, halfH: 5000, rotation: 0 },
+			exits: [
+				{ cx: 0, cy: 0, halfW: 5000, halfH: 5000, rotation: 0 },
+				{ cx: 0, cy: 0, halfW: 5000, halfH: 5000, rotation: 0 },
+			],
+		}
+		const c = new RunController(stubTrack([], [], [], [selfLoop]), inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		for (let i = 0; i < 200; i++) c.stepFixed(DT, [])
+		expect(c.bodies.length).toBe(MAX_RIDERS)
 	})
 })
 

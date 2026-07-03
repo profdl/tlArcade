@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { Tldraw, type TLComponents, type Editor, useValue } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Rider } from './game/Rider'
+import { ShapeTray } from './game/ShapeTray'
 import { LEGEND } from './game/geometry'
 import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom } from './game/state'
 import './App.css'
@@ -14,7 +15,12 @@ const START_DROP_ABOVE_CENTER = 150
 // (and reading its gameplay state from atoms) so its identity never changes —
 // see the comment on the atoms above.
 const components: TLComponents = {
-	InFrontOfTheCanvas: () => <Rider />,
+	InFrontOfTheCanvas: () => (
+		<>
+			<Rider />
+			<ShapeTray />
+		</>
+	),
 }
 
 // A panel button that reflects an on/off state: gets the `lr-active` class and
@@ -193,6 +199,10 @@ function App() {
 					<div className="lr-legend-note">
 						Draw an arrow from one shape to another to link them as a portal —
 						enter the first, shoot out the second.
+					</div>
+					<div className="lr-legend-note">
+						Draw arrows from one shape to TWO others to make a multiplier —
+						it splits you into two riders, one out each exit.
 					</div>
 				</div>
 			)}

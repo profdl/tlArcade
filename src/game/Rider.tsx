@@ -11,9 +11,10 @@ import {
   makeSegmentsComputed,
   makeCheckpointsComputed,
   makePortalsComputed,
+  makeMultipliersComputed,
   type TrackSegment,
 } from "./geometry";
-import { RunController, type TrackSource } from "./runController";
+import { RunController, MAX_RIDERS, type TrackSource } from "./runController";
 import { RiderAudio } from "./riderAudio";
 import { drawDebug } from "./debugOverlay";
 import {
@@ -80,11 +81,34 @@ const START_RING_CY = -8;
 // is now DERIVED from the snail art's SNAIL_HALF_HEIGHT in physics.ts, so the two
 // can't disagree and there's nothing to warn about.)
 
+/** Average center of every active rider's body — what the camera follows once a
+ * multiplier has split the run into more than one rider (see the camera-follow
+ * block below). For a single rider this is just its own center. */
+function centroidOf(bodies: ReturnType<typeof bodyCenter>[]): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+  for (const c of bodies) {
+    x += c.x;
+    y += c.y;
+  }
+  const n = bodies.length || 1;
+  return { x: x / n, y: y / n };
+}
+
 export function Rider() {
   const editor = useEditor();
-  const snailRef = useRef<SVGGElement | null>(null);
-  const snailFullRef = useRef<SVGGElement | null>(null);
-  const snailShellRef = useRef<SVGGElement | null>(null);
+  // A fixed pool of MAX_RIDERS snail slots, pre-mounted once (see the JSX below)
+  // so the rAF loop can show/position as many as there are active riders and
+  // hide the rest WITHOUT a React re-render when a multiplier changes the rider
+  // count mid-run — the same imperative-DOM approach the rest of this loop
+  // already uses for a single snail, just applied to a small fixed array of
+  // slots instead of one ref.
+  const snailRefs = useRef<(SVGGElement | null)[]>([]);
+  const snailFullRefs = useRef<(SVGGElement | null)[]>([]);
+  const snailShellRefs = useRef<(SVGGElement | null)[]>([]);
+  // Per-slot flip state (see the FLIP_DEG comment below) — one slot's snail
+  // flipping shell-only must not affect any other slot's.
+  const shellOnlyRef = useRef<boolean[]>(new Array(MAX_RIDERS).fill(false));
   const startRef = useRef<SVGGElement | null>(null);
   const debugRef = useRef<SVGGElement | null>(null);
   const debugSegsRef = useRef<SVGGElement | null>(null);
@@ -106,10 +130,12 @@ export function Rider() {
     const trackSegments = makeSegmentsComputed(editor);
     const trackCheckpoints = makeCheckpointsComputed(editor);
     const trackPortals = makePortalsComputed(editor);
+    const trackMultipliers = makeMultipliersComputed(editor);
     const track: TrackSource = {
       segments: () => trackSegments.get(),
       checkpoints: () => trackCheckpoints.get(),
       portals: () => trackPortals.get(),
+      multipliers: () => trackMultipliers.get(),
     };
 
     const readInputs = () => ({
@@ -124,9 +150,6 @@ export function Rider() {
     // One reused contacts buffer keeps the 120 Hz substep loop allocation-free.
     const contacts: ContactEvent[] = [];
 
-    // Whether the snail is currently drawn shell-only (flipped). Tracked across
-    // frames so the swap can use hysteresis and only touch the DOM on a change.
-    let shellOnly = false;
     // Whether the debug overlay group is currently shown; only touch the DOM on
     // a change.
     let debugWasOn = false;
@@ -177,14 +200,18 @@ export function Rider() {
           statsAtom.set({ distance: d, speed: Math.hypot(v.x, v.y) });
         }
 
-        // Camera follow: ease the viewport center toward the sled so a fast
+        // Camera follow: ease the viewport center toward the sled(s) so a fast
         // ride stays on screen. Lerping (not snapping) avoids a jarring lock,
         // and skipping when already close avoids fighting a settled sled with
         // sub-pixel camera nudges. history:'ignore' keeps it off the undo
-        // stack; the camera move must not be an undoable edit.
+        // stack; the camera move must not be an undoable edit. After a
+        // multiplier split there's more than one rider, so this follows their
+        // CENTROID (average center) rather than any single one — keeps both
+        // riders roughly in view instead of abandoning whichever one isn't
+        // "primary" the moment they diverge.
         if (followAtom.get()) {
           const center = editor.getViewportPageBounds().center;
-          const c = bodyCenter(run.currentBody);
+          const c = centroidOf(run.bodies.map(bodyCenter));
           const dx = c.x - center.x;
           const dy = c.y - center.y;
           if (Math.hypot(dx, dy) > 1) {
@@ -226,35 +253,41 @@ export function Rider() {
         }
       }
 
-      // Position + orient the snail. We pivot about the body's CENTER (the
-      // centroid of all rig points) so the snail rotates about its middle, not
-      // its base — important when it tumbles after a crash. The art is authored
-      // belly-centered (see SnailArt), so to center the WHOLE graphic on the rig
-      // center (which is where the start marker sits at spawn) we push the art
-      // down by SNAIL_CENTER_OFFSET — the belly-to-visual-center distance — so the
-      // snail's middle lands on the placement point rather than its belly.
-      // Transform order: translate to the body center (in viewport coords) →
-      // rotate by the runner's facing angle → scale by camera zoom → translate the
-      // art down so its visual center sits at the origin. Computing the center and
-      // angle in PAGE space and mapping only the translation through pageToViewport
-      // keeps the rotation correct (page→viewport is a uniform scale + translate,
-      // so it preserves angles); the zoom is applied as an explicit scale here.
-      const snail = snailRef.current;
-      if (snail) {
-        const body = run.currentBody;
+      // Position + orient every active rider's snail (one or more, after a
+      // multiplier split), and hide the unused pool slots. We pivot about each
+      // body's CENTER (the centroid of all rig points) so the snail rotates
+      // about its middle, not its base — important when it tumbles after a
+      // crash. The art is authored belly-centered (see SnailArt), so to center
+      // the WHOLE graphic on the rig center (which is where the start marker
+      // sits at spawn) we push the art down by SNAIL_CENTER_OFFSET — the
+      // belly-to-visual-center distance — so the snail's middle lands on the
+      // placement point rather than its belly. Transform order: translate to
+      // the body center (in viewport coords) → rotate by the runner's facing
+      // angle → scale by camera zoom → translate the art down so its visual
+      // center sits at the origin. Computing the center and angle in PAGE space
+      // and mapping only the translation through pageToViewport keeps the
+      // rotation correct (page→viewport is a uniform scale + translate, so it
+      // preserves angles); the zoom is applied as an explicit scale here.
+      //
+      // updateFacing recomputes EVERY rider's held facing (dead-banded, held
+      // while crashed) in one call; `facings` below reads them all back out,
+      // aligned index-for-index with `bodies`.
+      run.updateFacing(FIXED_DT, FACING_FLIP_SPEED);
+      const bodies = run.bodies;
+      const facings = run.facings;
+      const zoom = editor.getZoomLevel();
+      for (let i = 0; i < MAX_RIDERS; i++) {
+        const snail = snailRefs.current[i];
+        if (!snail) continue;
+        if (i >= bodies.length) {
+          snail.setAttribute("opacity", "0");
+          continue;
+        }
+        const body = bodies[i];
         const center = editor.pageToViewport(bodyCenter(body));
         const angle = bodyAngle(body);
         const angleDeg = (angle * 180) / Math.PI;
-        const zoom = editor.getZoomLevel();
-
-        // Mirror the art so its head leads the direction of HORIZONTAL travel.
-        // The controller flips on the sign of the runner's horizontal velocity
-        // (mast excluded — its upright-spring wobble would otherwise flip the
-        // facing at low speed), corrected for the runner's 180° ambiguity so a
-        // tumble that lands FRONT-on-the-left still faces travel rather than
-        // latching backward. It holds the last value inside a dead-band so a
-        // slow/stationary snail doesn't flicker, and holds while crashed.
-        const facingX = run.updateFacing(FIXED_DT, FACING_FLIP_SPEED);
+        const facingX = facings[i];
 
         snail.setAttribute(
           "transform",
@@ -276,15 +309,16 @@ export function Rider() {
         const tiltDeg = Math.abs(
           ((((angleDeg + 180) % 360) + 360) % 360) - 180,
         );
-        const nextShellOnly = shellOnly
+        const wasShellOnly = shellOnlyRef.current[i];
+        const nextShellOnly = wasShellOnly
           ? tiltDeg > FLIP_DEG - FLIP_HYSTERESIS
           : tiltDeg > FLIP_DEG;
-        if (nextShellOnly !== shellOnly) {
-          shellOnly = nextShellOnly;
-          if (snailFullRef.current)
-            snailFullRef.current.style.display = shellOnly ? "none" : "";
-          if (snailShellRef.current)
-            snailShellRef.current.style.display = shellOnly ? "" : "none";
+        if (nextShellOnly !== wasShellOnly) {
+          shellOnlyRef.current[i] = nextShellOnly;
+          const full = snailFullRefs.current[i];
+          const shell = snailShellRefs.current[i];
+          if (full) full.style.display = nextShellOnly ? "none" : "";
+          if (shell) shell.style.display = nextShellOnly ? "" : "none";
         }
       }
 
@@ -317,12 +351,16 @@ export function Rider() {
           const debugPortals = isPlaying
             ? run.currentPortals
             : trackPortals.get();
+          const debugMultipliers = isPlaying
+            ? run.currentMultipliers
+            : trackMultipliers.get();
           drawDebug(
             { segs: segsG, verts: vertsG, rig: rigG, portals: portalsG },
             debugSegs,
-            run.currentBody,
+            run.bodies,
             editor,
             debugPortals,
+            debugMultipliers,
           );
         }
       }
@@ -358,20 +396,42 @@ export function Rider() {
       <g ref={startRef} className="lr-start-marker" opacity="0">
         <circle className="lr-start-ring" r={START_RING_R} cy={START_RING_CY} />
       </g>
-      {/* The snail. The rAF loop sets this group's transform (position/rotation/
-			    zoom); SnailArt draws the character in a belly-centered, +x-facing local
-			    frame. We render BOTH the full snail and a shell-only variant and let the
-			    loop toggle which is shown: when the snail rotates past ~90° (upside-down)
-			    its head/eye/mouth would poke through the line, so we show just the
-			    rounded shell — the part the collision radius keeps off the line. */}
-      <g ref={snailRef} className="lr-snail">
-        <g ref={snailFullRef}>
-          <SnailArt />
+      {/* A fixed pool of MAX_RIDERS snail slots -- one per POSSIBLE rider, not
+          one per CURRENT rider, so a multiplier split never has to mount/unmount
+          React nodes mid-run (see the ref-array comment above). The rAF loop sets
+          each slot's transform (position/rotation/zoom) and hides slots past the
+          current rider count. SnailArt draws the character in a belly-centered,
+          +x-facing local frame. Each slot renders BOTH the full snail and a
+          shell-only variant and the loop toggles which is shown: when a snail
+          rotates past ~90° (upside-down) its head/eye/mouth would poke through
+          the line, so we show just the rounded shell -- the part the collision
+          radius keeps off the line. */}
+      {Array.from({ length: MAX_RIDERS }, (_, i) => (
+        <g
+          key={i}
+          ref={(el) => {
+            snailRefs.current[i] = el;
+          }}
+          className="lr-snail"
+          opacity="0"
+        >
+          <g
+            ref={(el) => {
+              snailFullRefs.current[i] = el;
+            }}
+          >
+            <SnailArt />
+          </g>
+          <g
+            ref={(el) => {
+              snailShellRefs.current[i] = el;
+            }}
+            style={{ display: "none" }}
+          >
+            <SnailArt shellOnly />
+          </g>
         </g>
-        <g ref={snailShellRef} style={{ display: "none" }}>
-          <SnailArt shellOnly />
-        </g>
-      </g>
+      ))}
     </svg>
   );
 }
