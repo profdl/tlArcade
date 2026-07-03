@@ -306,9 +306,18 @@ export function Rider() {
         const tiltDeg = Math.abs(
           ((((angleDeg + 180) % 360) + 360) % 360) - 180,
         );
-        const nextShellOnly = shellOnly
-          ? tiltDeg > FLIP_DEG - FLIP_HYSTERESIS
-          : tiltDeg > FLIP_DEG;
+        // While propulsion is driving the snail (side mode, playing, not crashed)
+        // it's upright and running, so always show the FULL snail — the shell-only
+        // swap is only there to hide the head/eye/mouth when it flips past ~90° and
+        // they'd clip the line, which doesn't happen under active propulsion. A
+        // crash drops `propelling`, so a tumbling wipeout still goes shell-only.
+        const propelling =
+          inputs.mode === "side" && isPlaying && !body.crashed;
+        const nextShellOnly = propelling
+          ? false
+          : shellOnly
+            ? tiltDeg > FLIP_DEG - FLIP_HYSTERESIS
+            : tiltDeg > FLIP_DEG;
         if (nextShellOnly !== shellOnly) {
           shellOnly = nextShellOnly;
           if (snailFullRef.current)
