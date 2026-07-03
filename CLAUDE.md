@@ -45,6 +45,17 @@ version:
   rotated note's catch region matches its footprint, not its inflated AABB).
 - [src/game/checkpoints.ts](src/game/checkpoints.ts) — pure checkpoint hit-test
   (point-in-oriented-box, scored once per run). **Pure & framework-free.**
+- [src/game/portals.ts](src/game/portals.ts) — pure portal teleport: `pointInMouth`
+  (reuses the checkpoint oriented-box test) + `teleportBody` (maps the whole rig
+  from the entrance frame to the exit frame, rotating velocity by the mouths'
+  rotation difference, speed preserved). A **portal is authored natively as an
+  arrow bound at both terminals to geo shapes** (`start`→entrance, `end`→exit) —
+  no reserved color, the arrow's bindings *are* the link. `geometry.ts` reads the
+  bindings (`collectPortalsNow` via `editor.getBindingsFromShape`) and excludes the
+  arrow + its two mouths from collision; `runController.stepFixed` applies the
+  teleport after each substep, guarded by a `Body.portalCooldown` so it can't
+  immediately re-enter. `scale` is carried on `Portal` but fixed at 1 (v1); the
+  exit/entrance size ratio will drive scale portals later. **Pure & framework-free.**
 - [src/game/physics.ts](src/game/physics.ts) — the sim. The rider is a **sled
   rig** (`makeBody`/`stepBody`): a runner base (`BACK`<->`FRONT`) plus a mast held
   upright by a spring (`applyUpright`), so it rides upright and **tracks the

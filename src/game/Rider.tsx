@@ -10,6 +10,7 @@ import { SnailArt, SNAIL_CENTER_OFFSET } from "./SnailArt";
 import {
   makeSegmentsComputed,
   makeCheckpointsComputed,
+  makePortalsComputed,
   type TrackSegment,
 } from "./geometry";
 import { RunController, type TrackSource } from "./runController";
@@ -89,6 +90,7 @@ export function Rider() {
   const debugSegsRef = useRef<SVGGElement | null>(null);
   const debugVertsRef = useRef<SVGGElement | null>(null);
   const debugRigRef = useRef<SVGGElement | null>(null);
+  const debugPortalsRef = useRef<SVGGElement | null>(null);
 
   useEffect(() => {
     let raf = 0;
@@ -103,9 +105,11 @@ export function Rider() {
     // (pure) RunController never imports tldraw.
     const trackSegments = makeSegmentsComputed(editor);
     const trackCheckpoints = makeCheckpointsComputed(editor);
+    const trackPortals = makePortalsComputed(editor);
     const track: TrackSource = {
       segments: () => trackSegments.get(),
       checkpoints: () => trackCheckpoints.get(),
+      portals: () => trackPortals.get(),
     };
 
     const readInputs = () => ({
@@ -291,7 +295,8 @@ export function Rider() {
       const segsG = debugSegsRef.current;
       const vertsG = debugVertsRef.current;
       const rigG = debugRigRef.current;
-      if (debugG && segsG && vertsG && rigG) {
+      const portalsG = debugPortalsRef.current;
+      if (debugG && segsG && vertsG && rigG && portalsG) {
         const showDebug = showCollisionsAtom.get();
         if (!showDebug) {
           if (debugWasOn) {
@@ -309,11 +314,15 @@ export function Rider() {
           const debugSegs: TrackSegment[] = isPlaying
             ? run.currentSegments
             : trackSegments.get();
+          const debugPortals = isPlaying
+            ? run.currentPortals
+            : trackPortals.get();
           drawDebug(
-            { segs: segsG, verts: vertsG, rig: rigG },
+            { segs: segsG, verts: vertsG, rig: rigG, portals: portalsG },
             debugSegs,
             run.currentBody,
             editor,
+            debugPortals,
           );
         }
       }
@@ -340,6 +349,7 @@ export function Rider() {
         <g ref={debugSegsRef} />
         <g ref={debugVertsRef} />
         <g ref={debugRigRef} />
+        <g ref={debugPortalsRef} />
       </g>
       {/* Start marker: a dotted ring sized just larger than the snail, encircling
 			    the spawn point so the player can see (and aim) where the sled will drop

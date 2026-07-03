@@ -161,6 +161,13 @@ export const PHYSICS = {
 	// vertical. The old guard used EPSILON (1e-9), which is far too tight to ever
 	// suppress the flicker on a steep-but-not-exactly-vertical runner.
 	facingVerticalCos: 0.1,
+
+	// --- Portals -------------------------------------------------------------
+	// After a portal teleport the rig lands at the exit still moving; this many
+	// substeps must pass before ANY portal can fire again. Stops a ping-pong when
+	// two mouths overlap or the exit sits inside another entrance region. A few
+	// substeps (~sub-frame at 120 Hz) is invisible but ample to clear the mouth.
+	portalCooldownSubsteps: 6,
 }
 
 // Below this we treat a displacement as zero (avoid divide-by-zero / NaN).
@@ -554,6 +561,12 @@ export interface Body {
 	constraints: Constraint[]
 	crashed: boolean
 	spinStreak: number
+	/**
+	 * Substeps remaining before a portal may fire again. Set to
+	 * PHYSICS.portalCooldownSubsteps on teleport and counted down each substep so
+	 * the rig can't immediately re-enter a portal it just exited. 0 = armed.
+	 */
+	portalCooldown: number
 }
 
 // Named indices into Body.points for the sled rig.
@@ -582,7 +595,7 @@ export function makeBody(center: Vec2): Body {
 		{ i: BACK, j: MAST, rest: dist(BACK, MAST), stiffness: arm },
 		{ i: FRONT, j: MAST, rest: dist(FRONT, MAST), stiffness: arm },
 	]
-	return { points, constraints, crashed: false, spinStreak: 0 }
+	return { points, constraints, crashed: false, spinStreak: 0, portalCooldown: 0 }
 }
 
 /**

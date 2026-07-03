@@ -1,6 +1,7 @@
 import { computed, getPointsFromDrawSegment, type Computed, type Editor, type TLShape, type TLDrawShape, type Vec } from 'tldraw'
 import type { LineKind, Segment, Vec2 } from './physics'
 import { makeCheckpoint, type Checkpoint } from './checkpoints'
+import type { Portal, PortalMouth } from './portals'
 
 // The "kind" of a track line is derived from a native shape's color. This keeps
 // us fully on tldraw's native stack — users draw with the native pencil/geo
@@ -104,6 +105,11 @@ export function makeCheckpointsComputed(editor: Editor): Computed<Checkpoint[]> 
 	return computed('lr-checkpoints', () => collectCheckpointsNow(editor))
 }
 
+/** Reactive view of the portals, bound to one editor. See makeSegmentsComputed. */
+export function makePortalsComputed(editor: Editor): Computed<Portal[]> {
+	return computed('lr-portals', () => collectPortalsNow(editor))
+}
+
 /**
  * Convert collidable shapes on the current page into page-space collision
  * segments.
@@ -128,10 +134,17 @@ export function makeCheckpointsComputed(editor: Editor): Computed<Checkpoint[]> 
 function collectSegmentsNow(editor: Editor): TrackSegment[] {
 	const segments: TrackSegment[] = []
 
+	// Portal arrows and the geo shapes they link are gameplay portals, not walls:
+	// collect their ids up front and skip them so a portal reads as a teleport
+	// (see collectPortalsNow), not solid track.
+	const portalShapeIds = collectPortalShapeIds(editor)
+
 	for (const shape of editor.getCurrentPageShapes()) {
 		// Skip non-track shape types (text/image/frame/…) so they don't act as
 		// invisible walls, independent of color.
 		if (!COLLIDABLE_TYPES.has(shape.type)) continue
+		// Skip shapes that make up a portal (the arrow + its two bound mouths).
+		if (portalShapeIds.has(shape.id)) continue
 
 		const spec = specOf(shape)
 		if (spec.kind === 'scenery') continue
@@ -249,4 +262,97 @@ function collectCheckpointsNow(editor: Editor): Checkpoint[] {
 		checkpoints.push(makeCheckpoint(shape.id, center, lb, scaleX, scaleY, rotation))
 	}
 	return checkpoints
+}
+
+// --- Portals ----------------------------------------------------------------
+// A portal is authored natively as an ARROW bound at BOTH terminals to geo
+// shapes: the arrow's `start`-bound shape is the entrance mouth, its `end`-bound
+// shape the exit. No custom shape/record and no reserved color — the arrow's
+// bindings ARE the link, so the mapping stays on tldraw's native stack (mirrors
+// color->line-kind and note->checkpoint). The bound geos can be any color; being
+// a portal mouth overrides their usual role, so they (and the arrow) are excluded
+// from collision track in collectSegmentsNow.
+
+/** Only geo shapes may be portal mouths (a clear, bounded oriented-box region). */
+const PORTAL_MOUTH_TYPE = 'geo'
+
+interface PortalArrow {
+	arrowId: string
+	entrance: TLShape
+	exit: TLShape
+}
+
+/**
+ * Find every well-formed portal on the page: an arrow bound at BOTH terminals to
+ * a geo shape. Arrows bound at only one end (or to non-geo shapes) are not
+ * portals and fall through to their normal role (collision track). Reads the
+ * arrow's bindings via editor.getBindingsFromShape — the arrow is always the
+ * binding's `from`, and each binding's `props.terminal` says which end it is.
+ */
+function scanPortalArrows(editor: Editor): PortalArrow[] {
+	const found: PortalArrow[] = []
+	for (const shape of editor.getCurrentPageShapes()) {
+		if (shape.type !== 'arrow') continue
+		const bindings = editor.getBindingsFromShape(shape.id, 'arrow')
+		let startId: string | undefined
+		let endId: string | undefined
+		for (const b of bindings) {
+			if (b.props.terminal === 'start') startId = b.toId
+			else if (b.props.terminal === 'end') endId = b.toId
+		}
+		if (!startId || !endId) continue
+		const entrance = editor.getShape(startId as TLShape['id'])
+		const exit = editor.getShape(endId as TLShape['id'])
+		if (!entrance || !exit) continue
+		if (entrance.type !== PORTAL_MOUTH_TYPE || exit.type !== PORTAL_MOUTH_TYPE) continue
+		found.push({ arrowId: shape.id, entrance, exit })
+	}
+	return found
+}
+
+/** The set of shape ids that make up any portal (arrow + both mouths), so the
+ * segment collector can skip them. */
+function collectPortalShapeIds(editor: Editor): Set<string> {
+	const ids = new Set<string>()
+	for (const pa of scanPortalArrows(editor)) {
+		ids.add(pa.arrowId)
+		ids.add(pa.entrance.id)
+		ids.add(pa.exit.id)
+	}
+	return ids
+}
+
+/** Build a portal mouth (oriented box + rotation) from a geo shape's local
+ * bounds and page transform, exactly as checkpoints build their catch box. */
+function mouthOf(editor: Editor, shape: TLShape): PortalMouth | null {
+	const geometry = editor.getShapeGeometry(shape.id)
+	const transform = editor.getShapePageTransform(shape.id)
+	if (!transform) return null
+	const lb = geometry.bounds
+	const center = transform.applyToPoint({ x: lb.x + lb.w / 2, y: lb.y + lb.h / 2 })
+	const { scaleX, scaleY, rotation } = transform.decompose()
+	return {
+		cx: center.x,
+		cy: center.y,
+		halfW: (lb.w / 2) * Math.abs(scaleX),
+		halfH: (lb.h / 2) * Math.abs(scaleY),
+		rotation,
+	}
+}
+
+/**
+ * Collect the page's portals. Backs makePortalsComputed; see the freshness note
+ * on collectSegmentsNow about passing shape.id to the reactive caches. `scale` is
+ * fixed at 1 for v1 (same-size teleport); the exit/entrance size ratio will drive
+ * it when scale portals land.
+ */
+function collectPortalsNow(editor: Editor): Portal[] {
+	const portals: Portal[] = []
+	for (const pa of scanPortalArrows(editor)) {
+		const entrance = mouthOf(editor, pa.entrance)
+		const exit = mouthOf(editor, pa.exit)
+		if (!entrance || !exit) continue
+		portals.push({ id: pa.arrowId, entrance, exit, scale: 1 })
+	}
+	return portals
 }

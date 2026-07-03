@@ -9,6 +9,7 @@
 import { toDomPrecision, type Editor } from 'tldraw'
 import { PHYSICS, type Body, type LineKind } from './physics'
 import type { TrackSegment } from './geometry'
+import type { Portal, PortalMouth } from './portals'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
@@ -28,12 +29,35 @@ const DEBUG_KIND_COLOR: Record<LineKind, string> = {
 }
 const DEBUG_SEGMENT_COLOR = '#1d1d1d'
 const DEBUG_RIG_COLOR = '#ff1493' // hot pink so the rig circles pop off the track
+const DEBUG_PORTAL_IN = '#12b886' // entrance mouth: green ("go in here")
+const DEBUG_PORTAL_OUT = '#e8590c' // exit mouth: orange-red ("come out here")
 
-/** The three child groups the overlay fills, one pooled element type each. */
+/** The pooled child groups the overlay fills, one element type each. */
 export interface DebugGroups {
 	segs: SVGGElement
 	verts: SVGGElement
 	rig: SVGGElement
+	portals: SVGGElement
+}
+
+/** Page-space corners of a portal mouth's oriented box, mapped to viewport, as
+ * an SVG polygon `points` string. */
+function mouthPolygonPoints(m: PortalMouth, editor: Editor): string {
+	const cos = Math.cos(m.rotation)
+	const sin = Math.sin(m.rotation)
+	// Local corners (±halfW, ±halfH) rotated into page space, then to viewport.
+	const corners: Array<[number, number]> = [
+		[-m.halfW, -m.halfH],
+		[m.halfW, -m.halfH],
+		[m.halfW, m.halfH],
+		[-m.halfW, m.halfH],
+	]
+	return corners
+		.map(([lx, ly]) => {
+			const p = editor.pageToViewport({ x: m.cx + lx * cos - ly * sin, y: m.cy + lx * sin + ly * cos })
+			return `${toDomPrecision(p.x)},${toDomPrecision(p.y)}`
+		})
+		.join(' ')
 }
 
 // Reconcile `g`'s direct children to exactly `count` elements of `tag` (pool
@@ -61,7 +85,8 @@ export function drawDebug(
 	groups: DebugGroups,
 	segments: TrackSegment[],
 	body: Body,
-	editor: Editor
+	editor: Editor,
+	portals: Portal[]
 ): void {
 	const zoom = editor.getZoomLevel()
 
@@ -114,5 +139,24 @@ export function drawDebug(
 		el.setAttribute('fill', 'none')
 		el.setAttribute('stroke', DEBUG_RIG_COLOR)
 		el.setAttribute('stroke-width', '1.5')
+	}
+
+	// Portal mouths: entrance (green) + exit (orange-red) oriented boxes, two
+	// polygons per portal. The linking arrow is a native shape already visible on
+	// the canvas, so its direction needs no extra drawing here.
+	const portalEls = poolChildren(groups.portals, 'polygon', portals.length * 2)
+	for (let i = 0; i < portals.length; i++) {
+		const inEl = portalEls[i * 2] as SVGElement
+		inEl.setAttribute('points', mouthPolygonPoints(portals[i].entrance, editor))
+		inEl.setAttribute('fill', DEBUG_PORTAL_IN)
+		inEl.setAttribute('fill-opacity', '0.18')
+		inEl.setAttribute('stroke', DEBUG_PORTAL_IN)
+		inEl.setAttribute('stroke-width', '1.5')
+		const outEl = portalEls[i * 2 + 1] as SVGElement
+		outEl.setAttribute('points', mouthPolygonPoints(portals[i].exit, editor))
+		outEl.setAttribute('fill', DEBUG_PORTAL_OUT)
+		outEl.setAttribute('fill-opacity', '0.18')
+		outEl.setAttribute('stroke', DEBUG_PORTAL_OUT)
+		outEl.setAttribute('stroke-width', '1.5')
 	}
 }

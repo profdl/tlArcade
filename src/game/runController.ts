@@ -17,10 +17,12 @@ import {
 	stepBody,
 	bodyCenter,
 	bodyFacing,
+	PHYSICS,
 	type Body,
 	type ContactEvent,
 } from './physics'
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
+import { pointInMouth, teleportBody, type Portal } from './portals'
 import type { TrackSegment } from './geometry'
 import type { Vec2 } from './physics'
 
@@ -33,6 +35,7 @@ import type { Vec2 } from './physics'
 export interface TrackSource {
 	segments(): TrackSegment[]
 	checkpoints(): Checkpoint[]
+	portals(): Portal[]
 }
 
 /** Inputs the rAF loop reads from atoms and hands to the controller each frame. */
@@ -64,6 +67,7 @@ export class RunController {
 	// the sled hits (the track is read-only while playing; this defends it anyway).
 	private segments: TrackSegment[] = []
 	private checkpoints: Checkpoint[] = []
+	private portals: Portal[] = []
 	// Checkpoint ids scored this run; reset when a run begins so flags re-arm.
 	private collected = new Set<string>()
 	// Horizontal facing of the art: +1 as-authored, -1 mirrored. Held across
@@ -97,6 +101,11 @@ export class RunController {
 
 	get currentCheckpoints(): Checkpoint[] {
 		return this.checkpoints
+	}
+
+	/** The portals the sim is (or last) running against. For the debug overlay. */
+	get currentPortals(): Portal[] {
+		return this.portals
 	}
 
 	get collectedCount(): number {
@@ -173,6 +182,7 @@ export class RunController {
 	private snapshotTrack(): void {
 		this.segments = this.track.segments()
 		this.checkpoints = this.track.checkpoints()
+		this.portals = this.track.portals()
 	}
 
 	/**
@@ -185,6 +195,25 @@ export class RunController {
 	stepFixed(dt: number, contacts: ContactEvent[]): SubstepResult {
 		contacts.length = 0
 		stepBody(this.body, this.segments, dt, contacts)
+
+		// Portal teleport: once the cooldown clears, if the body center has entered a
+		// portal's entrance region, jump the whole rig to the exit (velocity re-aimed
+		// by the mouths' rotation difference, speed preserved) and re-arm the cooldown
+		// so it can't immediately re-enter the portal it just left. Runs after the
+		// physics substep so it acts on the settled pose, and before scoring so a
+		// portal that drops the sled onto a checkpoint still scores this substep.
+		if (this.body.portalCooldown > 0) {
+			this.body.portalCooldown--
+		} else if (this.portals.length > 0) {
+			const c = bodyCenter(this.body)
+			for (const portal of this.portals) {
+				if (pointInMouth(c, portal.entrance)) {
+					teleportBody(this.body, portal)
+					this.body.portalCooldown = PHYSICS.portalCooldownSubsteps
+					break
+				}
+			}
+		}
 
 		let scored = false
 		if (this.checkpoints.length > 0) {

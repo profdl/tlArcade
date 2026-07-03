@@ -3,21 +3,31 @@ import { RunController, type TrackSource, type RunInputs } from './runController
 import { bodyCenter, type ContactEvent } from './physics'
 import type { TrackSegment } from './geometry'
 import type { Checkpoint } from './checkpoints'
+import { type Portal } from './portals'
 
 // A controllable stub for the editor-bound reactive views. Returns whatever
 // arrays it's currently holding, so a test can change the "track" and assert when
 // the controller re-snapshots it (every play edge — run start and resume).
 function stubTrack(
 	segments: TrackSegment[] = [],
-	checkpoints: Checkpoint[] = []
-): TrackSource & { segments: () => TrackSegment[]; setSegments: (s: TrackSegment[]) => void; setCheckpoints: (c: Checkpoint[]) => void } {
+	checkpoints: Checkpoint[] = [],
+	portals: Portal[] = []
+): TrackSource & {
+	segments: () => TrackSegment[]
+	setSegments: (s: TrackSegment[]) => void
+	setCheckpoints: (c: Checkpoint[]) => void
+	setPortals: (p: Portal[]) => void
+} {
 	let segs = segments
 	let cps = checkpoints
+	let prts = portals
 	return {
 		segments: () => segs,
 		checkpoints: () => cps,
+		portals: () => prts,
 		setSegments: (s) => { segs = s },
 		setCheckpoints: (c) => { cps = c },
+		setPortals: (p) => { prts = p },
 	}
 }
 
@@ -256,6 +266,45 @@ describe('RunController: stepping + scoring', () => {
 		c.sync(inputs({ start, playing: false })) // pause
 		c.sync(inputs({ start, playing: true })) // resume — same run, flag stays collected
 		expect(c.collectedCount).toBe(1)
+	})
+})
+
+describe('RunController: portals', () => {
+	// Entrance covering the spawn, exit far to the right — so the body teleports on
+	// the first substep and we can assert the jump + the re-trigger cooldown.
+	const portal: Portal = {
+		id: 'p1',
+		entrance: { cx: 0, cy: 0, halfW: 40, halfH: 40, rotation: 0 },
+		exit: { cx: 500, cy: 0, halfW: 40, halfH: 40, rotation: 0 },
+		scale: 1,
+	}
+
+	it('teleports the rig from the entrance region to the exit', () => {
+		const c = new RunController(stubTrack([], [], [portal]), inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		expect(bodyCenter(c.currentBody).x).toBeCloseTo(0, 1) // starts at the entrance
+		c.stepFixed(DT, [])
+		expect(bodyCenter(c.currentBody).x).toBeCloseTo(500, 1) // jumped to the exit
+	})
+
+	it('arms a cooldown so it does not immediately re-enter a portal', () => {
+		const c = new RunController(stubTrack([], [], [portal]), inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		c.stepFixed(DT, [])
+		expect(c.currentBody.portalCooldown).toBeGreaterThan(0)
+		// A second entrance at the exit would loop without the cooldown; confirm the
+		// body stays put (near the exit) rather than bouncing back.
+		const x = bodyCenter(c.currentBody).x
+		c.stepFixed(DT, [])
+		expect(bodyCenter(c.currentBody).x).toBeCloseTo(x, 1)
+	})
+
+	it('does not teleport when the body center is outside every entrance', () => {
+		const far: Portal = { ...portal, entrance: { cx: 9999, cy: 9999, halfW: 5, halfH: 5, rotation: 0 } }
+		const c = new RunController(stubTrack([floor], [], [far]), inputs({ start: { x: 0, y: 0 } }))
+		c.sync(inputs({ playing: true }))
+		c.stepFixed(DT, [])
+		expect(bodyCenter(c.currentBody).x).toBeLessThan(100) // stayed near spawn
 	})
 })
 

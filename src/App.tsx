@@ -190,6 +190,10 @@ function App() {
 					<div className="lr-legend-note">
 						Drop a sticky note as a flag — collect them all on your run.
 					</div>
+					<div className="lr-legend-note">
+						Draw an arrow from one shape to another to link them as a portal —
+						enter the first, shoot out the second.
+					</div>
 				</div>
 			)}
 		</div>
