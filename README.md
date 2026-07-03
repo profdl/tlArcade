@@ -44,6 +44,10 @@ src/
                        boxes that respect note rotation).
     checkpoints.ts     Pure checkpoint hit-testing (point-in-oriented-box,
                        scored once).
+    portals.ts         Pure portal teleport: point-in-mouth test + rig
+                       re-centering on the exit, velocity re-aimed by the
+                       mouths' rotation difference. A portal is an arrow bound
+                       at both ends to geo shapes -- no reserved color.
     physics.ts         The sim: a sled rig (runner base + upright-sprung mast)
                        under gravity, colliding against line segments (Verlet
                        integration). Tracks the slope upright, ragdolls on a hard
@@ -86,3 +90,8 @@ at half strength (a weaker version of the same effect).
 - **Camera follow** *(done)*: the rAF loop in [Rider.tsx](src/game/Rider.tsx)
   eases the viewport center toward the sled while playing (toggle with the 🎥
   button). Lerped, not snapped, and run with `history: 'ignore'`.
+- **Portals** *(done, v1)*: draw an arrow bound at both ends to geo shapes and
+  the sled teleports from the entrance shape to the exit, velocity re-aimed by
+  the shapes' rotation difference. See [portals.ts](src/game/portals.ts).
+  Same-size only for now; scale portals (shrink/grow through the portal) are
+  next.

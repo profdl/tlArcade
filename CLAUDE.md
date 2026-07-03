@@ -46,9 +46,11 @@ version:
 - [src/game/checkpoints.ts](src/game/checkpoints.ts) — pure checkpoint hit-test
   (point-in-oriented-box, scored once per run). **Pure & framework-free.**
 - [src/game/portals.ts](src/game/portals.ts) — pure portal teleport: `pointInMouth`
-  (reuses the checkpoint oriented-box test) + `teleportBody` (maps the whole rig
-  from the entrance frame to the exit frame, rotating velocity by the mouths'
-  rotation difference, speed preserved). A **portal is authored natively as an
+  (reuses the checkpoint oriented-box test) + `teleportBody` (re-centers the rig
+  on `exit.center`, rotating velocity by the mouths' rotation difference, speed
+  preserved — see the entrance-detection gotcha below for why the re-center is
+  anchored on the body's own center rather than the entrance mouth's). A
+  **portal is authored natively as an
   arrow bound at both terminals to geo shapes** (`start`→entrance, `end`→exit) —
   no reserved color, the arrow's bindings *are* the link. `geometry.ts` reads the
   bindings (`collectPortalsNow` via `editor.getBindingsFromShape`) and excludes the
@@ -138,6 +140,17 @@ native shapes over inventing custom records.
   through. Any new behavior that raises speed should stay under
   `~2 * riderRadius / FIXED_DT`; `accelerateMaxSpeed` is the existing cap — copy
   that pattern rather than relying on the swept test alone.
+- **Portal entry detection is a per-substep point sample, not a sweep** — unlike
+  wall collision, there's no `sweptContact`-style boundary crossing test for
+  `pointInMouth`. At high speed the body's center can land anywhere inside the
+  entrance box on the substep that trips it (edge, corner, or dead center), not
+  right at the boundary. `teleportBody` anchors the rig's re-center on the
+  body's own center at that moment (not the entrance mouth's center), so the
+  exit position is always exactly `exit.center` regardless of where inside the
+  box the crossing happened — anchoring on the entrance mouth's center instead
+  would carry that arbitrary offset into the exit frame and could pop the rider
+  out past a smaller exit mouth's bounds. See `portals.test.ts`'s "lands
+  exactly on exit.center..." case.
 - **New physics tunables go in the `PHYSICS` object**, not as inline literals.
 - **Only `COLLIDABLE_TYPES` shapes are track.** `collectSegmentsNow` allowlists
   `draw`/`line`/`geo`/`arrow`; text, images, frames, etc. are skipped so they
