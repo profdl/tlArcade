@@ -235,12 +235,13 @@ export class RunController {
 	 */
 	stepFixed(dt: number, contacts: ContactEvent[]): SubstepResult {
 		contacts.length = 0
-		// Side mode drives the body with constant forward thrust (grounded-only, see
+		// Side mode drives the body with constant forward thrust (grounded-only) and
+		// self-recovers from a crash once it settles upright on the ground (see
 		// stepBody); line mode omits opts so the classic gravity-only sled is
 		// byte-identical.
 		const opts =
 			this.runMode === 'side'
-				? { thrust: PHYSICS.sideThrust, cruise: PHYSICS.sideCruiseSpeed }
+				? { thrust: PHYSICS.sideThrust, cruise: PHYSICS.sideCruiseSpeed, recover: true }
 				: undefined
 		stepBody(this.body, this.segments, dt, contacts, opts)
 

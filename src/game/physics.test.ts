@@ -957,6 +957,38 @@ describe('physics: side-rider thrust', () => {
 		expect(body.points[MAST].pos.y).toBeLessThan(midY)
 		expect(body.crashed).toBe(false)
 	})
+
+	it('recovers from a crash once settled on the ground, standing upright and driving on (opts.recover)', () => {
+		// A steep ramp launches the body, it over-rotates and crashes (ragdolls),
+		// lands on the flat ground, then RECOVERS: un-crashes, stands upright, and
+		// resumes propulsion. Locks in the self-recovering side-mode wipeout.
+		const ground: Segment = { a: { x: -1e7, y: 120 }, b: { x: 1e7, y: 120 }, kind: 'solid' }
+		const ramp: Segment = { a: { x: 400, y: 120 }, b: { x: 560, y: -80 }, kind: 'solid' }
+		const opts = { ...thrust, recover: true }
+		const body = makeBody({ x: 0, y: 120 - PHYSICS.bodyRadius })
+		let everCrashed = false
+		for (let i = 0; i < 1200; i++) {
+			stepBody(body, [ground, ramp], DT, undefined, opts)
+			if (body.crashed) everCrashed = true
+		}
+		expect(everCrashed).toBe(true) // it really did crash off the steep ramp
+		expect(body.crashed).toBe(false) // ...and recovered by the end
+		// Stood back upright (mast above the runner) and driving forward at speed.
+		const midY = (body.points[BACK].pos.y + body.points[FRONT].pos.y) / 2
+		expect(body.points[MAST].pos.y).toBeLessThan(midY)
+		expect(bodyVelocity(body, DT).x).toBeGreaterThan(PHYSICS.sideCruiseSpeed * 0.5)
+	})
+
+	it('WITHOUT opts.recover a crash stays latched (line mode never self-recovers)', () => {
+		// Same crash, but no recover flag: it must stay crashed (ragdoll) forever,
+		// preserving classic line-mode behavior.
+		const ground: Segment = { a: { x: -1e7, y: 120 }, b: { x: 1e7, y: 120 }, kind: 'solid' }
+		const ramp: Segment = { a: { x: 400, y: 120 }, b: { x: 560, y: -80 }, kind: 'solid' }
+		const body = makeBody({ x: 0, y: 120 - PHYSICS.bodyRadius })
+		// Drive it with thrust (so it reaches the ramp) but WITHOUT recover.
+		for (let i = 0; i < 1200; i++) stepBody(body, [ground, ramp], DT, undefined, thrust)
+		expect(body.crashed).toBe(true)
+	})
 })
 
 describe('physics: facing (which way the snail points)', () => {

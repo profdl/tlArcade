@@ -119,12 +119,13 @@ export const PHYSICS = {
 	// ONLY while grounded — never in the air, so a launched character is a pure
 	// projectile and gravity owns the arc. The solver reconciles it before
 	// collisions, so it CLIMBS any drawn slope (no surface-tangent guessing).
-	sideThrust: 2400, // px/s^2 +x propulsion while grounded (matches accelerateBoost scale)
-	// px/s; thrust stops adding past this cruise speed. Kept well under the
-	// tunneling threshold (2*bodyRadius/FIXED_DT ≈ 4870 px/s here) so a running
-	// character never shoots through a thin ramp in a single step — same guard the
-	// accelerateMaxSpeed cap uses. ~750 reads as a lively but controllable run.
-	sideCruiseSpeed: 750,
+	sideThrust: 6000, // px/s^2 +x propulsion while grounded — strong, so ramp launches carry FAR
+	// px/s; thrust stops adding past this cruise speed. Raised so the character
+	// builds real speed and flies off ramps, but kept under the tunneling threshold
+	// (2*bodyRadius/FIXED_DT ≈ 4870 px/s here) so a running character never shoots
+	// through a thin ramp in a single step — same guard the accelerateMaxSpeed cap
+	// uses. 1600 reads as a fast, launchy run with margin to spare under the cap.
+	sideCruiseSpeed: 1600,
 	bounceRestitution: 0.85, // restitution for 'bounce' lines (springy; 0=none, 1=elastic)
 	stickyFriction: 0.45, // tangential drag fraction on 'sticky' lines (strong grip)
 	iceFriction: 0.0, // tangential drag on 'ice' lines (perfectly frictionless glide)
@@ -169,6 +170,14 @@ export const PHYSICS = {
 	// How far past vertical (radians) the mast may tilt before it counts as
 	// "tipped over" and crashes. ~75deg: rides steep ramps, crashes on a flip.
 	crashTilt: 1.3,
+	// --- Side-mode crash recovery -------------------------------------------
+	// A crashed sled in SIDE mode recovers — stands back upright in place and
+	// resumes propulsion — once it has settled on the ground and stopped spinning,
+	// so a wipeout is self-recovering instead of needing a Reset. No tilt gate: the
+	// ragdoll may have landed on its back and can't right itself (spring off), so
+	// recovery actively stands it up (rightBody). It only has to be grounded and
+	// spinning slower than this. Line mode never recovers.
+	recoverSpin: 5, // rad/s; angular speed must be below this (settled, not tumbling)
 	// Below this |cos(bodyAngle)| the runner is near-vertical and its horizontal
 	// facing is degenerate (the art is nearly edge-on), so bodyFacing HOLDS rather
 	// than snapping on the tiny, jittery sign of cos. ~0.1 ≈ within ~6deg of
@@ -719,6 +728,63 @@ function shouldCrash(body: Body, prevAngle: number, dt: number): boolean {
 	return body.spinStreak >= PHYSICS.crashSpinFrames
 }
 
+/**
+ * Decide whether a CRASHED sled has come to rest and should recover — grounded
+ * and no longer tumbling — so side mode can stand it back up and resume propulsion
+ * (a self-recovering wipeout, no Reset needed). We do NOT require it to already be
+ * upright: the upright spring is off while crashed, so a ragdoll that lands on its
+ * back can't right ITSELF — recovery actively stands it up (see rightBody). So the
+ * only gates are "on the ground" and "settled" (low spin). Only meaningful when
+ * already crashed; the caller gates on side mode so line mode never recovers.
+ */
+function hasRecovered(body: Body, segments: Segment[], prevAngle: number, dt: number): boolean {
+	if (!body.crashed) return false
+	// Must be back on the ground (a runner point touching a surface).
+	if (!runnerGrounded(body, segments)) return false
+	// Settled: low angular speed this step (not still mid-tumble).
+	let dAng = bodyAngle(body) - prevAngle
+	while (dAng > Math.PI) dAng -= 2 * Math.PI
+	while (dAng < -Math.PI) dAng += 2 * Math.PI
+	return Math.abs(dAng / dt) < PHYSICS.recoverSpin
+}
+
+/**
+ * Stand a settled ragdoll back upright IN PLACE: snap the mast to directly above
+ * the runner midpoint and zero out all point velocities. Used on side-mode crash
+ * recovery, because a crashed sled that flopped onto its back can't right itself
+ * (the upright spring is off, and applyUpright's fractional nudge can't climb an
+ * inverted mast back through horizontal). Preserves the runner position/angle, so
+ * the character pops upright where it landed and drives on. Mutates `body`.
+ */
+function rightBody(body: Body): void {
+	const back = body.points[BACK]
+	const front = body.points[FRONT]
+	const m = body.points[MAST]
+	const midx = (back.pos.x + front.pos.x) * 0.5
+	const midy = (back.pos.y + front.pos.y) * 0.5
+	// Runner tangent, normalized; its "up" perpendicular (away from gravity, -y).
+	let tx = front.pos.x - back.pos.x
+	let ty = front.pos.y - back.pos.y
+	const tlen = Math.hypot(tx, ty)
+	if (tlen > EPSILON) {
+		tx /= tlen
+		ty /= tlen
+	} else {
+		tx = 1
+		ty = 0
+	}
+	const upx = ty
+	const upy = -tx
+	const upDir = upy <= 0 ? { x: upx, y: upy } : { x: -upx, y: -upy }
+	m.pos.x = midx + upDir.x * PHYSICS.sledMast
+	m.pos.y = midy + upDir.y * PHYSICS.sledMast
+	// Zero every point's velocity (prev := pos) so the stand-up doesn't inject spin.
+	for (const p of body.points) {
+		p.prev.x = p.pos.x
+		p.prev.y = p.pos.y
+	}
+}
+
 /** The body's center of mass (average of its points). Used for camera/stats. */
 export function bodyCenter(body: Body): Vec2 {
 	let x = 0
@@ -837,6 +903,8 @@ export interface StepBodyOpts {
 	thrust?: number
 	/** Cruise speed cap, px/s; thrust stops adding past this. */
 	cruise?: number
+	/** When true, a crashed sled un-crashes once it settles upright on the ground (side mode). */
+	recover?: boolean
 }
 
 /** Mean horizontal velocity of the runner points (BACK+FRONT), px/s. */
@@ -966,6 +1034,16 @@ export function stepBody(
 	// for the rest of the run so it ragdolls. Checked last so it sees the resolved
 	// post-collision pose (a wall slam shows up as the induced spin/tilt).
 	if (!body.crashed && shouldCrash(body, prevAngle, dt)) body.crashed = true
+	// Side mode: recover a settled, grounded ragdoll — stand it back upright in
+	// place (rightBody) and un-crash so propulsion resumes (self-recovering
+	// wipeout). Reset spinStreak so a fresh crash must re-accumulate its own streak
+	// rather than inheriting the ragdoll's. Only when opts.recover is set (side
+	// mode); line mode leaves crashes permanent.
+	else if (opts?.recover && hasRecovered(body, segments, prevAngle, dt)) {
+		rightBody(body)
+		body.crashed = false
+		body.spinStreak = 0
+	}
 
 	return body
 }
