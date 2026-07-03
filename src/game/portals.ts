@@ -57,22 +57,37 @@ export function pointInMouth(p: Vec2, m: PortalMouth): boolean {
  * Teleport the whole rig through `portal`: map every point (and its Verlet
  * `prev`) from the entrance frame to the exit frame. The mapping is
  *
- *     p' = exit.center + R * (p - entrance.center)
+ *     p' = exit.center + R * (p - origin)
  *
- * with R the rotation by (exit.rotation - entrance.rotation). Applying it to
- * BOTH pos and prev preserves speed and rotates the velocity by the same R
- * (since velocity is encoded as pos - prev), so a straight-through portal (equal
- * rotations) is a pure translation that keeps the sled's heading, while a rotated
- * exit re-aims the launch. Rigid (scale ignored) in v1. Mutates and returns the
- * body.
+ * with R the rotation by (exit.rotation - entrance.rotation) and `origin` the
+ * body's center *at the moment of teleport* (not the entrance mouth's center —
+ * see below). Applying it to BOTH pos and prev preserves speed and rotates the
+ * velocity by the same R (since velocity is encoded as pos - prev), so a
+ * straight-through portal (equal rotations) is a pure translation that keeps
+ * the sled's heading, while a rotated exit re-aims the launch.
+ *
+ * Using `origin` (the body's own center) rather than the entrance mouth's
+ * center anchors the rig's center exactly on `exit.center` every time,
+ * regardless of where inside the entrance box the crossing was detected.
+ * Detection is a per-substep point sample (see runController.stepFixed), not a
+ * boundary sweep, so at high speed the body's center can land anywhere inside
+ * the entrance box on the substep that trips it — near an edge, a corner, or
+ * dead center — rather than right at the boundary. Mapping from the entrance
+ * box's center would carry that arbitrary offset into the exit frame, which
+ * could exceed the exit mouth's own (possibly smaller) half-extents and pop
+ * the rider out past its visible bounds. Anchoring on the body's actual center
+ * instead makes the exit position deterministic (always `exit.center`) while
+ * still preserving the rig's own shape (other points keep their offset from
+ * the center, rotated by R). Rigid (scale ignored) in v1. Mutates and returns
+ * the body.
  */
-export function teleportBody(body: Body, portal: Portal): Body {
+export function teleportBody(body: Body, portal: Portal, origin: Vec2): Body {
 	const dTheta = portal.exit.rotation - portal.entrance.rotation
 	const cos = Math.cos(dTheta)
 	const sin = Math.sin(dTheta)
 	const map = (x: number, y: number): Vec2 => {
-		const rx = x - portal.entrance.cx
-		const ry = y - portal.entrance.cy
+		const rx = x - origin.x
+		const ry = y - origin.y
 		return {
 			x: portal.exit.cx + (rx * cos - ry * sin),
 			y: portal.exit.cy + (rx * sin + ry * cos),

@@ -208,7 +208,7 @@ export class RunController {
 			const c = bodyCenter(this.body)
 			for (const portal of this.portals) {
 				if (pointInMouth(c, portal.entrance)) {
-					teleportBody(this.body, portal)
+					teleportBody(this.body, portal, c)
 					this.body.portalCooldown = PHYSICS.portalCooldownSubsteps
 					break
 				}

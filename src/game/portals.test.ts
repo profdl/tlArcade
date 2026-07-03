@@ -49,14 +49,14 @@ describe('teleportBody', () => {
 		scale: 1,
 	}
 
-	it('translates the rig by (exit - entrance) and preserves velocity when rotations match', () => {
+	it('lands the body center exactly on exit.center and preserves velocity when rotations match', () => {
 		const body = makeBody({ x: 0, y: 0 })
 		setBodyVelocity(body, 200, 50)
 		const before = bodyCenter(body)
-		teleportBody(body, straight)
+		teleportBody(body, straight, before)
 		const after = bodyCenter(body)
-		expect(after.x - before.x).toBeCloseTo(300, 5)
-		expect(after.y - before.y).toBeCloseTo(-100, 5)
+		expect(after.x).toBeCloseTo(straight.exit.cx, 5)
+		expect(after.y).toBeCloseTo(straight.exit.cy, 5)
 		const v = bodyVelocity(body, DT)
 		expect(v.x).toBeCloseTo(200, 3)
 		expect(v.y).toBeCloseTo(50, 3)
@@ -71,7 +71,7 @@ describe('teleportBody', () => {
 		}
 		const body = makeBody({ x: 0, y: 0 })
 		setBodyVelocity(body, 100, 0) // moving +x
-		teleportBody(body, rotated)
+		teleportBody(body, rotated, bodyCenter(body))
 		const v = bodyVelocity(body, DT)
 		// +90° rotation of (100,0) in screen coords (y down) is (0,100).
 		expect(v.x).toBeCloseTo(0, 3)
@@ -84,7 +84,29 @@ describe('teleportBody', () => {
 		const runnerLen = (b: typeof body) =>
 			Math.hypot(b.points[FRONT].pos.x - b.points[BACK].pos.x, b.points[FRONT].pos.y - b.points[BACK].pos.y)
 		const before = runnerLen(body)
-		teleportBody(body, { id: 'p', entrance: mouth(), exit: mouth({ cx: 400, rotation: 1.1 }), scale: 1 })
+		teleportBody(
+			body,
+			{ id: 'p', entrance: mouth(), exit: mouth({ cx: 400, rotation: 1.1 }), scale: 1 },
+			bodyCenter(body),
+		)
 		expect(runnerLen(body)).toBeCloseTo(before, 6)
+	})
+
+	it('lands exactly on exit.center regardless of where inside the entrance box the crossing was detected', () => {
+		// A fast body can be caught anywhere inside the entrance mouth, not just at
+		// its boundary (see runController.stepFixed) — simulate that by teleporting
+		// from a point deep in one corner of the entrance box instead of its center.
+		const cornerEntry = { x: 45, y: -45 } // near a corner of the default 50x50 half-extent mouth
+		const portal: Portal = {
+			id: 'p',
+			entrance: mouth({ cx: 0, cy: 0 }),
+			exit: mouth({ cx: 300, cy: -100 }),
+			scale: 1,
+		}
+		const body = makeBody(cornerEntry)
+		teleportBody(body, portal, bodyCenter(body))
+		const after = bodyCenter(body)
+		expect(after.x).toBeCloseTo(portal.exit.cx, 5)
+		expect(after.y).toBeCloseTo(portal.exit.cy, 5)
 	})
 })
