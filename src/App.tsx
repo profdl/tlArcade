@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import DemoLayout from './DemoLayout'
 import { demos } from './demos/manifest'
 import Home from './Home'
 
@@ -13,11 +14,7 @@ function App() {
 						<Route
 							key={demo.slug}
 							path={demo.path ?? `/demos/${demo.slug}`}
-							element={
-								<div data-demo={demo.slug} style={{ position: 'fixed', inset: 0 }}>
-									<demo.Component />
-								</div>
-							}
+							element={<DemoLayout demo={demo} />}
 						/>
 					))}
 				</Routes>
