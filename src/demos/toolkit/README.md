@@ -1,4 +1,18 @@
-# tldraw sync server
+# Toolkit
+
+> Part of the [tlArcade](../../../README.md) prototyping platform — mounted
+> at `/demos/toolkit/*`. This started from tldraw's official
+> `tldraw-sync-cloudflare` template; most of the content below is that
+> template's own docs about the sync architecture (still accurate) with the
+> local paths/commands corrected for where things live now. See
+> [CLAUDE.md](CLAUDE.md) for what was actually *built* on top of the
+> template (custom shapes, the referee, creatures, physics).
+>
+> **What moved:** `worker/` and `wrangler.toml` are now at the **repo
+> root** (this is the one Worker backing every prototype, not just this
+> one); the client (formerly `client/`) is this directory. There's no
+> `package.json`/`yarn.lock` here anymore — dependencies live in the root
+> `package.json`, installed with **npm**, not yarn.
 
 This is a production-ready backend for [tldraw sync](https://tldraw.dev/docs/sync).
 
@@ -36,62 +50,75 @@ they're cached on cloudflare's edge network to reduce costs and make serving the
 
 ## Development
 
-To install dependencies, run `yarn`. To start a local development server, run `yarn dev`. This will
-start a [`vite`](https://vitejs.dev/) dev server running both your application frontend, and the
-cloudflare workers backend via the [cloudflare vite
-plugin](https://developers.cloudflare.com/workers/vite-plugin/). The app & server should now be
-running at http://localhost:5137.
+From the **repo root**: `npm install`, then `npm run dev`. This starts a
+[`vite`](https://vitejs.dev/) dev server running the whole tlArcade app
+*and* the Cloudflare Workers backend together, via the [cloudflare vite
+plugin](https://developers.cloudflare.com/workers/vite-plugin/). Visit
+`http://localhost:5173/demos/toolkit`.
 
-The backend worker is under [`worker`](./worker/), and is split across several files:
+The backend worker is under [`worker/`](../../../worker/) at the repo root
+(shared by every prototype, not just this one), split across several files:
 
-- **[`worker/worker.ts`](./worker/worker.ts):** the main entrypoint to the worker, defining each
-  route available.
-- **[`worker/TldrawDurableObject.ts`](./worker/TldrawDurableObject.ts):** the sync durable object.
-  An instance of this is created for every active room. This exposes a
-  [`TLSocketRoom`](https://tldraw.dev/reference/sync-core/TLSocketRoom) over websockets, and
-  persists room state to the durable object's built-in SQLite storage.
-- **[`worker/assetUploads.ts`](./worker/assetUploads.ts):** uploads, downloads, and caching for
-  static assets like images and videos.
-- **[`worker/bookmarkUnfurling.ts`](./worker/bookmarkUnfurling.ts):** extract URL metadata for bookmark shapes.
+- **[`worker/worker.ts`](../../../worker/worker.ts):** the main entrypoint to
+  the worker — routes everything under `/api/*` (see the root
+  `wrangler.toml`'s `run_worker_first`); every other path is served as a
+  static asset / SPA fallback.
+- **[`worker/TldrawDurableObject.ts`](../../../worker/TldrawDurableObject.ts):**
+  the sync durable object. An instance of this is created for every active
+  room. This exposes a
+  [`TLSocketRoom`](https://tldraw.dev/reference/sync-core/TLSocketRoom) over
+  websockets, and persists room state to the durable object's built-in
+  SQLite storage.
+- **[`worker/assetUploads.ts`](../../../worker/assetUploads.ts):** uploads,
+  downloads, and caching for static assets like images and videos.
+- **[`worker/Referee.ts`](../../../worker/Referee.ts):** server-authoritative
+  logic (dice, seats, secrets, decks) — not part of the original template,
+  added for the tabletop-toolkit shapes. See [CLAUDE.md](CLAUDE.md).
 
-The frontend client is under [`client`](./client):
+The frontend client is this directory (`src/demos/toolkit/`):
 
-- **[`client/App.tsx`](./client/App.tsx):** the main client `<App />` component. This connects our
-  sync backend to the `<Tldraw />` component, wiring in assets and bookmark previews.
-- **[`client/multiplayerAssetStore.tsx`](./client/multiplayerAssetStore.tsx):** how does the client
-  upload and retrieve assets like images & videos from the worker?
-- **[`client/getBookmarkPreview.tsx`](./client/getBookmarkPreview.tsx):** how does the client fetch
-  bookmark previews from the worker?
+- **[`App.tsx`](App.tsx):** nested under the switcher's `/demos/toolkit/*`
+  route (it owns its own `Root`/`Room` sub-routes for room ids — see
+  [pages/](pages/)) rather than mounting its own top-level router the way
+  the standalone template did.
+- **[`multiplayerAssetStore.tsx`](multiplayerAssetStore.tsx):** how the
+  client uploads and retrieves assets like images & videos from the worker.
+- **[`getBookmarkPreview.tsx`](getBookmarkPreview.tsx):** how the client
+  fetches bookmark previews from the worker (via `/api/unfurl`, handled in
+  `worker/worker.ts` using the `cloudflare-workers-unfurl` package).
 
-  ## Custom shapes
+## Custom shapes
 
-To add support for custom shapes, see the [tldraw sync custom shapes docs](https://tldraw.dev/docs/sync#Custom-shapes--bindings).
+To add support for custom shapes, see the [tldraw sync custom shapes docs](https://tldraw.dev/docs/sync#Custom-shapes--bindings)
+and, for the conventions this codebase actually follows, [CLAUDE.md](CLAUDE.md)'s
+"RECIPE: add a custom shape."
 
-## Adding cloudflare to your own repo
+## Adapting this for your own app
 
-If you already have an app using tldraw and want to use the system in this repo, you can copy and
-paste the relevant parts to your own app.
-
-To add the server to your own app, copy the contents of the [`worker`](./worker/) folder and
-[`./wrangler.toml`](./wrangler.toml) into your app. Add the dependencies from
-[`package.json`](./package.json). You can run the worker using `wrangler dev` in the same folder as
-`./wrangler.toml`.
-
-To point your existing client at the server defined in this repo, copy
-[`client/multiplayerAssetStore.tsx`](./client/multiplayerAssetStore.tsx) and
-[`client/getBookmarkPreview.tsx`](./client/getBookmarkPreview.tsx) into your app. Then, adapt the
-code from [`client/App.tsx`](./client/App.tsx) to your own app. Adapt the `/api/` URLs used in each
-of these files to point at your new `wrangler dev` server.
+If you want to lift the sync backend out of tlArcade for a standalone app:
+copy the root [`worker/`](../../../worker/) folder and
+[`wrangler.toml`](../../../wrangler.toml), plus this directory's `shared/`
+dependency (at the repo root — [`shared/`](../../../shared/)). Pull the
+relevant `dependencies` out of the root `package.json` (the ones listed
+under Toolkit in the root README's stack notes). You can run the worker
+standalone with `wrangler dev` from wherever `wrangler.toml` ends up. To
+point an existing client at that server, copy
+[`multiplayerAssetStore.tsx`](multiplayerAssetStore.tsx) and
+[`getBookmarkPreview.tsx`](getBookmarkPreview.tsx) into it, adapt
+[`App.tsx`](App.tsx) to your app's routing, and point the `/api/` URLs in
+each of these files at your new `wrangler dev` server.
 
 ## Deployment
 
-To deploy this example, you'll need to create a cloudflare account and create an R2 bucket to store
-uploaded images and videos. Update `bucket_name = 'tldraw-content'` in
-[`wrangler.toml`](./wrangler.toml) with the name of your new bucket.
+To deploy tlArcade, you'll need a Cloudflare account and an R2 bucket to
+store uploaded images and videos — the root [`wrangler.toml`](../../../wrangler.toml)
+already names it `tlarcade-toolkit` (create a bucket with that name, or
+change the `bucket_name`/`preview_bucket_name` to match one you create).
 
-To actually deploy the app, first create a production build using `yarn build`. Then, run `yarn
-wrangler deploy`. This will deploy the backend worker along with the frontend app to cloudflare.
-This should give you a workers.dev URL, but you can also [configure a custom
+From the **repo root**: `npm run build`, then `npx wrangler deploy`. This
+deploys the backend worker along with every prototype's static assets to
+Cloudflare in one shot. This should give you a workers.dev URL, but you can
+also [configure a custom
 domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
 
 ## License

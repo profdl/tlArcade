@@ -1,8 +1,13 @@
 # CLAUDE.md
 
-Guidance for working in this repo. Keep it short and true to the code — if a
-fact here drifts from the source, fix the source of truth (the code / README)
-and update this file.
+Guidance for working in this directory. Keep it short and true to the code —
+if a fact here drifts from the source, fix the source of truth (the code /
+README) and update this file.
+
+> **This is one prototype in the [tlArcade](../../../CLAUDE.md) platform**,
+> mounted at `/demos/line-rider-classic`. It has no `package.json`/build of
+> its own — everything below (`npm run dev`/`build`/`test`/`lint`) runs from
+> the **repo root**.
 
 ## What this is
 
@@ -12,13 +17,13 @@ ride it under a hand-rolled Verlet physics sim — upright and tracking the slop
 ragdolling on a hard crash. **Vite + React 19 + TypeScript**, no physics-engine
 dependency.
 
-## Commands
+## Commands (from the repo root)
 
 ```bash
-npm run dev    # vite dev server -> http://localhost:5173
-npm run build  # tsc -b + vite build (run this to type-check)
-npm test       # vitest run (physics unit tests)
-npm run lint   # eslint
+npm run dev    # http://localhost:5173/demos/line-rider-classic
+npm run build  # tsc -b + vite build for the whole app (type-checks this demo too)
+npm test       # vitest run — includes this demo's physics unit tests
+npm run lint   # eslint, whole repo
 ```
 
 ## Architecture
@@ -26,12 +31,12 @@ npm run lint   # eslint
 Read [README.md](README.md) for the file-by-file map; it's accurate. The short
 version:
 
-- [src/App.tsx](src/App.tsx) — mounts `<Tldraw>`, control panel, mounts `Rider`
+- [App.tsx](App.tsx) — mounts `<Tldraw>`, control panel, mounts `Rider`
   via `components.InFrontOfTheCanvas`. Toggles `isReadonly` while playing. The
   `components` object is a **module-level constant** (stable identity) so the
   overlay never remounts; gameplay state flows through atoms (see state.ts), not
   props.
-- [src/game/state.ts](src/game/state.ts) — the shared gameplay atoms
+- [game/state.ts](game/state.ts) — the shared gameplay atoms
   (`playing`/`follow`/`startPoint`/`showCollisions` inputs, `stats`/`score`
   outputs). `showCollisions` is a debug toggle that makes `Rider` draw the actual
   collision geometry (each shape's segments + the sled rig's contact circles).
@@ -39,13 +44,13 @@ version:
   threading these through props would remount `Rider` mid-ride and snap the sled
   to the start. App mirrors them with `useValue`; Rider polls/writes them in its
   rAF loop.
-- [src/game/geometry.ts](src/game/geometry.ts) — turns collidable native page
+- [game/geometry.ts](game/geometry.ts) — turns collidable native page
   shapes into page-space collision segments; maps shape **color → `LineKind`**.
   Also collects `note` shapes as scoring checkpoints (oriented boxes, so a
   rotated note's catch region matches its footprint, not its inflated AABB).
-- [src/game/checkpoints.ts](src/game/checkpoints.ts) — pure checkpoint hit-test
+- [game/checkpoints.ts](game/checkpoints.ts) — pure checkpoint hit-test
   (point-in-oriented-box, scored once per run). **Pure & framework-free.**
-- [src/game/portals.ts](src/game/portals.ts) — pure portal teleport: `pointInMouth`
+- [game/portals.ts](game/portals.ts) — pure portal teleport: `pointInMouth`
   (reuses the checkpoint oriented-box test) + `teleportBody` (re-centers the rig
   on `exit.center`, rotating velocity by the mouths' rotation difference, speed
   preserved — see the entrance-detection gotcha below for why the re-center is
@@ -58,7 +63,7 @@ version:
   teleport after each substep, guarded by a `Body.portalCooldown` so it can't
   immediately re-enter. `scale` is carried on `Portal` but fixed at 1 (v1); the
   exit/entrance size ratio will drive scale portals later. **Pure & framework-free.**
-- [src/game/physics.ts](src/game/physics.ts) — the sim. The rider is a **sled
+- [game/physics.ts](game/physics.ts) — the sim. The rider is a **sled
   rig** (`makeBody`/`stepBody`): a runner base (`BACK`<->`FRONT`) plus a mast held
   upright by a spring (`applyUpright`), so it rides upright and **tracks the
   slope** (`bodyAngle`) like classic Line Rider instead of tumbling — until a hard
@@ -69,7 +74,7 @@ version:
   surface contacts for audio by *pushing* `ContactEvent`s into an optional sink
   (`step`/`stepBody`'s last arg); omit the sink and behavior is byte-identical, so
   it makes no sound itself.
-- [src/game/audio.ts](src/game/audio.ts) — surface sounds, voiced with the
+- [game/audio.ts](game/audio.ts) — surface sounds, voiced with the
   Salamander Grand piano via `@tonejs/piano` (on Tone.js). **Pure of
   React/tldraw**; the rAF loop is its only caller, through the same
   `AudioEngine` interface as before (`resume`/`impact`/`setRide`/`setMuted`/
@@ -80,9 +85,9 @@ version:
   the scale. Samples **stream from the library's CDN (tambien.github.io) on first
   play** and the browser caches them; `load()` is async and all sound is skipped
   until it resolves. All tunables in the `AUDIO` object.
-- [src/game/SnailArt.tsx](src/game/SnailArt.tsx) — the snail character SVG,
+- [game/SnailArt.tsx](game/SnailArt.tsx) — the snail character SVG,
   normalized to a belly-centered, +x-facing local frame the rig places each frame.
-- [src/game/Rider.tsx](src/game/Rider.tsx) — fixed-timestep rAF loop; draws the
+- [game/Rider.tsx](game/Rider.tsx) — fixed-timestep rAF loop; draws the
   snail (`SnailArt`) as an SVG group, writing its transform (position from
   `bodyCenter`, rotation from `bodyAngle`, scale from zoom) imperatively each
   frame (no per-frame React render). Owns the audio engine: passes a reused

@@ -1,5 +1,15 @@
 # Build Spec: "Current" — a tidal field game on the tldraw v5 canvas
 
+> **Status: not yet built.** This is a design spec for a game that doesn't
+> exist yet, written when Toolkit was still its own standalone repo — the
+> "empty directory" / fresh-scaffold instructions below predate Toolkit's
+> migration into [tlArcade](../../../CLAUDE.md). If this ever gets built, it
+> belongs as its own prototype (`src/demos/current/` or similar) using
+> tlArcade's existing app/build/deploy rather than a fresh scaffold — see the
+> root README's "Adding a new prototype." The game-design content (field
+> mechanics, the `design/` simulator, the dependency-graph idea) is still the
+> real spec; just don't follow the yarn/scaffolding steps literally.
+
 > **You are a coding agent.** You have been given an **empty directory**. Your job is to
 > assemble two official tldraw starter kits, upgrade everything to the latest tldraw **v5**,
 > and build the game described below. Read this whole document before writing any code.

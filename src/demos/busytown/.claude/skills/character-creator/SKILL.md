@@ -19,8 +19,11 @@ architecture is that **adding content is "write one file + register it", never
 editing the engine**. This skill walks you through it and — just as important —
 steers you clear of the traps that aren't obvious from the code.
 
-Read `CLAUDE.md` at the repo root first if you haven't; it's the ground truth for
-the layering rules and the "verified feel numbers" you must not drift.
+Read this demo's own `CLAUDE.md` (`src/demos/busytown/CLAUDE.md`) first if you
+haven't; it's the ground truth for the layering rules and the "verified feel
+numbers" you must not drift. (This demo lives inside the
+[tlArcade](../../../../../../CLAUDE.md) prototyping platform now — it has no
+`package.json` of its own; commands below run from the repo root.)
 
 ## The mental model
 
@@ -205,10 +208,12 @@ edit**. You only touch `render/` for these specific needs:
   the state machine. Follow the `truckSystem` / `gardenerSystem` blocks.
 - If the character joins a balanced scene (e.g. Builder's supply chain), make sure
   the existing soak test still passes — it now runs your system too.
-- Run: `npm test` (vitest), `npm run build` (tsc + vite), `npm run lint` (oxlint).
-- **Verify visually.** Start the preview (it must honor `$PORT`; `.claude/launch.json`
-  has `autoPort`). DEV globals `window.__world`, `window.__editor`, `window.__tick`
-  let you inspect state and drive the editor from `preview_eval`. Watch the character
+- From the **repo root**, run: `npm test` (vitest, whole repo), `npm run build`
+  (tsc + vite, whole repo), `npm run lint` (eslint, whole repo).
+- **Verify visually.** Start the preview from the repo root and visit
+  `/demos/busytown`. DEV globals `window.__world`, `window.__editor`,
+  `window.__tick` let you inspect state and drive the editor from
+  `preview_eval`. Watch the character
   actually do its job, and screenshot it.
 
 ---
@@ -276,4 +281,4 @@ arrays.
 5. `content/scenes/<scene>.ts` — pipeline + roster + palette (+ props).
 6. `render/` — only if sim-driven size, carry pose, bubble offset, or a new icon.
 7. `sim/systems.test.ts` — unit-test the state machine; keep existing soaks green.
-8. `npm test && npm run build && npm run lint`, then verify + screenshot in the preview.
+8. From the repo root: `npm test && npm run build && npm run lint`, then verify + screenshot in the preview at `/demos/busytown`.

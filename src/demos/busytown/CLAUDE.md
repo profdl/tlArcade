@@ -1,5 +1,9 @@
 # CLAUDE.md — Busytown / simTown
 
+> **This is one prototype in the [tlArcade](../../../CLAUDE.md) platform**,
+> mounted at `/demos/busytown`. It has no `package.json`/build/dev-server of
+> its own anymore — everything under "Commands" runs from the **repo root**.
+
 A tldraw (v5) canvas that behaves like a living little town. The player drops
 characters, props, and vehicles onto the canvas and they come alive — always
 active, with ~1–2 interactions happening at any moment. The "alive" feeling
@@ -7,36 +11,37 @@ comes from **legible activity and local interactions**, not from a balanced
 ecology. It is a deliberately *faked* simulation: no energy economy, nothing
 conserved. (An earlier predator–prey path was abandoned for this reason.)
 
-The project name is `busytown` (package.json); the folder / architecture is
-referred to as **simTown**: a scene-agnostic ECS **engine** with swappable
-**content modules** layered on top.
+This prototype's folder / architecture is referred to as **simTown**: a
+scene-agnostic ECS **engine** with swappable **content modules** layered on
+top. (`busytown` was its standalone package name before migrating in here.)
 
-## Commands
+## Commands (from the repo root)
 
 ```bash
-npm run dev        # Vite dev server (honors $PORT — see "Dev server" below)
-npm run build      # tsc -b && vite build
-npm run lint       # oxlint
-npm test           # vitest run (one-shot); npm run test:watch to watch
-npm run preview    # preview a production build
+npm run dev        # http://localhost:5173/demos/busytown
+npm run build      # tsc -b && vite build for the whole app (type-checks this demo too)
+npm test           # vitest run — includes this demo's tests
+npm run lint       # eslint, whole repo (this demo used oxlint standalone; see root eslint.config.js for the relaxed rules carried over)
 ```
 
 The behavior spec lives in `sim.py` (a headless Python "feel-sim") and in the
 prose docs (`HANDOFF.md`, the header comment in every `sim/` file).
 
-**Tests** use **Vitest** (tldraw v5's own runner) under a jsdom environment:
-- `src/sim/*.test.ts` — pure-sim unit tests. The `sim/` layer is tldraw-free and
+**Tests** use **Vitest** under a jsdom environment:
+- `sim/*.test.ts` — pure-sim unit tests. The `sim/` layer is tldraw-free and
   deterministic given `Math.random`, so systems are tested by building minimal
   worlds by hand and stubbing the RNG only where a system rolls one.
-- `src/render/bridge.test.tsx` — the render seam, end to end: it mounts a REAL
+- `render/bridge.test.tsx` — the render seam, end to end: it mounts a REAL
   tldraw `<Editor>` (via `<Tldraw onMount>`) with the app's `SpriteShapeUtil` and
   drives `startBridge` against it (shape create / position sync / paused
   read-back / delete-prune).
-- `src/test/setup.ts` — the jsdom shims tldraw needs (ResizeObserver, matchMedia,
-  `CSS.supports`, `document.fonts`, canvas 2d context, `Image.decode`).
+- The jsdom shims tldraw needs (ResizeObserver, matchMedia, `CSS.supports`,
+  `document.fonts`, canvas 2d context, `Image.decode`) now live in the shared
+  root [src/test/setup.ts](../../test/setup.ts) — Face Mask needs the same
+  shims, so they were consolidated rather than duplicated per demo.
 
-Test files are excluded from `tsconfig.app.json` (so `tsc -b`/`npm run build`
-ignores them); `tsconfig.test.json` typechecks them separately.
+Test files are still excluded from `tsconfig.app.json`'s build (so `tsc -b`/
+`npm run build` ignores them); Vitest picks them up directly.
 
 ## The three-layer split (never violate)
 
@@ -143,14 +148,9 @@ Measured over 6 seeds of the Python feel-sim (`sim.py`); ported into
   tick-durations), so the cadence is preserved while sprites stay big enough to
   carry tldraw's absolute stroke weights.
 
-## Dev server / preview
+## Dev-only inspection
 
-`vite.config.ts` reads `process.env.PORT`
-(`server: process.env.PORT ? { port: Number(process.env.PORT) } : undefined`).
-Vite does NOT honor `$PORT` by default and this folder is often opened by
-multiple Claude chats at once; the preview harness assigns a port via `PORT`
-(with `autoPort: true` in `.claude/launch.json`). Without this, the preview
-hangs on "Awaiting server…". DEV-only inspection globals (via `preview_eval`):
+Via `preview_eval` (or the browser console) on `/demos/busytown`:
 `window.__editor`, `window.__world`, `window.__tick`.
 
 ## Conventions

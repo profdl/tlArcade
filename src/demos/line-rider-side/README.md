@@ -1,4 +1,9 @@
-# tldraw Line Rider
+# tldraw Line Rider: Side Mode
+
+> Part of the [tlArcade](../../../README.md) prototyping platform — mounted
+> at `/demos/line-rider-side`. No `package.json`/build of its own; see
+> "Run it" below. Diverged from the same base as `line-rider-classic`
+> (not forked from it) — no portals/flags here.
 
 A [Line Rider](https://en.wikipedia.org/wiki/Line_Rider) clone built on top of
 [tldraw](https://tldraw.dev) v5. Draw track lines on an infinite canvas, hit
@@ -11,14 +16,15 @@ A [Line Rider](https://en.wikipedia.org/wiki/Line_Rider) clone built on top of
 - A hand-rolled **Verlet physics** sim (no physics-engine dependency)
 
 > Working on the code? See [CLAUDE.md](CLAUDE.md) for architecture notes and
-> gotchas, and [docs/tldraw/](docs/tldraw/) for offline tldraw v5 SDK docs.
+> gotchas, and [../../../docs/tldraw/](../../../docs/tldraw/) for offline
+> tldraw v5 SDK docs.
 
 ## Run it
 
 ```bash
-npm install
-npm run dev      # http://localhost:5173
-npm run build    # type-check + production build
+npm install                          # from the repo root
+npm run dev                          # http://localhost:5173/demos/line-rider-side
+npm run build                        # type-checks + builds the whole app
 ```
 
 ## How it's wired
@@ -74,15 +80,15 @@ at half strength (a weaker version of the same effect).
 ## Where to take it next
 
 - **A real sled** *(done)*: the rider is a sled rig — a runner base plus an
-  upright-sprung mast (`makeBody` / `stepBody` in [physics.ts](src/game/physics.ts))
+  upright-sprung mast (`makeBody` / `stepBody` in [physics.ts](game/physics.ts))
   that rides upright and tracks the slope like classic Line Rider, then ragdolls
   on a hard crash (`crashed`). The snail character (`SnailArt`) is drawn over the
   rig. Each point collides with the same code path as the original single point,
   so every line behavior applies to the rig unchanged.
 - **Scoring** *(done)*: drop **sticky-note shapes** as flags; the sled collects
   each the first time it passes through, and the panel shows a `collected/total`
-  count. See [checkpoints.ts](src/game/checkpoints.ts) (pure hit-test) and
-  `makeCheckpointsComputed` in [geometry.ts](src/game/geometry.ts).
-- **Camera follow** *(done)*: the rAF loop in [Rider.tsx](src/game/Rider.tsx)
+  count. See [checkpoints.ts](game/checkpoints.ts) (pure hit-test) and
+  `makeCheckpointsComputed` in [geometry.ts](game/geometry.ts).
+- **Camera follow** *(done)*: the rAF loop in [Rider.tsx](game/Rider.tsx)
   eases the viewport center toward the sled while playing (toggle with the 🎥
   button). Lerped, not snapped, and run with `history: 'ignore'`.

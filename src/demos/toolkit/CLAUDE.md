@@ -1,11 +1,23 @@
-# CLAUDE.md — Working in the tldraw Game Experiments repo
+# CLAUDE.md — Working in Toolkit (formerly the tldraw Game Experiments repo)
+
+> **This is one prototype in the [tlArcade](../../../CLAUDE.md) platform**,
+> mounted at `/demos/toolkit/*`. It's the reason tlArcade has a Cloudflare
+> Worker at all — `worker/` and `shared/` referenced below now live at the
+> **repo root** (shared by every prototype's deployment, though only this
+> one uses them), and this directory (`src/demos/toolkit/`) is what used to
+> be `client/`. There's no `package.json`/`yarn.lock` here anymore —
+> dependencies are in the root `package.json`, installed with **npm**.
+> Commands below that said `yarn` now run as `npm run <script>` from the
+> **repo root**; see [package.json](../../../package.json) for the exact
+> script names (`test:toolkit` covers the framework-free tests mentioned
+> below as `yarn test`).
 
 This file is read automatically by Claude Code. It teaches you (Claude) how to
-extend this repo correctly. The humans here are **vibe-coding interns**: they
+extend this prototype correctly. The humans here are **vibe-coding interns**: they
 will prompt you with things like *"make the creatures school together,"* *"add a
 shape that reacts when you draw near it,"* or *"let me flick a token across the
 board."* Your job is to make those changes land on the first try, following the
-patterns already in the repo.
+patterns already in the codebase.
 
 **Read this whole file before adding a shape, behaviour, or UI element.** The
 tldraw v5 API has a few non-obvious requirements; getting them wrong produces
@@ -45,8 +57,13 @@ still the source of truth for the authority/secrecy model.
 
 ### Repo map
 
+Paths below are relative to this directory (`src/demos/toolkit/`) unless
+marked `[repo root]`.
+
 ```
-client/                 React + Vite front-end
+(this directory)        React + Vite front-end — App.tsx nests Root/Room
+                          under the switcher's /demos/toolkit/* route instead
+                          of owning a top-level router (see App.tsx)
   pages/Room.tsx        ← mounts <Tldraw>; registers shapes/bindings/tools/components,
                           the referee receive channel, and ALL editor behaviours
                           (containment, snapping, physics, swimming) in onMount
@@ -78,11 +95,14 @@ client/                 React + Vite front-end
   referee/              ← client side of the referee: useReferee (HTTP send) +
                           privateReveals (owner-only receive channel)
   ui/                   ← custom menu items, toolbar, context menu (UI overrides)
-worker/                 Cloudflare Worker (the back-end)
+[repo root] worker/     Cloudflare Worker (the back-end for every prototype;
+                          only Toolkit's client actually calls it)
   TldrawDurableObject.ts  ← the sync room + the POST /api/referee route
   Referee.ts            ← server-authoritative logic (dice, seats, secrets, decks)
-  __tests__/referee.test.mjs  ← framework-free referee tests (run via `yarn test`)
-shared/                 Code imported by BOTH client and worker
+  __tests__/referee.test.mjs  ← framework-free referee tests (run via `npm run test:toolkit`, from the repo root)
+[repo root] shared/     Code imported by BOTH this directory and worker/,
+                          reached via the `shared/*` alias (not a relative
+                          path — see root vite.config.ts)
   shape-schemas.ts      ← prop validators (ONE source of truth for client+server),
                           plus gameBindingSchemas
   referee-protocol.ts   ← the client↔referee wire contract
@@ -90,24 +110,29 @@ SPEC.md                 The original architecture spec. Read it for the authorit
                         secrecy "why".
 ```
 
-### Run / verify
+### Run / verify (all from the **repo root**)
 
-- `yarn dev` — runs client + worker locally (Vite + wrangler).
-- `npx tsc --noEmit -p tsconfig.json` — typecheck everything. **Always run this
-  after a change, BEFORE committing.** Zero errors is the bar.
-- `yarn test` — runs the framework-free referee + grid-geometry tests. Add a case
-  here whenever you add a referee action or a pure-geometry/steering function
-  (they need no editor or DOM, so they run under plain
-  `node --experimental-strip-types`). Keep new logic testable this way by
-  splitting pure math out of the per-frame behaviour, the way `creature/` and
-  `grid/` do. NOTE: this runner can't handle TS *parameter properties*
-  (`constructor(private x)`) — use a plain field + assignment.
-- `npx vite build` — verify the client bundles.
+- `npm run dev` — runs the whole tlArcade app + this Worker locally (Vite +
+  the Cloudflare vite plugin); visit `/demos/toolkit`.
+- `npm run build` — `tsc -b` (typechecks every prototype, including this one
+  and the worker) then `vite build`. **Always run this after a change,
+  BEFORE committing.** Zero errors is the bar.
+- `npm run test:toolkit` — runs the framework-free referee + grid-geometry
+  tests (also chained into plain `npm test`). Add a case here whenever you
+  add a referee action or a pure-geometry/steering function (they need no
+  editor or DOM, so they run under plain `node --experimental-strip-types`).
+  Keep new logic testable this way by splitting pure math out of the
+  per-frame behaviour, the way `creature/` and `grid/` do. NOTE: this runner
+  can't handle TS *parameter properties* (`constructor(private x)`) — use a
+  plain field + assignment.
 - **Changing a shape's props after it has persisted records throws
   `ValidationError: ... got undefined` at load.** Adding a required prop to an
-  existing shape needs a tldraw props migration. For local dev (throwaway rooms),
-  instead stop `yarn dev` (it locks the files) and wipe the Durable Object store:
-  `rm -rf .wrangler/state/v3/do/multiplayer-template-TldrawDurableObject`.
+  existing shape needs a tldraw props migration. For local dev (throwaway
+  rooms), instead stop the dev server (it locks the files) and wipe the
+  Durable Object store: `rm -rf .wrangler/state/v3/do/` (the exact subfolder
+  name is derived from the worker name in the root `wrangler.toml`, `tlarcade`
+  — it's no longer `multiplayer-template-TldrawDurableObject` like the
+  original template).
 
 ---
 
@@ -142,7 +167,7 @@ These are the things your training data probably gets wrong. The repo is on
    ```
 
 4. **Register shapes in TWO places, and keep their validators identical.**
-   - The **client**: add the util to `client/shapes/registry.ts`. `Room.tsx`
+   - The **client**: add the util to `shapes/registry.ts`. `Room.tsx`
      passes that array to BOTH `useSync({ shapeUtils })` (the synced schema) and
      `<Tldraw shapeUtils>` (rendering). Both are required.
    - The **server**: add the shape's validators to `shared/shape-schemas.ts`
@@ -177,7 +202,7 @@ These are the things your training data probably gets wrong. The repo is on
    (registry.ts), is passed to `useSync({ bindingUtils })` AND `<Tldraw
    bindingUtils>`, and its schema goes in `gameBindingSchemas` (shared) →
    `createTLSchema({ bindings })`. tldraw auto-deletes a binding when either of
-   its shapes is deleted. See `client/containment/` for the worked example.
+   its shapes is deleted. See `containment/` for the worked example.
 
 7. **Editor-wide per-frame or drag/drop behaviour is "native-first" and lives in
    its own `register*.ts`.** This is the pattern every experiment that moves or
@@ -245,7 +270,7 @@ These are the things your training data probably gets wrong. The repo is on
      shapes instead.
    - **Drive animation off the shared clock + a reactor, freeze when culled.**
      Subscribe once with `useReactor`/`useQuickReactor` to `creatureClock`
-     (`client/creature/clock.ts`) — NOT a per-shape `requestAnimationFrame` — and
+     (`creature/clock.ts`) — NOT a per-shape `requestAnimationFrame` — and
      early-return when `editor.getCulledShapes().has(shape.id)`. The motion is a
      PURE function of synced `seed`/`speed` + the clock, so it stays sync-free
      (gotcha #5/#7): nothing per-frame goes in the store.
@@ -259,8 +284,8 @@ These are the things your training data probably gets wrong. The repo is on
 
 ## RECIPE: add a custom shape
 
-1. Copy `client/shapes/CreatureShape.tsx` (uses native style props — gotcha #8)
-   to `client/shapes/<Name>Shape.tsx`. Use `_TEMPLATE.shape.tsx.txt` for a bare
+1. Copy `shapes/CreatureShape.tsx` (uses native style props — gotcha #8)
+   to `shapes/<Name>Shape.tsx`. Use `_TEMPLATE.shape.tsx.txt` for a bare
    skeleton. **If the shape ANIMATES every frame, copy `RibbonShape.tsx` or
    `FrondShape.tsx` instead and follow gotcha #9** — one `<path>`, polyline `d`
    rewritten per tick off the shared clock. Design for one path from the start;
@@ -270,19 +295,19 @@ These are the things your training data probably gets wrong. The repo is on
 3. Add the prop validators to `shared/shape-schemas.ts` and reference them from
    the new shape file (gotcha #4). Add an entry to `gameShapeSchemas`.
 4. Add `<Name>ShapeUtil` to the `gameShapeUtils` array in
-   `client/shapes/registry.ts`.
-5. `npx tsc --noEmit` → fix any errors → done. The shape now syncs.
+   `shapes/registry.ts`.
+5. `npm run build` (from the repo root) → fix any errors → done. The shape now syncs.
 
 If the shape needs to be **placed by clicking a toolbar button**, also add a
 tool (a `StateNode` in the `gameTools` array) and a toolbar button in
-`client/ui/`.
+`ui/`.
 
 ## RECIPE: add an editor behaviour (motion / reactivity)
 
 This is the shape of most new experiments — something that watches the canvas
 and moves or reacts every frame or on drop.
 
-1. Create `client/<experiment>/register<Thing>.ts` exporting
+1. Create `<experiment>/register<Thing>.ts` exporting
    `register<Thing>(editor): () => void` (it returns a disposer).
 2. Follow the native-first rules in gotcha #7: ride `editor.on('tick', …)` for
    per-frame work or `registerOperationCompleteHandler` for drop-time work; write
@@ -337,18 +362,18 @@ const components: TLComponents = { MainMenu: CustomMainMenu }
    `this.room.updateStore(...)` for public results, `this.room.pushPrivateReveal(seat, ...)`
    for private (owner-only) reveals. Owns the RNG via `crypto.getRandomValues`.
    Add the case to the framework-free test in `worker/__tests__/referee.test.mjs`
-   and run `yarn test`.
+   and run `npm run test:toolkit`.
 3. On the client, call `useReferee(roomId)` and `await send({ action: ... })`.
 
 **TRANSPORT (important):** the `@tldraw/sync` socket is ONE-WAY for custom
 messages (server→client only). So:
 - **client → referee** goes over HTTP `POST /api/referee/:roomId`
-  (`client/referee/useReferee.ts` — it sends `sessionId: TAB_ID` so the referee
+  (`referee/useReferee.ts` — it sends `sessionId: TAB_ID` so the referee
   can address private pushes back to this exact socket).
 - **public results** (e.g. a dice value) come back through normal store sync —
   the referee writes them with `updateStore`, the client just re-renders.
 - **private results** (owner-only reveals) are pushed via the room's
-  `sendCustomMessage` and received in `client/referee/privateReveals.ts`
+  `sendCustomMessage` and received in `referee/privateReveals.ts`
   (`useSync({ onCustomMessageReceived })`). They are held in a reactive `atom`
   and rendered locally — NEVER written to the store. See `SPEC.md` §3.2, §3.4.
 
@@ -371,15 +396,15 @@ messages (server→client only). So:
   animated-node count and paint volume; polyline `d` (never Bézier), no
   `willChange`, off the shared clock, freeze when culled. Copy `RibbonShape.tsx`.
   This is gotcha #9 — the measured cost model; don't relearn it the hard way.
-- **Typecheck after every change** (`npx tsc --noEmit`). Don't hand back code
-  that doesn't compile.
+- **Typecheck after every change** (`npm run build`, from the repo root).
+  Don't hand back code that doesn't compile.
 - **Match the existing style** in the file you're editing: heavy explanatory
   comments in shape/behaviour files (interns read them), terse in `shared/`.
 - **One concept per file / per directory.** A new shape is a new file; a new
-  experiment is a new directory under `client/` with its own `register*.ts` and
-  `__tests__/`.
+  experiment is a new directory here (`src/demos/toolkit/`) with its own
+  `register*.ts` and `__tests__/`.
 - **Keep logic testable.** Split pure math out of per-frame loops so it runs
-  under the `yarn test` runner with no editor or DOM.
+  under the `npm run test:toolkit` runner with no editor or DOM.
 - **When unsure about a v5 API, check the installed types** in
   `node_modules/tldraw` / `node_modules/@tldraw/*` rather than guessing — the
   API has moved across versions and your memory may be stale.

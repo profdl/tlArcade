@@ -10,7 +10,7 @@ holds decisions and not-yet-built plans.
 Originally any non-scenery shape on the page collided, so text / images /
 frames acted as invisible solid walls. **Resolved:** `collectSegmentsNow` now
 gates on a `COLLIDABLE_TYPES` allowlist (`draw`, `line`, `geo`, `arrow`) in
-[src/game/geometry.ts](src/game/geometry.ts); every other shape type is treated
+[game/geometry.ts](game/geometry.ts); every other shape type is treated
 as scenery (non-collidable). An allowlist (not a denylist) keeps any future
 tldraw shape type non-collidable by default. Color still selects behavior
 *within* those collidable types; a colorless collidable shape defaults to solid.
@@ -18,7 +18,7 @@ tldraw shape type non-collidable by default. Color still selects behavior
 ## Color → behavior: all 13 tldraw colors (shipped)
 
 tldraw v5's default palette (`TLDefaultColorStyle`) has 13 colors. Every one now
-maps to a gameplay role in `COLOR_TO_KIND` ([geometry.ts](src/game/geometry.ts)).
+maps to a gameplay role in `COLOR_TO_KIND` ([geometry.ts](game/geometry.ts)).
 Lighter shades reuse their base color's kind at `strength: 0.5` — the "same kind,
 tuned constant" approach — so the palette stays learnable and the switch in
 `step()` stays small.
@@ -45,8 +45,8 @@ Per-kind tunables (`brakeDrag`, `bounceRestitution`, `stickyFriction`,
 ### Implementation notes
 
 - **Where it lands:** the kind→behavior split already exists. `COLOR_TO_KIND`
-  in [geometry.ts](src/game/geometry.ts) maps color → `LineKind`; `step` in
-  [physics.ts](src/game/physics.ts) switches on `seg.kind`. New behaviors mean
+  in [geometry.ts](game/geometry.ts) maps color → `LineKind`; `step` in
+  [physics.ts](game/physics.ts) switches on `seg.kind`. New behaviors mean
   (1) extend the `LineKind` union in physics.ts, (2) add the color rows to
   `COLOR_TO_KIND`, (3) add the per-kind branch in the collision block.
 - **Tunables:** new behaviors should get named constants in the `PHYSICS` object
@@ -142,10 +142,10 @@ only the "set start here" button. Design constraints to respect when building:
 Give each surface an audible character so a player can *hear* what they're
 riding. Built as designed below; the build-order checklist at the end is done.
 Source of truth is the code: contact reporting in
-[physics.ts](src/game/physics.ts) (`ContactEvent`), the synth in
-[audio.ts](src/game/audio.ts) (`createAudioEngine` + `AUDIO`), the glue in
-[Rider.tsx](src/game/Rider.tsx), and the mute toggle (`mutedAtom` in
-[state.ts](src/game/state.ts) + the 🔊 button in [App.tsx](src/App.tsx)). Sound
+[physics.ts](game/physics.ts) (`ContactEvent`), the synth in
+[audio.ts](game/audio.ts) (`createAudioEngine` + `AUDIO`), the glue in
+[Rider.tsx](game/Rider.tsx), and the mute toggle (`mutedAtom` in
+[state.ts](game/state.ts) + the 🔊 button in [App.tsx](App.tsx)). Sound
 recipes in `KIND_VOICE` / `AUDIO` are tune-by-ear starting points.
 
 ### What plays, and when

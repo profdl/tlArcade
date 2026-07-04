@@ -6,21 +6,28 @@ and update this file.
 
 ## What this is
 
-A switcher hosting several independent **tldraw v5** (`Vite + React +
-TypeScript`) prototypes in one app. [src/App.tsx](src/App.tsx) is a router;
-[src/Home.tsx](src/Home.tsx) lists the demos; each one lives fully
-self-contained under `src/demos/<slug>/` and is lazy-loaded via
-[src/demos/manifest.ts](src/demos/manifest.ts). See [README.md](README.md)
-for the current demo list and routes.
+A **prototyping platform** for independent **tldraw v5** (`Vite + React +
+TypeScript`) experiments — designed to keep growing. Each prototype lives
+fully self-contained under `src/demos/<slug>/`; [src/App.tsx](src/App.tsx)
+is a router that lazy-loads them via
+[src/demos/manifest.ts](src/demos/manifest.ts); [src/Home.tsx](src/Home.tsx)
+lists them at `/`; [src/DemoLayout.tsx](src/DemoLayout.tsx) wraps every
+prototype route with a small nav bar back to the list. See
+[README.md](README.md) for the current prototype list, routes, and — most
+relevant if you're asked to add one — **"Adding a new prototype."**
 
-**Each demo's own `CLAUDE.md` (where present, e.g.
+**Each prototype's own `CLAUDE.md` (where present, e.g.
 [src/demos/toolkit/CLAUDE.md](src/demos/toolkit/CLAUDE.md)) is the real
-architecture reference for that demo** — Claude Code picks it up
+architecture reference for that prototype** — Claude Code picks it up
 automatically when you're working inside that directory. This file only
-covers the shell that holds them together.
+covers the shell that holds them together, and the pitfalls that show up
+specifically *because* multiple prototypes share one program/build/deploy.
 
-Demos were folded in via `git subtree --squash`, one per branch; the branch
-each came from is untouched and still has full unsquashed history.
+The six prototypes present as of this writing were folded in from
+pre-existing standalone repos via `git subtree --squash`, one per branch; the
+branch each came from is untouched and still has full unsquashed history.
+That path is optional — a new prototype can just as well start as an empty
+folder (see README).
 
 ## Commands
 
