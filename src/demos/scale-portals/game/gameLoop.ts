@@ -93,9 +93,9 @@ export type PortalHit =
  * room) vs an 'in' doorway (out in a hallway) never coincide anyway.
  */
 export function portalAt<Id>(layout: MapLayout<Id>, player: AABB): PortalHit {
-	const out = layout.portals.find((p) => p.kind === 'out' && aabbOverlaps(player, p.rect))
+	const out = layout.portals.find((p) => p.kind === 'out' && aabbOverlaps(player, p.hit))
 	if (out) return { kind: 'out', portal: out }
-	const inn = layout.portals.find((p) => p.kind === 'in' && aabbOverlaps(player, p.rect))
+	const inn = layout.portals.find((p) => p.kind === 'in' && aabbOverlaps(player, p.hit))
 	if (inn) return { kind: 'in', portal: inn }
 	return { kind: 'none' }
 }
@@ -257,7 +257,7 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		manager.pushChild(child)
 		const outPortal = child.layout.portals.find((p) => p.kind === 'out' && p.dir === portal.dir)
 		const gate = child.layout.gates.find((g) => g.edge === portal.dir)
-		const dest = outPortal ? centre(outPortal.rect) : gate ? centre(gate.rect) : centre(submap.slotRect)
+		const dest = outPortal ? centre(outPortal.hit) : gate ? centre(gate.rect) : centre(submap.slotRect)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(child.roomSize))
 		editor.bringToFront([PLAYER_SHAPE_ID])
 		frameLevel(editor, child, dest.x, dest.y, ZOOM_DURATION_MS)
@@ -280,7 +280,7 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		)
 		let dest: { x: number; y: number }
 		if (inPortal) {
-			dest = centre(inPortal.rect)
+			dest = centre(inPortal.hit)
 		} else {
 			const margin = size / 2 + 6
 			const c = centre(slot)

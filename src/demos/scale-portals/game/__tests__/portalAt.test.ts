@@ -52,7 +52,7 @@ describe('portalAt — an intermediate map can dive BOTH out and in', () => {
 		const out = layout.portals.filter((p) => p.kind === 'out')
 		expect(out.length).toBeGreaterThan(0)
 		const p = out[0]
-		const hit = portalAt(layout, playerAt(centre(p.rect).x, centre(p.rect).y))
+		const hit = portalAt(layout, playerAt(centre(p.hit).x, centre(p.hit).y))
 		expect(hit.kind).toBe('out')
 		if (hit.kind === 'out') expect(hit.portal.dir).toBe(p.dir)
 	})
@@ -62,7 +62,7 @@ describe('portalAt — an intermediate map can dive BOTH out and in', () => {
 		const inn = layout.portals.filter((p) => p.kind === 'in')
 		expect(inn.length).toBeGreaterThan(0) // it's a host too
 		const p = inn[0]
-		const hit = portalAt(layout, playerAt(centre(p.rect).x, centre(p.rect).y))
+		const hit = portalAt(layout, playerAt(centre(p.hit).x, centre(p.hit).y))
 		expect(hit.kind).toBe('in')
 		if (hit.kind === 'in') {
 			expect(hit.portal.submap?.cell).toEqual(p.submap?.cell)
@@ -84,7 +84,7 @@ describe('portalAt — an intermediate map can dive BOTH out and in', () => {
 			// Full grid (removeProb 0) → the coin flip always yields submap slots, each with a tunnel.
 			expect(inn.length, `seed ${seed}`).toBeGreaterThan(0)
 			const p = inn[0]
-			expect(portalAt(layout, playerAt(centre(p.rect).x, centre(p.rect).y)).kind).toBe('in')
+			expect(portalAt(layout, playerAt(centre(p.hit).x, centre(p.hit).y)).kind).toBe('in')
 		}
 	})
 })

@@ -4,7 +4,18 @@
  * nesting invariant. Pure, no editor.
  */
 import { describe, it, expect } from 'vitest'
-import { buildMapLayout, roomExtent, colorForDepth, roomPropsForDepth, CHILD_ROOM_PROPS, type PageRect } from '../mapGeometry'
+import {
+	buildMapLayout,
+	roomExtent,
+	colorForDepth,
+	roomPropsForDepth,
+	CHILD_ROOM_PROPS,
+	PORTAL_IN_REACH,
+	PORTAL_IN_CROSS,
+	PORTAL_OUT_REACH,
+	PORTAL_OUT_CROSS,
+	type PageRect,
+} from '../mapGeometry'
 import {
 	CHILD_GAP,
 	CHILD_H,
@@ -17,6 +28,7 @@ import {
 	PARENT_ROOM,
 	PARENT_SEED,
 	PARENT_W,
+	PLAYER_FRACTION,
 	SLOT,
 	SLOT_POKE,
 } from '../constants'
@@ -278,12 +290,37 @@ describe('portal-doorways (dive triggers on the boundary, not the whole slot/gat
 		const layout = child(['W', 'E', 'N', 'S'], CHILD_SEED, 0)
 		const inside = (px: number, py: number, r: PageRect) =>
 			px >= r.x - 0.001 && px <= r.x + r.w + 0.001 && py >= r.y - 0.001 && py <= r.y + r.h + 0.001
+		// The dive lands the player centred on the doorway; the whole player box must clear
+		// the non-walkable boundary AND have slack to step off (to re-arm the exit trigger).
+		// So the centre must sit at least a player half-width inside the gate room on the
+		// axis normal to the gate edge. This guards the REACH − CROSS > PLAYER_FRACTION bound.
+		const half = (CHILD_ROOM * PLAYER_FRACTION) / 2
 		for (const p of layout.portals.filter((p) => p.kind === 'out')) {
 			const gate = layout.gates.find((g) => g.edge === p.dir)!
-			const c = { x: p.rect.x + p.rect.w / 2, y: p.rect.y + p.rect.h / 2 }
+			const c = { x: p.hit.x + p.hit.w / 2, y: p.hit.y + p.hit.h / 2 }
 			expect(inside(c.x, c.y, gate.rect)).toBe(true) // centre is walkable gate floor
 			expect(overlaps(p.rect, gate.rect)).toBe(true) // and the doorway meets the gate
+			// Distance from the centre INWARD past the straddled boundary edge (the wall on side
+			// `dir`) must clear a half-player, so the landed box sits fully on walkable floor.
+			const clearance =
+				p.dir === 'W'
+					? c.x - gate.rect.x
+					: p.dir === 'E'
+						? gate.rect.x + gate.rect.w - c.x
+						: p.dir === 'N'
+							? c.y - gate.rect.y
+							: gate.rect.y + gate.rect.h - c.y
+			expect(clearance).toBeGreaterThan(half)
 		}
+	})
+
+	// Both doorway size sets are landing targets (OUT on dive-in, IN on dive-out), so both
+	// must keep the landed player clear of the boundary: the centre sits (REACH − CROSS)/2
+	// inside, and that must exceed a player half-width — i.e. REACH − CROSS > PLAYER_FRACTION.
+	// Guards the IN set directly (its landing floor is a hallway tunnel, not one gate rect).
+	it('both doorway size sets satisfy the walkable-landing clearance bound', () => {
+		expect(PORTAL_IN_REACH - PORTAL_IN_CROSS).toBeGreaterThan(PLAYER_FRACTION)
+		expect(PORTAL_OUT_REACH - PORTAL_OUT_CROSS).toBeGreaterThan(PLAYER_FRACTION)
 	})
 })
 
