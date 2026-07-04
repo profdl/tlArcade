@@ -86,6 +86,12 @@ export function roomExtent(width: number, height: number, roomSize: number, gap:
 	return { w: width * pitch - gap, h: height * pitch - gap }
 }
 
+/** A distinct child seed per submap cell, derived from the world seed, so ONE seed
+ *  reproduces the entire world — the parent layout and every small-map. */
+export function childSeedFor(worldSeed: number, cell: GridCell): number {
+	return (worldSeed ^ 0x9e3779b9 ^ (cell.x * 73856093) ^ (cell.y * 19349663)) >>> 0
+}
+
 function firstPresentCell(present: Present, width: number, height: number): GridCell {
 	for (let y = 0; y < height; y++) {
 		for (let x = 0; x < width; x++) {
@@ -196,7 +202,7 @@ export type BuildMapLayoutOptions = {
  */
 /** The middle cell of a grid edge — where a parent tunnel's centreline meets the child
  *  map, since tunnels run on cell centrelines and the child fills the slot exactly. */
-function edgeMiddleCell(width: number, height: number, edge: Dir): GridCell {
+export function edgeMiddleCell(width: number, height: number, edge: Dir): GridCell {
 	const midX = Math.floor((width - 1) / 2)
 	const midY = Math.floor((height - 1) / 2)
 	if (edge === 'W') return { x: 0, y: midY }

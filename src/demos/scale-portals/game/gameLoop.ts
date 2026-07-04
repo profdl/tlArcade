@@ -25,13 +25,11 @@ import {
 	CHILD_H,
 	CHILD_REMOVE_PROB,
 	CHILD_ROOM,
-	CHILD_SEED,
 	CHILD_W,
 	GAP,
 	PARENT_H,
 	PARENT_REMOVE_PROB,
 	PARENT_ROOM,
-	PARENT_SEED,
 	PARENT_W,
 	PLAYER_FRACTION,
 	PLAYER_SPEED_ROOMS_PER_SEC,
@@ -41,7 +39,8 @@ import {
 	ZOOM_INSET,
 } from './constants.ts'
 import { aabbOverlaps, resolveMove } from './collision.ts'
-import { buildMapLayout, CHILD_ROOM_PROPS, type GateInfo, type MapLayout, type PageRect, type SubmapInfo } from './mapGeometry.ts'
+import { buildMapLayout, childSeedFor, CHILD_ROOM_PROPS, type GateInfo, type MapLayout, type PageRect, type SubmapInfo } from './mapGeometry.ts'
+import { validateWorld, type WorldChild } from './validateWorld.ts'
 import { LevelManager, submapKey, walkableRects, type LevelState } from './levelManager.ts'
 import type { KeyState } from './keys.ts'
 import type { Dir } from '../wfc/tiles.ts'
@@ -57,9 +56,9 @@ function centre(r: PageRect): { x: number; y: number } {
 	return { x: r.x + r.w / 2, y: r.y + r.h / 2 }
 }
 
-/** A distinct child seed per submap cell, so every small map is a different layout. */
-function childSeedFor(cell: { x: number; y: number }): number {
-	return (CHILD_SEED ^ (cell.x * 73856093) ^ (cell.y * 19349663)) >>> 0
+/** A fresh 32-bit world seed — a NEW map every game start. */
+export function randomWorldSeed(): number {
+	return (Math.random() * 0x100000000) >>> 0
 }
 
 /** Which side of `rect` the point is off toward — the dominant axis of the offset from
@@ -91,7 +90,7 @@ function writeLevelRects(editor: Editor, layout: MapLayout<TLShapeId>, toBack: b
 	)
 }
 
-export function registerGame(editor: Editor, keys: KeyState): () => void {
+export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: number }): () => void {
 	const manager = new LevelManager<TLShapeId>()
 	const playerSizeFor = (roomSize: number) => roomSize * PLAYER_FRACTION
 	const speedFor = (roomSize: number) => PLAYER_SPEED_ROOMS_PER_SEC * roomSize // px/sec
@@ -106,7 +105,13 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 	)
 
 	// ── Build + write the PARENT world at the page origin (sent to back). ────────
-	const parentLayout = buildMapLayout(() => createShapeId(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
+	// A NEW world every start: the seed defaults to random. Pass opts.seed (e.g. from
+	// a ?seed= URL param) to reproduce a specific world — it fully determines the
+	// parent AND every child (childSeedFor derives from it).
+	const worldSeed = opts?.seed ?? randomWorldSeed()
+	 
+	console.info(`[scale-portals] world seed: ${worldSeed} (reproduce with ?seed=${worldSeed})`)
+	const parentLayout = buildMapLayout(() => createShapeId(), PARENT_W, PARENT_H, worldSeed, 0, 0, PARENT_ROOM, GAP, {
 		removeProb: PARENT_REMOVE_PROB,
 		role: 'parent',
 		slotSize: SLOT,
@@ -127,12 +132,13 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 	// Build + write EACH submap's child map eagerly, filling its slot, so the tiny maps
 	// sit there visibly before you enter. Each is cached by cell, so diving in reuses
 	// its shapes (no regeneration/duplication). Gates: one per tunnel direction.
+	const builtChildren: WorldChild<TLShapeId>[] = []
 	function buildChildInSlot(parentLevel: LevelState<TLShapeId>, submap: SubmapInfo): LevelState<TLShapeId> {
 		const layout = buildMapLayout(
 			() => createShapeId(),
 			CHILD_W,
 			CHILD_H,
-			childSeedFor(submap.cell),
+			childSeedFor(worldSeed, submap.cell),
 			submap.slotRect.x,
 			submap.slotRect.y,
 			CHILD_ROOM,
@@ -156,9 +162,20 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		}
 		manager.cacheChild(submapKey(submap.cell), child)
 		writeLevelRects(editor, layout, false)
+		builtChildren.push({ submap, layout })
 		return child
 	}
 	for (const submap of parentLayout.submaps) buildChildInSlot(parent, submap)
+
+	// With random seeds, the gate↔tunnel connection invariants must hold for ANY world —
+	// assert them loudly in dev (they're also swept across hundreds of seeds in tests).
+	if (import.meta.env.DEV) {
+		const violations = validateWorld(parentLayout, builtChildren, { w: CHILD_W, h: CHILD_H })
+		for (const v of violations) {
+			 
+			console.error(`[scale-portals] INVARIANT VIOLATED (seed ${worldSeed}): ${v}`)
+		}
+	}
 
 	// Player spawns at the parent's spawn-room centre, sized to the parent room.
 	const spawn = centre(parentLayout.spawnRect)

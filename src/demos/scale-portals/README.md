@@ -48,9 +48,14 @@ room. Travel literally alternates room → small-map → room.
   reuses the same `buildMapLayout`, so deeper nesting later is the same call
   at child scale.
 
-Seeds are fixed (`PARENT_SEED`; per-submap child seeds are hashed from the
-cell coordinates), so the world is the same every reload. Nothing persists to
-localStorage.
+**A new world generates every start**: the world seed is rolled randomly on
+mount and logged to the console; per-submap child seeds derive from it, so one
+number reproduces the entire world. Add `?seed=<number>` to the URL to replay
+a specific world. Because worlds are random, the connection guarantees are
+enforced rather than eyeballed: `game/validateWorld.ts` states the invariants
+(one gate per tunnel, gates on tunnel centrelines, every gate strictly
+overlapping its tunnel, child extent === slot) — swept across 300 seeds in
+tests and asserted at runtime in dev. Nothing persists to localStorage.
 
 ## Tests
 

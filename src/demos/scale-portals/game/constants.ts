@@ -24,7 +24,11 @@ export const CHILD_REMOVE_PROB = 0.2
 export const PARENT_ROOM = 240
 export const GAP = 80
 
-/** Fixed seeds → the exact same demo every reload (not time-derived). */
+/**
+ * Fixed seeds for TESTS (deterministic assertions). The game itself generates a NEW
+ * world seed every start (see gameLoop's randomWorldSeed; override with ?seed=), and
+ * derives every child's seed from it via childSeedFor.
+ */
 export const PARENT_SEED = 1
 export const CHILD_SEED = 2
 
