@@ -53,4 +53,11 @@ export const demos: DemoEntry[] = [
 		path: '/demos/toolkit/*',
 		Component: lazy(() => import('./toolkit/App')),
 	},
+	{
+		slug: 'scale-portals',
+		title: 'Scale Portals',
+		blurb:
+			'Walk a top-down map of WFC-generated rooms, then step into a portal room that holds a whole smaller map — the camera dives in and out between scales.',
+		Component: lazy(() => import('./scale-portals/App')),
+	},
 ]
