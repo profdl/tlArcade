@@ -61,12 +61,12 @@ describe('nesting invariant', () => {
 })
 
 describe('parent world — cell roles', () => {
-	it('marks a checkerboard of submap cells, never the spawn, all with tunnels', () => {
+	it('marks a seeded spread of submap cells, never the spawn, all with tunnels', () => {
 		const layout = parent()
 		expect(layout.submaps.length).toBeGreaterThan(1)
 		expect(layout.gates).toHaveLength(0) // parents have no gates
 		for (const s of layout.submaps) {
-			expect((s.cell.x + s.cell.y) % 2).toBe(1)
+			// No parity rule any more: any present cell can be a submap, EXCEPT the spawn.
 			expect(s.cell).not.toEqual(layout.spawnCell)
 			expect(s.doorDirs.length).toBeGreaterThan(0) // reachable → at least one tunnel
 			// Slot is centred in the cell footprint.
@@ -75,6 +75,39 @@ describe('parent world — cell roles', () => {
 			expect(s.slotRect.y).toBeCloseTo(s.cell.y * pitch + (PARENT_ROOM - SLOT) / 2, 6)
 			expect(s.slotRect.w).toBeCloseTo(SLOT, 6)
 		}
+	})
+
+	it('is deterministic in the seed, and a different seed can give a different pattern', () => {
+		const key = (l: ReturnType<typeof parent>) => l.submaps.map((s) => `${s.cell.x},${s.cell.y}`).sort().join('|')
+		// Same seed → identical role pattern (one world seed reproduces the whole world).
+		expect(key(parent())).toEqual(key(parent()))
+		// Sweep seeds: at least one differs from PARENT_SEED's pattern (roles track the seed).
+		const base = key(parent())
+		const differs = Array.from({ length: 20 }, (_, i) =>
+			buildMapLayout(counter(), PARENT_W, PARENT_H, i + 100, 0, 0, PARENT_ROOM, GAP, {
+				removeProb: 0,
+				hasSlots: true,
+				slotSize: SLOT,
+				slotPoke: SLOT_POKE,
+			})
+		).some((l) => l.submaps.map((s) => `${s.cell.x},${s.cell.y}`).sort().join('|') !== base)
+		expect(differs).toBe(true)
+	})
+
+	it('submapProb tunes the coin flip: 0 → all rooms, 1 → every non-spawn cell a submap', () => {
+		const build = (submapProb: number) =>
+			buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
+				removeProb: 0,
+				hasSlots: true,
+				slotSize: SLOT,
+				slotPoke: SLOT_POKE,
+				submapProb,
+			})
+		expect(build(0).submaps).toHaveLength(0)
+		const all = build(1)
+		// removeProb 0 → full 3x3 grid; every cell but the spawn is a submap.
+		expect(all.submaps).toHaveLength(PARENT_W * PARENT_H - 1)
+		for (const s of all.submaps) expect(s.cell).not.toEqual(all.spawnCell)
 	})
 
 	it('emits NO room rect behind a submap cell', () => {

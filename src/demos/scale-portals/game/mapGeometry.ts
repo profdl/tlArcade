@@ -10,8 +10,11 @@
  *   • 'submap' — NO room rect. Instead a SLOT (a smaller square centred in the cell
  *     footprint) that hosts a whole nested child map. Tunnels from neighbouring
  *     rooms run right up to the slot edge; reaching one is how you dive in.
- * Role assignment is PLUGGABLE (opts.roleFor, default checkerboard parity), which is
- * the modularity seam: swap the function to get sparser submaps, all-rooms, etc.
+ * Role assignment is PLUGGABLE (opts.roleFor, default a SEEDED per-cell coin flip —
+ * any present cell can independently be a room or a submap), which is the modularity
+ * seam: swap the function, or just tune opts.submapProb, to get sparser submaps,
+ * all-rooms, etc. The coin flip is seeded from the map's own seed, so one world seed
+ * still reproduces the whole nested world exactly.
  *
  * DOORS ARE PORT-TO-PORT. Each side of a door edge attaches to that cell's "port":
  * a room's port is its edge (poking DOOR_OVERLAP into the room, as always); a
@@ -35,7 +38,7 @@
  * Both `roomSize` and `gap` are parameters so the SAME function builds the root
  * world and the smaller maps nested in its slots, at any depth.
  */
-import { collapse, type TileGrid } from '../wfc/collapse.ts'
+import { collapse, mulberry32, type TileGrid } from '../wfc/collapse.ts'
 import { pruneAndConnect, type Present } from '../wfc/connectivity.ts'
 import { DELTA, DIRS, type Dir } from '../wfc/tiles.ts'
 
@@ -209,11 +212,17 @@ export type BuildMapLayoutOptions = {
 	 */
 	hasSlots: boolean
 	/**
-	 * Host only: which role each present cell plays. Defaults to checkerboard parity
-	 * ((x+y) odd → submap), never the spawn cell. THE modularity seam — swap for
-	 * sparser submaps, all-rooms, weighted random, etc. Ignored when `hasSlots` false.
+	 * Host only: which role each present cell plays. Defaults to a SEEDED per-cell coin
+	 * flip — any present cell can independently be a room or a submap (probability
+	 * `submapProb`), never the spawn cell. THE modularity seam — swap for a checkerboard,
+	 * sparser submaps, all-rooms, etc. Ignored when `hasSlots` false.
 	 */
 	roleFor?: (cell: GridCell) => CellRole
+	/**
+	 * Host only: probability a given present cell becomes a submap under the DEFAULT
+	 * role function (the seeded coin flip). Ignored if `roleFor` is supplied. Default 0.5.
+	 */
+	submapProb?: number
 	/** Host only: slot side length (the square a child map fills), page px. */
 	slotSize?: number
 	/** Host only: how far a tunnel pokes INTO a slot (so the dive trigger can fire). */
@@ -284,12 +293,32 @@ export function buildMapLayout<Id>(
 			: []
 	const gateAt = (x: number, y: number) => gates.find((g) => isCell(g.cell, x, y))
 
-	// ── ROLES. Host: rooms vs submap slots (pluggable; default checkerboard). The spawn
+	// ── ROLES. Host: rooms vs submap slots (pluggable; default a SEEDED per-cell coin
+	//    flip, so ANY present cell can independently be a room or a submap). The spawn
 	//    cell and every gate cell are pinned to 'room' — you must be able to stand where
 	//    you arrive, so neither can be a slot. This is what lets an INTERMEDIATE map be
-	//    both host (slots) and guest (gates): gates simply override the parity there. ──
-	const defaultRoleFor = (c: GridCell): CellRole =>
-		(c.x + c.y) % 2 === 1 && !isCell(spawnCell, c.x, c.y) ? 'submap' : 'room'
+	//    both host (slots) and guest (gates): gates simply override the coin flip there. ─
+	//    Each eligible cell draws one value from a stream seeded by (this map's seed,
+	//    cell), so roles are scan-order-independent and one world seed reproduces them
+	//    all. GUARANTEE: a host map always ends up with ≥1 submap (else the scale would
+	//    be a dead end with no dive-in) — if every flip came up 'room' we promote the
+	//    single cell that flipped closest to submap. `submapProb` 0 opts out (all-rooms).
+	const submapProb = opts.submapProb ?? 0.5
+	const cellKey = (c: GridCell) => `${c.x},${c.y}`
+	const flipFor = (c: GridCell): number => mulberry32((seed ^ (c.x * 73856093) ^ (c.y * 19349663) ^ 0x5f356495) >>> 0)()
+	const eligible: { cell: GridCell; roll: number }[] = []
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			if (!present[y][x] || isCell(spawnCell, x, y) || gateAt(x, y)) continue
+			eligible.push({ cell: { x, y }, roll: flipFor({ x, y }) })
+		}
+	}
+	const submapCells = new Set(eligible.filter((e) => e.roll < submapProb).map((e) => cellKey(e.cell)))
+	if (submapCells.size === 0 && submapProb > 0 && eligible.length > 0) {
+		const promoted = eligible.reduce((a, b) => (b.roll < a.roll ? b : a))
+		submapCells.add(cellKey(promoted.cell))
+	}
+	const defaultRoleFor = (c: GridCell): CellRole => (submapCells.has(cellKey(c)) ? 'submap' : 'room')
 	const roleFor = opts.hasSlots ? (opts.roleFor ?? defaultRoleFor) : () => 'room' as CellRole
 	const roleAt = (x: number, y: number): CellRole =>
 		isCell(spawnCell, x, y) || gateAt(x, y) ? 'room' : roleFor({ x, y })

@@ -36,9 +36,13 @@ See `MAX_DEPTH` in `game/constants.ts`, derived from exactly that inequality.
 - **The cell-role model** (`game/mapGeometry.ts`): each present cell is either
   a `room` (a filled rect in that scale's colour) or a `submap` (no rect — a
   SLOT centred in the cell holds a nested child map). Role assignment is a
-  pluggable function
-  (default: checkerboard parity), so different world patterns are one function
-  swap. Doors are built **port-to-port**: a room's port pokes slightly into
+  pluggable function (default: a SEEDED per-cell coin flip — ANY present cell
+  can independently be a room or a submap, probability `submapProb`, default
+  50%), so different world patterns are one function swap (or one probability
+  tweak). The flip is seeded from the map's own seed, so one world seed still
+  reproduces every role; a HOST map is guaranteed ≥1 submap (if every flip came
+  up room, the cell closest to submap is promoted) so no scale is a dead end.
+  Doors are built **port-to-port**: a room's port pokes slightly into
   the room; a submap's port pokes slightly INTO the slot — which is exactly
   what lets the player's dive trigger fire at the end of a tunnel.
 - **Slots and gates are INDEPENDENT — a map can have both.** `hasSlots` makes
@@ -47,9 +51,9 @@ See `MAX_DEPTH` in `game/constants.ts`, derived from exactly that inequality.
   *both* (slots + gates) — that's what lets nesting continue past one level;
   the deepest (LEAF) map is guest-only. Gate cells always force role `room`
   (you must be able to stand where a tunnel drops you), so on an intermediate
-  map gates simply override the checkerboard parity where they land. With the
-  default parity ~91% of second-scale maps go on to nest a third scale; the
-  rest (gates claimed all their slot cells) stop one scale early — harmless.
+  map gates simply override the coin flip where they land (and are excluded from
+  it). Because a host map is guaranteed at least one submap, every intermediate
+  map goes on to nest a third scale.
 - **Gates are per-tunnel, not entrance/exit.** Each nested map gets one gate
   per door direction of its host cell (1–4 gates, straight or bent — e.g. a
   bend joins a west tunnel to a north tunnel). A gate is just a room at a
