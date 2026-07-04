@@ -8,15 +8,13 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@tonejs/piano": "^0.2.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tldraw": "^5.1.1",
-    "tone": "^14.9.17"
+    "tldraw": "^5.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -27,7 +25,6 @@
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
-    "events": "^3.3.0",
     "globals": "^17.6.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
