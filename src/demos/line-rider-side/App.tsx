@@ -26,7 +26,7 @@ const components: TLComponents = {
 	InFrontOfTheCanvas: () => <Rider />,
 }
 
-// A panel button that reflects an on/off state: gets the `lr-active` class and
+// A panel button that reflects an on/off state: gets the `lrs-active` class and
 // `aria-pressed` when `active`, with the title swapping to match. Collapses the
 // handful of near-identical toggle buttons (follow / mute / collisions / legend)
 // in the panel into one place.
@@ -43,7 +43,7 @@ function ToggleButton({
 }) {
 	return (
 		<button
-			className={active ? 'lr-btn lr-icon lr-active' : 'lr-btn lr-icon'}
+			className={active ? 'lrs-btn lrs-icon lrs-active' : 'lrs-btn lrs-icon'}
 			title={title}
 			aria-pressed={active}
 			onClick={onClick}
@@ -147,26 +147,26 @@ function App() {
 	}, [editor])
 
 	return (
-		<div className="lr-root">
-			<Tldraw persistenceKey="line-rider" components={components} onMount={handleMount} />
+		<div className="lrs-root">
+			<Tldraw persistenceKey="line-rider-side" components={components} onMount={handleMount} />
 
-			<div className="lr-panel">
+			<div className="lrs-panel">
 				<button
-					className={playing ? 'lr-btn lr-stop' : 'lr-btn lr-play'}
+					className={playing ? 'lrs-btn lrs-stop' : 'lrs-btn lrs-play'}
 					onClick={togglePlay}
 					title={playing ? 'Pause' : 'Play'}
 				>
 					{playing ? '❚❚' : '▶'}
 				</button>
 				<button
-					className="lr-btn lr-icon"
+					className="lrs-btn lrs-icon"
 					title="Reset to start"
 					onClick={handleReset}
 				>
 					↺
 				</button>
 				<button
-					className="lr-btn lr-icon"
+					className="lrs-btn lrs-icon"
 					disabled={playing}
 					title="Set start here"
 					onClick={() => {
@@ -178,7 +178,7 @@ function App() {
 					⌖
 				</button>
 				<button
-					className={mode === 'side' ? 'lr-btn lr-icon lr-active' : 'lr-btn lr-icon'}
+					className={mode === 'side' ? 'lrs-btn lrs-icon lrs-active' : 'lrs-btn lrs-icon'}
 					disabled={playing}
 					aria-pressed={mode === 'side'}
 					title={mode === 'side' ? 'Mode: Side-rider (draw ramps above the ground)' : 'Mode: Line Rider'}
@@ -188,7 +188,7 @@ function App() {
 				</button>
 				{mode === 'side' && (
 					<button
-						className="lr-btn lr-icon"
+						className="lrs-btn lrs-icon"
 						title="Add a test ramp ahead of the start"
 						onClick={handleAddRamp}
 					>
@@ -223,16 +223,16 @@ function App() {
 				>
 					?
 				</ToggleButton>
-				<span className="lr-stat">
+				<span className="lrs-stat">
 					<b>{Math.round(stats.distance)}</b>
 					<small>dist</small>
 				</span>
-				<span className="lr-stat">
+				<span className="lrs-stat">
 					<b>{Math.round(stats.speed)}</b>
 					<small>speed</small>
 				</span>
 				{score.total > 0 && (
-					<span className="lr-stat">
+					<span className="lrs-stat">
 						<b>
 							{score.collected}/{score.total}
 						</b>
@@ -242,20 +242,20 @@ function App() {
 			</div>
 
 			{showLegend && (
-				<div className="lr-legend">
-					<div className="lr-legend-title">Draw with a color to set its behavior</div>
+				<div className="lrs-legend">
+					<div className="lrs-legend-title">Draw with a color to set its behavior</div>
 					{LEGEND.map((row) => (
-						<div className="lr-legend-row" key={row.label}>
-							<span className="lr-legend-swatches">
+						<div className="lrs-legend-row" key={row.label}>
+							<span className="lrs-legend-swatches">
 								{row.swatches.map((c) => (
-									<span className="lr-legend-swatch" key={c} style={{ background: c }} />
+									<span className="lrs-legend-swatch" key={c} style={{ background: c }} />
 								))}
 							</span>
 							<b>{row.label}</b>
 							<small>{row.desc}</small>
 						</div>
 					))}
-					<div className="lr-legend-note">
+					<div className="lrs-legend-note">
 						Drop a sticky note as a flag — collect them all on your run.
 					</div>
 				</div>

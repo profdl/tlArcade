@@ -24,7 +24,7 @@ import type { Vec2 } from './physics'
 export type GameMode = 'line' | 'side'
 
 /** The active play style. Defaults to classic line-rider. */
-export const modeAtom = atom<GameMode>('lr-mode', 'line')
+export const modeAtom = atom<GameMode>('lrs-mode', 'line')
 
 /**
  * In 'side' mode the implicit ground plane sits this many page-pixels BELOW the
@@ -44,13 +44,13 @@ export function sideGroundY(start: Vec2): number {
 }
 
 /** Whether a run is in progress. */
-export const playingAtom = atom('lr-playing', false)
+export const playingAtom = atom('lrs-playing', false)
 
 /** Whether the camera eases to follow the sled while playing. */
-export const followAtom = atom('lr-follow', true)
+export const followAtom = atom('lrs-follow', true)
 
 /** Whether surface sounds are muted. Off (audible) by default. */
-export const mutedAtom = atom('lr-muted', false)
+export const mutedAtom = atom('lrs-muted', false)
 
 /**
  * Debug overlay: when on, the rider draws the collision geometry it actually
@@ -58,10 +58,10 @@ export const mutedAtom = atom('lr-muted', false)
  * per-point contact circles — so you can see what the physics "sees" vs. the
  * drawn art. Off by default.
  */
-export const showCollisionsAtom = atom('lr-showCollisions', false)
+export const showCollisionsAtom = atom('lrs-showCollisions', false)
 
 /** Page-space point the sled spawns from at the start of a run. */
-export const startPointAtom = atom<Vec2>('lr-startPoint', { x: 200, y: 100 })
+export const startPointAtom = atom<Vec2>('lrs-startPoint', { x: 200, y: 100 })
 
 /**
  * Monotonic counter the Reset button bumps to re-seat the sled at the start
@@ -69,10 +69,10 @@ export const startPointAtom = atom<Vec2>('lr-startPoint', { x: 200, y: 100 })
  * this changes (and whenever startPointAtom changes); a counter — not a boolean —
  * so repeated resets to the same start still register as a change.
  */
-export const resetNonceAtom = atom('lr-resetNonce', 0)
+export const resetNonceAtom = atom('lrs-resetNonce', 0)
 
 /** Live run telemetry the rider publishes for the panel. */
-export const statsAtom = atom('lr-stats', { distance: 0, speed: 0 })
+export const statsAtom = atom('lrs-stats', { distance: 0, speed: 0 })
 
 /** Checkpoint progress: how many of `total` flags collected this run. */
-export const scoreAtom = atom('lr-score', { collected: 0, total: 0 })
+export const scoreAtom = atom('lrs-score', { collected: 0, total: 0 })

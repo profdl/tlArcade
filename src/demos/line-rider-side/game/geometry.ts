@@ -96,12 +96,12 @@ function specOf(shape: TLShape): KindSpec {
  * Create one per editor and reuse it.
  */
 export function makeSegmentsComputed(editor: Editor): Computed<TrackSegment[]> {
-	return computed('lr-track-segments', () => collectSegmentsNow(editor))
+	return computed('lrs-track-segments', () => collectSegmentsNow(editor))
 }
 
 /** Reactive view of the checkpoint boxes, bound to one editor. See makeSegmentsComputed. */
 export function makeCheckpointsComputed(editor: Editor): Computed<Checkpoint[]> {
-	return computed('lr-checkpoints', () => collectCheckpointsNow(editor))
+	return computed('lrs-checkpoints', () => collectCheckpointsNow(editor))
 }
 
 /**

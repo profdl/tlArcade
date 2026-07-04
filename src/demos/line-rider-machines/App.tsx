@@ -104,7 +104,7 @@ function App() {
 
 	return (
 		<div className="lrm-root">
-			<Tldraw persistenceKey="line-rider" components={components} onMount={handleMount} />
+			<Tldraw persistenceKey="line-rider-machines" components={components} onMount={handleMount} />
 
 			<div className="lrm-panel">
 				<button

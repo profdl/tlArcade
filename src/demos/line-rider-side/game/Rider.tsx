@@ -371,10 +371,10 @@ export function Rider() {
   }, [editor]);
 
   // Full-viewport SVG overlay; the rAF loop writes the snail group's transform in
-  // screen space each frame. Static appearance lives in App.css (.lr-snail / the
-  // start marker .lr-start-*).
+  // screen space each frame. Static appearance lives in App.css (.lrs-snail / the
+  // start marker .lrs-start-*).
   return (
-    <svg className="lr-sled-svg" aria-hidden="true">
+    <svg className="lrs-sled-svg" aria-hidden="true">
       {/* Collision debug overlay (Show Collisions button). The rAF loop fills the
 			    three child groups in viewport coords: kind-colored segment highlights,
 			    vertex dots, and the sled-rig contact circles. Drawn first so the snail
@@ -389,13 +389,13 @@ export function Rider() {
 			    (the collision segment alone is invisible in normal play). The rAF loop
 			    stretches it across the viewport width at the mapped Y and hides it in
 			    line mode. Drawn before the start marker/snail so they sit on top. */}
-      <line ref={groundRef} className="lr-ground" opacity="0" />
+      <line ref={groundRef} className="lrs-ground" opacity="0" />
       {/* Start marker: a dotted ring sized just larger than the snail, encircling
 			    the spawn point so the player can see (and aim) where the sled will drop
 			    from. Centered on its own origin so the rAF loop only has to translate +
 			    scale the group (scale tracks camera zoom — see START_RING_R). */}
-      <g ref={startRef} className="lr-start-marker" opacity="0">
-        <circle className="lr-start-ring" r={START_RING_R} cy={START_RING_CY} />
+      <g ref={startRef} className="lrs-start-marker" opacity="0">
+        <circle className="lrs-start-ring" r={START_RING_R} cy={START_RING_CY} />
       </g>
       {/* The snail. The rAF loop sets this group's transform (position/rotation/
 			    zoom); SnailArt draws the character in a belly-centered, +x-facing local
@@ -403,7 +403,7 @@ export function Rider() {
 			    loop toggle which is shown: when the snail rotates past ~90° (upside-down)
 			    its head/eye/mouth would poke through the line, so we show just the
 			    rounded shell — the part the collision radius keeps off the line. */}
-      <g ref={snailRef} className="lr-snail">
+      <g ref={snailRef} className="lrs-snail">
         <g ref={snailFullRef}>
           <SnailArt />
         </g>
