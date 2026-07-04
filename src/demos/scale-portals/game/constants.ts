@@ -65,8 +65,8 @@ export const SLOT = PARENT_ROOM * CHILD_FILL
  * in ~step-sized jumps at the tunnel's dead end. If the poke (the overlap zone's depth)
  * is smaller than one step, every jump that reaches the end overshoots the zone and is
  * rejected — the player never overlaps the slot, so it never dives in. The step is
- * roomSize * PLAYER_SPEED_ROOMS_PER_SEC / 60 ≈ 0.0375 * roomSize, so we keep the poke a
- * fixed 0.05 of the room (the original 12/240 ratio) — scale-invariant, ~33% over the step.
+ * roomSize * PLAYER_SPEED_ROOMS_PER_SEC / 60 ≈ 0.025 * roomSize, so we keep the poke a
+ * fixed 0.05 of the room (the original 12/240 ratio) — scale-invariant, ~2x the step.
  */
 export const SLOT_POKE = PARENT_ROOM * 0.05
 /**
@@ -84,27 +84,39 @@ export const roomAtDepth = (depth: number): number => PARENT_ROOM * CHILD_SCALE 
 export const gapAtDepth = (depth: number): number => GAP * CHILD_SCALE ** depth
 
 /**
- * HOW MANY SCALES DEEP THE WORLD NESTS — derived from tldraw's NATIVE zoom window.
+ * HOW MANY SCALES DEEP THE WORLD NESTS — derived from the zoom window we allow.
  * -------------------------------------------------------------------------------
- * We never widen tldraw's zoom range; we fit inside it. The root map is framed at
- * ROOT_ZOOM (10%, tldraw's native minimum). Each dive zooms in by 1/CHILD_SCALE
- * (~4.47x), so a map at depth d is framed at ROOT_ZOOM / CHILD_SCALE^d. The deepest
- * depth must stay <= NATIVE_MAX_ZOOM (800%, tldraw's native maximum), so:
- *   ROOT_ZOOM / CHILD_SCALE^MAX_DEPTH <= NATIVE_MAX_ZOOM
- *   MAX_DEPTH <= log(NATIVE_MAX_ZOOM / ROOT_ZOOM) / log(1 / CHILD_SCALE)
- * With the current geometry that floors to 2 dive steps => 3 scales, framing the
- * three depths at 10% / ~44.7% / ~200% — comfortably inside 10%–800%.
+ * The root map is framed at ROOT_ZOOM (10%, tldraw's native minimum). Each dive
+ * zooms in by 1/CHILD_SCALE (~4.47x), so a map at depth d is framed at
+ * ROOT_ZOOM / CHILD_SCALE^d. The deepest depth must stay <= ZOOM_CEILING, so:
+ *   ROOT_ZOOM / CHILD_SCALE^MAX_DEPTH <= ZOOM_CEILING
+ *   MAX_DEPTH <= log(ZOOM_CEILING / ROOT_ZOOM) / log(1 / CHILD_SCALE)
+ *
+ * tldraw's NATIVE ceiling is 800%, which floors to 2 dive steps => 3 scales
+ * (10% / ~44.7% / ~200%). To nest DEEPER we raise the ceiling past 800% and widen
+ * the editor's zoomSteps to match (see ZOOM_STEPS below + App.tsx setCameraOptions).
+ * At 1000% the formula floors to 3 dive steps => 4 scales, adding a fourth depth
+ * framed at ~894% — just inside the widened window. Bump ZOOM_CEILING further
+ * (and re-check the deepest frame stays under it) to go deeper still.
  */
 export const ROOT_ZOOM = 0.1
-export const NATIVE_MAX_ZOOM = 8
+export const ZOOM_CEILING = 10
 export const MAX_DEPTH = Math.floor(
-	Math.log(NATIVE_MAX_ZOOM / ROOT_ZOOM) / Math.log(1 / CHILD_SCALE)
+	Math.log(ZOOM_CEILING / ROOT_ZOOM) / Math.log(1 / CHILD_SCALE)
 )
+
+/**
+ * The editor's discrete zoom levels. First value is the min zoom, last is the max —
+ * the max is pinned to ZOOM_CEILING so zoomToBounds can actually reach the deepest
+ * map's ~894% frame (tldraw clamps to this array's ends). Intermediate values are
+ * just snap points and don't matter for the game (no zoom UI is shown).
+ */
+export const ZOOM_STEPS = [ROOT_ZOOM, 0.25, 0.5, 1, 2, 4, 8, ZOOM_CEILING]
 
 /** Player is always ~1/8 of the current room, so it reads the same at any depth. */
 export const PLAYER_FRACTION = 0.12
 /** Speed as room-widths per second — pacing (time to cross a room) is depth-invariant. */
-export const PLAYER_SPEED_ROOMS_PER_SEC = 2.25
+export const PLAYER_SPEED_ROOMS_PER_SEC = 1.5
 
 /** Camera dive-in/out animation. */
 export const ZOOM_DURATION_MS = 350

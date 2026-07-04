@@ -9,16 +9,19 @@ gate facing the tunnel you came through. Step onto any gate and you dive back
 out into that gate's tunnel, walking on toward the next room. Travel literally
 alternates room → small-map → room.
 
-**The nesting goes 3 scales deep, one colour per scale.** A small-map isn't a
+**The nesting goes 4 scales deep, one colour per scale.** A small-map isn't a
 dead end — it's a map with its OWN small-maps in it, so you can dive again, and
 again. Each zoom level has a distinct colour so you can tell at a glance how
-deep you are: the root (biggest) is **blue**, the middle scale **green**, and
-the smallest (deepest) scale **light-red** (`colorForDepth` in
-`game/mapGeometry.ts`). How deep is derived from tldraw's *native* zoom range
-(never widened): the root is framed at 10% (tldraw's minimum), each dive zooms
-in ~4.47×, and the deepest scale must stay ≤800% (tldraw's maximum) — which
-floors to two dive steps, i.e. **three scales**, framed at ~10% / ~45% / ~200%.
-See `MAX_DEPTH` in `game/constants.ts`, derived from exactly that inequality.
+deep you are: the root (biggest) is **blue**, then **green**, then **violet**,
+and the smallest (deepest) scale **light-red** (`colorForDepth` in
+`game/mapGeometry.ts`). How deep is derived from the zoom window we allow: the
+root is framed at 10% (tldraw's native minimum), each dive zooms in ~4.47×, and
+the deepest scale must stay under `ZOOM_CEILING`. tldraw's *native* ceiling is
+800%, which floors to two dive steps (three scales); we raise the ceiling to
+1000% and widen the editor's `zoomSteps` to match (`App.tsx` `setCameraOptions`),
+which floors to three dive steps, i.e. **four scales**, framed at ~10% / ~45% /
+~200% / ~894%. See `MAX_DEPTH` in `game/constants.ts`, derived from exactly that
+inequality — bump `ZOOM_CEILING` to nest deeper still.
 
 ## Controls
 

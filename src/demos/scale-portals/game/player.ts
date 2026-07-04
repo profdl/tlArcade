@@ -5,6 +5,10 @@
  * switches) address the same shape instead of stacking duplicates, and tldraw's own
  * select/drag/nudge can't grab it. All writes go through editor.run with
  * `history: 'ignore'` (no undo spam) and `ignoreShapeLock: true` (locked shape).
+ *
+ * The shape is INVISIBLE (opacity 0): it owns position + collision only. The
+ * player's graphic — the line-rider snail — is painted over it by the PlayerSnail
+ * overlay (see PlayerSnail.tsx), which reads this shape's page bounds each frame.
  */
 import { createShapeId, type Editor, type TLShapeId } from 'tldraw'
 import type { AABB } from './collision.ts'
@@ -26,6 +30,8 @@ export function createPlayer(editor: Editor, cx: number, cy: number, size: numbe
 				x: cx - size / 2,
 				y: cy - size / 2,
 				isLocked: true,
+				// Invisible: the snail overlay draws the visible player (see PlayerSnail.tsx).
+				opacity: 0,
 				props: { ...PLAYER_PROPS, w: size, h: size },
 			})
 			editor.bringToFront([PLAYER_SHAPE_ID])

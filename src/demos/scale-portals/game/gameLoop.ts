@@ -50,22 +50,30 @@ import type { KeyState } from './keys.ts'
 import type { Dir } from '../wfc/tiles.ts'
 import { createPlayer, getPlayerAABB, PLAYER_SHAPE_ID, setPlayerPosition, setPlayerRect } from './player.ts'
 
-/** The full page-space bounds of a level's map — what the camera zooms to fit. */
-function mapBounds(level: LevelState<TLShapeId>): PageRect {
-	return { x: level.originX, y: level.originY, w: level.layout.extent.w, h: level.layout.extent.h }
-}
-
 /**
- * Frame a level's map in the viewport. zoomToBounds fits the map to the view, so the
- * on-screen framing is identical at every depth (each level's extent is CHILD_SCALE^depth
- * the root's, and the camera compensates). The inset is scaled by CHILD_SCALE^depth so the
- * page-px margin around the map shrinks in step with the map — a constant on-screen margin.
+ * Frame a level at the depth's fit-zoom, CENTRED on a page point (the player) rather
+ * than on the map. zoomToBounds fits a box the size of the level's map — so the zoom is
+ * identical at every depth (each level's extent is CHILD_SCALE^depth the root's, and the
+ * camera compensates) — but the box is centred on (cx, cy), so that point lands at the
+ * viewport centre. This is what makes the dive land already-following the player, so the
+ * per-tick follow continues seamlessly. Inset scales by CHILD_SCALE^depth for a constant
+ * on-screen margin.
  */
-function frameLevel(editor: Editor, level: LevelState<TLShapeId>, durationMs: number): void {
-	editor.zoomToBounds(mapBounds(level), {
-		inset: ZOOM_INSET * CHILD_SCALE ** level.depth,
-		animation: { duration: durationMs },
-	})
+function frameLevel(
+	editor: Editor,
+	level: LevelState<TLShapeId>,
+	cx: number,
+	cy: number,
+	durationMs: number
+): void {
+	const { w, h } = level.layout.extent
+	editor.zoomToBounds(
+		{ x: cx - w / 2, y: cy - h / 2, w, h },
+		{
+			inset: ZOOM_INSET * CHILD_SCALE ** level.depth,
+			animation: { duration: durationMs },
+		}
+	)
 }
 
 /** Centre of a page rect. */
@@ -232,13 +240,19 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 	const spawn = centre(parentLayout.spawnRect)
 	createPlayer(editor, spawn.x, spawn.y, playerSizeFor(PARENT_ROOM))
 
-	// Frame the root world immediately (no animation on first mount). Depth 0, so the
-	// inset scale is 1 — this is the widest-out framing (~10% zoom in tldraw's native range).
-	frameLevel(editor, parent, 0)
+	// Frame the root world immediately (no animation on first mount), centred on the
+	// player's spawn. Depth 0, so the inset scale is 1 — the widest-out framing.
+	frameLevel(editor, parent, spawn.x, spawn.y, 0)
 
 	// A trigger only fires once the player has STEPPED OFF it since arriving — so
 	// emerging next to a slot (or arriving on a gate) doesn't immediately re-fire.
 	let triggerArmed = false
+
+	// The camera follows the player each tick — but a dive kicks off a zoom ANIMATION
+	// (frameLevel with a duration), and force-centring mid-animation would cut it short.
+	// So a dive holds off the follow for the animation's duration; once it settles (the
+	// dive already framed the player), the per-tick follow resumes seamlessly.
+	let followHoldMs = 0
 
 	function diveIn(submap: SubmapInfo): void {
 		const from = manager.current()
@@ -257,7 +271,8 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		const dest = gate ? centre(gate.rect) : centre(submap.slotRect)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(child.roomSize))
 		editor.bringToFront([PLAYER_SHAPE_ID])
-		frameLevel(editor, child, ZOOM_DURATION_MS)
+		frameLevel(editor, child, dest.x, dest.y, ZOOM_DURATION_MS)
+		followHoldMs = ZOOM_DURATION_MS
 		triggerArmed = false
 	}
 
@@ -283,7 +298,8 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 						: { x: c.x, y: slot.y + slot.h + margin }
 		setPlayerRect(editor, dest.x, dest.y, size)
 		editor.bringToFront([PLAYER_SHAPE_ID])
-		frameLevel(editor, parentLevel, ZOOM_DURATION_MS)
+		frameLevel(editor, parentLevel, dest.x, dest.y, ZOOM_DURATION_MS)
+		followHoldMs = ZOOM_DURATION_MS
 		triggerArmed = false
 	}
 
@@ -303,6 +319,12 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		}
 
 		const player = getPlayerAABB(editor)
+
+		// Camera follows the player, keeping this depth's zoom (centerOnPoint leaves zoom
+		// untouched). Held off while a dive's zoom animation plays, then resumes.
+		if (followHoldMs > 0) followHoldMs -= elapsedMs
+		else editor.centerOnPoint({ x: player.x + player.w / 2, y: player.y + player.h / 2 })
+
 		const portal = portalAt(level.layout, player)
 		// A trigger only fires once you've STEPPED OFF every portal since arriving — so
 		// landing on a gate (dive-out arrival) or beside a slot doesn't instantly re-fire.
