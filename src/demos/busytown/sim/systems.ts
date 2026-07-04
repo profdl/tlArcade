@@ -1098,7 +1098,6 @@ export type InteractionTally = {
 
 export function tally(world: World<Entity>): InteractionTally {
   let buy = 0
-  let greet = 0
   let restock = 0
   let flee = 0
 
@@ -1114,7 +1113,7 @@ export function tally(world: World<Entity>): InteractionTally {
 
   let greeters = 0
   for (const p of world.with('interactor')) if (p.interactor.state === 'greet') greeters++
-  greet = Math.floor(greeters / 2)
+  const greet = Math.floor(greeters / 2)
 
   for (const v of world.with('vehicle')) if (v.vehicle.state === 'restock') restock++
   for (const b of world.with('perch')) if (b.perch.state === 'flee') flee++

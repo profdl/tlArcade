@@ -124,7 +124,7 @@ function getFaceShapes(editor: Editor): FaceVideoShape[] {
 }
 
 function trySnapShape(editor: Editor, shape: TLShape, faceShapes: FaceVideoShape[], snapRadiusPage: number) {
-	let best = findSnapCandidate(editor, shape, faceShapes, snapRadiusPage)
+	const best = findSnapCandidate(editor, shape, faceShapes, snapRadiusPage)
 
 	// Clear any existing pin — a shape can only follow one landmark at a time.
 	for (const binding of editor.getBindingsToShape(shape.id, 'face-feature')) {

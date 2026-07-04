@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
@@ -12,5 +12,14 @@ export default defineConfig({
       // package loads even though we never use its MIDI features.
       events: 'events',
     },
+  },
+  // Vitest — jsdom because some demos (busytown, face-mask) mount a real
+  // tldraw <Editor> in tests, which needs browser globals (mocked in
+  // src/test/setup.ts). Doesn't affect the Line Rider demos' pure-function
+  // tests, which don't touch the DOM either way.
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    css: false,
   },
 })

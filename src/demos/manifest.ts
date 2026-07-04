@@ -29,4 +29,18 @@ export const demos: DemoEntry[] = [
 			'A diverged take: draw ramps live while riding, in an editable canvas that keeps up with a self-recovering, side-scrolling sled.',
 		Component: lazy(() => import('./line-rider-side/App')),
 	},
+	{
+		slug: 'busytown',
+		title: 'Busytown',
+		blurb:
+			'A living little town on the canvas — drop characters, props, and vehicles and watch an ECS sim drive whims, greetings, and deliveries.',
+		Component: lazy(() => import('./busytown/App')),
+	},
+	{
+		slug: 'face-mask',
+		title: 'Face Mask',
+		blurb:
+			'Point your webcam at your face and pin native tldraw shapes to tracked landmarks — snap a mask, glasses, or doodles onto a live feed.',
+		Component: lazy(() => import('./face-mask/App')),
+	},
 ]
