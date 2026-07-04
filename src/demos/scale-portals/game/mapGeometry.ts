@@ -83,6 +83,23 @@ function firstPresentCell(present: Present, width: number, height: number): Grid
 	throw new Error('buildMapLayout: grid has no present cells')
 }
 
+/** The present cell farthest (Manhattan distance) from `from`, ties broken by scan order. */
+function farthestPresentCell(present: Present, width: number, height: number, from: GridCell): GridCell {
+	let best: GridCell = from
+	let bestDist = -1
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			if (!present[y][x]) continue
+			const dist = Math.abs(x - from.x) + Math.abs(y - from.y)
+			if (dist > bestDist) {
+				bestDist = dist
+				best = { x, y }
+			}
+		}
+	}
+	return best
+}
+
 /**
  * The present cell on grid `edge`, nearest the centre of that edge. Used to place a
  * child map's entrance/exit on the side facing a parent tunnel, so it lines up with
@@ -171,6 +188,12 @@ export function buildMapLayout<Id>(
 		}
 	} else {
 		exitCell = opts.exitEdge ? cellOnEdge(present, width, height, opts.exitEdge) : firstPresentCell(present, width, height)
+		// A child must have TWO distinct orange portals. Pruning can collapse both edge
+		// picks onto one cell (e.g. an edge is mostly pruned and the fallback lands on the
+		// entrance) — if so, put the exit at the room farthest from the entrance instead.
+		if (isCell(exitCell, spawnCell.x, spawnCell.y)) {
+			exitCell = farthestPresentCell(present, width, height, spawnCell)
+		}
 	}
 	const isPortal = (x: number, y: number) => portals.some((p) => isCell(p.cell, x, y))
 

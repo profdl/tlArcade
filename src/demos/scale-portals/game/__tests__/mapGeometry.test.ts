@@ -3,7 +3,7 @@
  * parent portal room), checkerboard portals, and the child pass-through. Pure, no editor.
  */
 import { describe, it, expect } from 'vitest'
-import { buildMapLayout, entranceExitEdges, roomExtent } from '../mapGeometry'
+import { buildMapLayout, entranceExitEdges, roomExtent, CHILD_ROOM_PROPS } from '../mapGeometry'
 import {
 	CHILD_FILL,
 	CHILD_GAP,
@@ -73,6 +73,34 @@ describe('child map — pass-through entrance + exit', () => {
 		expect(layout.rects.filter((r) => r.kind === 'exit')).toHaveLength(1)
 		expect(layout.rects.filter((r) => r.kind === 'entrance' || r.kind === 'exit').every((r) => r.props.color === 'orange')).toBe(true)
 		expect(layout.portals).toHaveLength(0) // a child hosts no further portals here
+	})
+
+	it('always yields exactly two DISTINCT orange portals and green regular rooms (many seeds)', () => {
+		// Includes the degenerate case where entrance and exit edges are the same or
+		// pruning collapses both picks onto one cell — the fallback must keep them distinct.
+		const edgePairs: Array<['W' | 'E' | 'N' | 'S', 'W' | 'E' | 'N' | 'S']> = [
+			['W', 'E'],
+			['N', 'S'],
+			['E', 'E'], // same edge — worst case for a collision
+			['S', 'W'],
+		]
+		for (let seed = 0; seed < 50; seed++) {
+			const [entranceEdge, exitEdge] = edgePairs[seed % edgePairs.length]
+			const layout = buildMapLayout(counter(), CHILD_W, CHILD_H, seed, 0, 0, CHILD_ROOM, CHILD_GAP, {
+				removeProb: 0.2,
+				role: 'child',
+				entranceEdge,
+				exitEdge,
+				roomProps: CHILD_ROOM_PROPS, // as the game passes it (green child rooms)
+			})
+			const oranges = layout.rects.filter((r) => r.kind === 'entrance' || r.kind === 'exit')
+			expect(oranges).toHaveLength(2)
+			expect(oranges.every((r) => r.props.color === 'orange')).toBe(true)
+			expect(layout.spawnCell).not.toEqual(layout.exitCell)
+			// Every other room (and door) is green — never a stray orange or blue.
+			const rest = layout.rects.filter((r) => r.kind === 'room' || r.kind === 'door')
+			expect(rest.every((r) => r.props.color === 'light-green')).toBe(true)
+		}
 	})
 
 	it('derives entrance/exit edges from a portal room’s tunnels', () => {

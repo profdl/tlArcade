@@ -164,11 +164,16 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		triggerArmed = false
 	}
 
-	function diveOut(): void {
-		const child = manager.current()
+	function diveOut(via: PageRect): void {
 		const parentLevel = manager.popToParent()
-		if (!parentLevel || !child.parentPortalRect) return
-		const dest = centre(child.parentPortalRect)
+		if (!parentLevel) return
+		// Emerge at the CENTRE of the orange portal you stepped on. Page space is shared
+		// between depths (the child physically sits inside the portal room), so that point
+		// is already the right spot in the parent — on the side you left through, inside
+		// the portal room (the child fills 82% of it, so even an edge portal's centre plus
+		// the parent-size player stays within the room's walkable rect). The camera zooms
+		// out around you; you just get bigger where you stand.
+		const dest = centre(via)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(parentLevel.roomSize))
 		editor.bringToFront([PLAYER_SHAPE_ID])
 		editor.zoomToBounds(mapBounds(parentLevel), { inset: ZOOM_INSET, animation: { duration: ZOOM_DURATION_MS } })
@@ -194,12 +199,12 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		if (level.layout.exitRect) {
 			// In a child: walk onto EITHER orange portal (entrance or exit) to pop back out.
 			const outRects = [level.layout.spawnRect, level.layout.exitRect]
-			const onPortal = outRects.some((r) => aabbOverlaps(player, r))
+			const onPortal = outRects.find((r) => aabbOverlaps(player, r))
 			if (!triggerArmed) {
 				if (!onPortal) triggerArmed = true
 				return
 			}
-			if (onPortal) diveOut()
+			if (onPortal) diveOut(onPortal)
 		} else {
 			// In the parent: walk into any portal room to dive into its child map.
 			const hit = level.layout.portals.find((p) => aabbOverlaps(player, p.rect))
