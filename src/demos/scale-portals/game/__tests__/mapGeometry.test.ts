@@ -109,7 +109,7 @@ describe('parent world — cell roles', () => {
 })
 
 describe('child map — per-tunnel gates', () => {
-	it('places one orange gate per requested edge, on that edge, distinct cells', () => {
+	it('places one gate per requested edge, on that edge, distinct cells', () => {
 		const combos: Dir[][] = [['W', 'E'], ['N', 'S'], ['W', 'N'], ['N', 'E'], ['S'], ['N', 'E', 'S', 'W']]
 		for (const edges of combos) {
 			const layout = child(edges, CHILD_SEED, 0) // full grid: every edge cell present
@@ -125,12 +125,11 @@ describe('child map — per-tunnel gates', () => {
 				seen.add(`${g.cell.x},${g.cell.y}`)
 			}
 			expect(seen.size).toBe(edges.length) // all distinct
-			// Gate rects are orange; all other rooms/doors green.
+			// Gates match the rooms' colour (position at the tunnel mouth marks them, not
+			// a special tint), and every rect in a child is green.
 			const gateRects = layout.rects.filter((r) => r.kind === 'gate')
 			expect(gateRects).toHaveLength(edges.length)
-			expect(gateRects.every((r) => r.props.color === 'orange')).toBe(true)
-			const rest = layout.rects.filter((r) => r.kind === 'room' || r.kind === 'door')
-			expect(rest.every((r) => r.props.color === 'light-green')).toBe(true)
+			expect(layout.rects.every((r) => r.props.color === 'light-green')).toBe(true)
 		}
 	})
 

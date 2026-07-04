@@ -9,7 +9,7 @@
  * see mapGeometry.ts): a submap cell renders no room — its nested child map sits in
  * the cell's SLOT, and the parent's tunnels run right up to (and a few px into) the
  * slot. Walking to the end of such a tunnel overlaps the slot and dives you in,
- * arriving at the orange GATE facing the side you came from. Stepping onto ANY gate
+ * arriving at the GATE facing the side you came from. Stepping onto ANY gate
  * dives you back out into that gate's tunnel — deterministic 1:1 tunnel↔gate pairing,
  * no entrance/exit roles.
  *
@@ -251,7 +251,7 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 
 		const player = getPlayerAABB(editor)
 		if (level.layout.gates.length > 0) {
-			// In a child: walk onto ANY orange gate to dive back out toward its tunnel.
+			// In a child: walk onto ANY gate to dive back out toward its tunnel.
 			const gate = level.layout.gates.find((g) => aabbOverlaps(player, g.rect))
 			if (!triggerArmed) {
 				if (!gate) triggerArmed = true

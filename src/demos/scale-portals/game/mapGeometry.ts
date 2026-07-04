@@ -22,7 +22,7 @@
  * abstraction means room↔room, room↔submap, and submap↔submap edges all just work,
  * whatever the role pattern.
  *
- * A CHILD map (role 'child') is a plain all-rooms map plus GATES: one orange gate
+ * A CHILD map (role 'child') is a plain all-rooms map plus GATES: one gate
  * room per requested edge — the edges being the host submap cell's door directions
  * — so every tunnel that reaches the slot has exactly one gate facing it (1–4
  * gates, straight or bent). Gates are symmetric: any gate both receives arrivals
@@ -42,8 +42,10 @@ export const DOOR_MOUTH = 0.34
 
 export const ROOM_PROPS = { geo: 'rectangle', color: 'blue', fill: 'fill' } as const
 export const CHILD_ROOM_PROPS = { geo: 'rectangle', color: 'light-green', fill: 'fill' } as const
-/** A child map's gate rooms — orange, so they read as "in/out of this map". */
-export const GATE_PROPS = { geo: 'rectangle', color: 'orange', fill: 'fill' } as const
+/** A child map's gate rooms — same colour as its regular rooms (the gate's position
+ *  at a tunnel mouth is what marks it, not a special colour). Kept as a separate
+ *  const so gates can be re-tinted in one place. */
+export const GATE_PROPS = { geo: 'rectangle', color: 'light-green', fill: 'fill' } as const
 
 export type RoomRectKind = 'room' | 'door' | 'gate'
 
@@ -76,7 +78,7 @@ export type MapLayout<Id> = {
 	spawnRect: PageRect
 	/** Parent worlds: the submap cells (each hosts a nested child map). */
 	submaps: SubmapInfo[]
-	/** Child maps: one orange gate per host-cell door direction. Empty for parents. */
+	/** Child maps: one gate per host-cell door direction. Empty for parents. */
 	gates: GateInfo[]
 }
 
@@ -189,7 +191,7 @@ export type BuildMapLayoutOptions = {
 	slotSize?: number
 	/** Parent only: how far a tunnel pokes INTO a slot (so the dive trigger can fire). */
 	slotPoke?: number
-	/** Child only: edges to place one orange gate on (the host cell's door dirs). */
+	/** Child only: edges to place one gate on (the host cell's door dirs). */
 	gateEdges?: Dir[]
 	/** Room fill/color for normal rooms + doorways at this depth. Defaults to ROOM_PROPS. */
 	roomProps?: Record<string, unknown>
@@ -268,7 +270,7 @@ export function buildMapLayout<Id>(
 		}
 	}
 
-	// ── GATES. Child: one orange gate per requested edge (distinct cells). ───────
+	// ── GATES. Child: one gate per requested edge (distinct cells). ──────────────
 	const gates: GateInfo[] =
 		opts.role === 'child' && opts.gateEdges && opts.gateEdges.length > 0
 			? assignGateCells(present, width, height, opts.gateEdges).map(({ edge, cell }) => ({ edge, cell, rect: cellRect(cell) }))
@@ -276,7 +278,7 @@ export function buildMapLayout<Id>(
 	const gateAt = (x: number, y: number) => gates.find((g) => isCell(g.cell, x, y))
 
 	// 1) ROOMS — one rect per present ROOM cell (submap cells emit nothing here; the
-	//    nested child map occupies their slot). Child gate rooms are orange.
+	//    nested child map occupies their slot).
 	for (let y = 0; y < height; y++) {
 		for (let x = 0; x < width; x++) {
 			if (!present[y][x] || roleAt(x, y) !== 'room') continue
