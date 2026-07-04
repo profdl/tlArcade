@@ -12,7 +12,7 @@ function App() {
 					{demos.map((demo) => (
 						<Route
 							key={demo.slug}
-							path={`/demos/${demo.slug}`}
+							path={demo.path ?? `/demos/${demo.slug}`}
 							element={
 								<div data-demo={demo.slug} style={{ position: 'fixed', inset: 0 }}>
 									<demo.Component />

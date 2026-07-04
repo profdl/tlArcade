@@ -18,6 +18,11 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Matches tsconfig's verbatimModuleSyntax, which requires explicit
+      // `import type` — this also gives us an autofix for it.
+      '@typescript-eslint/consistent-type-imports': 'error',
+    },
   },
   {
     // Busytown and Face Mask were migrated in from repos linted with oxlint,
@@ -30,6 +35,21 @@ export default defineConfig([
       'react-hooks/set-state-in-effect': 'off',
       'react-refresh/only-export-components': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+  {
+    // Toolkit (client + worker) was migrated in from a repo with no lint
+    // config at all. Relax the same categories as above, rather than rewrite
+    // working, tested shape/hook logic during the migration. `react-hooks/refs`
+    // is off specifically for CreatureShape.tsx's chain renderer, which reads
+    // a ref intentionally to skip React reconciliation on a hot animation path
+    // (documented in the code comment right above it) — a measured perf
+    // tradeoff, not an oversight.
+    files: ['src/demos/toolkit/**/*.{ts,tsx}', 'worker/**/*.ts', 'shared/**/*.ts'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+      'react-hooks/refs': 'off',
     },
   },
 ])

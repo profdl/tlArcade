@@ -8,12 +8,20 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test": "vitest run --passWithNoTests && npm run test:toolkit",
+    "test:watch": "vitest",
+    "test:toolkit": "node --experimental-strip-types worker/__tests__/referee.test.mjs && node --experimental-strip-types src/demos/toolkit/grid/__tests__/geometry.test.mjs && node --experimental-strip-types src/demos/toolkit/creature/__tests__/snakeSteering.test.mjs && node --experimental-strip-types src/demos/toolkit/wfc/__tests__/collapse.test.mjs && node --experimental-strip-types src/demos/toolkit/wfc/__tests__/tankGeometry.test.mjs && node --experimental-strip-types src/demos/toolkit/wfc/__tests__/chaosGeometry.test.mjs && node --experimental-strip-types src/demos/toolkit/wfc/__tests__/regionMask.test.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.35",
+    "@tldraw/editor": "^5.1.1",
+    "@tldraw/sync": "^5.1.1",
+    "@tldraw/sync-core": "^5.1.1",
+    "@tldraw/tlschema": "^5.1.1",
     "@tonejs/piano": "^0.2.1",
+    "cloudflare-workers-unfurl": "^0.0.8",
+    "itty-router": "^5.0.18",
+    "lodash.throttle": "^4.1.1",
     "miniplex": "^2.0.0",
     "perfect-freehand": "^1.2.3",
     "react": "^19.2.6",
@@ -23,10 +31,12 @@
     "tone": "^14.9.17"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.29.1",
     "@eslint/js": "^10.0.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/lodash.throttle": "^4.1.9",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -40,6 +50,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "wrangler": "^4.75.0"
   }
 }

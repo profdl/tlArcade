@@ -289,11 +289,16 @@ export function startBridge(
       // A carried brick can be hugged at a skin-specific offset; every other
       // shape sits on its entity's own position.
       const centre = carriedRenderCentre(e) ?? e.position
-      const update: TLShapePartial = {
+      // `shape.type` is a wide (non-literal) union; with as many custom shape
+      // types now registered project-wide as there are, TS's discriminated-
+      // union check on TLShapePartial no longer resolves it structurally (same
+      // reason the `props` assignment below is cast). Assert instead — this is
+      // always one of `shape`'s own actual (valid) partials at runtime.
+      const update = {
         id,
         type: shape.type,
         ...topLeftAt(centre, size.w, size.h, shape.rotation),
-      }
+      } as TLShapePartial
       if (e.brick && (box.props.w !== size.w || box.props.h !== size.h)) {
         ;(update as TLShapePartial<TLGeoShape>).props = { w: size.w, h: size.h }
       }

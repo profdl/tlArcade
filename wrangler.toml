@@ -1,0 +1,35 @@
+name = "tlarcade"
+main = "worker/worker.ts"
+compatibility_date = "2025-05-08"
+compatibility_flags = ["nodejs_compat"]
+upload_source_maps = true
+preview_urls = true
+
+[observability]
+enabled = true
+
+[assets]
+directory = "./dist/client"
+not_found_handling = "single-page-application"
+# The switcher and every other demo are static; only the Toolkit demo's
+# multiplayer sync/referee/asset API needs the Worker. Everything else is
+# served straight from the built assets (including SPA-fallback routing for
+# client-side routes like /demos/toolkit/:roomId).
+run_worker_first = ["/api/*"]
+
+# Set up the durable object used for each tldraw room
+[durable_objects]
+bindings = [{ name = "TLDRAW_DURABLE_OBJECT", class_name = "TldrawDurableObject" }]
+
+# Durable objects require migrations to create/modify/delete them
+# Using new_sqlite_classes for SQLite-backed storage
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TldrawDurableObject"]
+
+# We store asset uploads (images, videos) in an R2 bucket.
+# Room data is stored in Durable Object SQLite storage.
+[[r2_buckets]]
+binding = 'TLDRAW_BUCKET'
+bucket_name = 'tlarcade-toolkit'
+preview_bucket_name = 'tlarcade-toolkit-preview'

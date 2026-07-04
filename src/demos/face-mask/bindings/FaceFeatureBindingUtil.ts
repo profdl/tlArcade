@@ -1,4 +1,4 @@
-import { BindingUtil, type BindingOnShapeChangeOptions, type TLShapeId } from 'tldraw'
+import { BindingUtil, type BindingOnShapeChangeOptions, type TLShapeId, type TLShapePartial } from 'tldraw'
 import { rotateVector, scaleForLandmark } from '../shapes/faceVideoMath'
 import type { FaceVideoShape } from '../shapes/faceVideoShape'
 import { faceFeatureBindingProps, type FaceFeatureBinding } from './faceFeatureBinding'
@@ -169,7 +169,11 @@ export class FaceFeatureBindingUtil extends BindingUtil<FaceFeatureBinding> {
 			faceTransform.rotation() + rotationBasis + (axis && !isFollow ? 0 : binding.props.rotationOffset)
 		const rotationDelta = normalizeAngle(targetPageRotation - this.editor.getShapePageTransform(toShape.id).rotation())
 
-		this.editor.updateShape({ id: toShape.id, type: toShape.type, x: targetX, y: targetY })
+		// `toShape.type` is a wide (non-literal) union; with the number of custom
+		// shape types now registered project-wide, TS's discriminated-union check
+		// on the partial no longer resolves it structurally. Assert instead —
+		// this is always one of `toShape`'s own actual (valid) partials at runtime.
+		this.editor.updateShape({ id: toShape.id, type: toShape.type, x: targetX, y: targetY } as TLShapePartial)
 		// Rotate in place around the (now-centered) landmark point, per tldraw's own rotate-in-place
 		// semantics — this also swings (x, y) around the center as part of spinning, so the shape's
 		// final x/y aren't targetX/targetY anymore; read them back below instead of assuming.

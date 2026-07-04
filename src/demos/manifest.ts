@@ -5,6 +5,8 @@ export interface DemoEntry {
 	title: string
 	blurb: string
 	Component: ComponentType
+	/** Route path, for demos with their own nested sub-routes. Defaults to `/demos/${slug}`. */
+	path?: string
 }
 
 export const demos: DemoEntry[] = [
@@ -42,5 +44,13 @@ export const demos: DemoEntry[] = [
 		blurb:
 			'Point your webcam at your face and pin native tldraw shapes to tracked landmarks — snap a mask, glasses, or doodles onto a live feed.',
 		Component: lazy(() => import('./face-mask/App')),
+	},
+	{
+		slug: 'toolkit',
+		title: 'Toolkit',
+		blurb:
+			'A multiplayer tabletop toolkit — synced tokens, dice, cards, and creatures on a shared canvas, backed by a server-authoritative referee.',
+		path: '/demos/toolkit/*',
+		Component: lazy(() => import('./toolkit/App')),
 	},
 ]

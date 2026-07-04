@@ -26,3 +26,7 @@ dist-ssr
 # Local environment / API keys
 .env
 .env.local
+.dev.vars
+
+# Wrangler local dev state (Durable Objects, R2, etc.)
+.wrangler
