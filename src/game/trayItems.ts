@@ -2,7 +2,7 @@
 // onto the canvas instead of hand-authoring them. The portal (two geo mouths
 // bound by an arrow) and the multiplier (one entrance mouth bound to two exit
 // mouths by two arrows), per geometry.ts's portal/multiplier grouping contract.
-import { createShapeId, type Editor, type TLDefaultColorStyle } from 'tldraw'
+import { createShapeId, toRichText, type Editor, type TLDefaultColorStyle } from 'tldraw'
 
 export interface TrayItem {
 	id: string
@@ -40,7 +40,9 @@ export const TRAY_ITEMS: TrayItem[] = [
 		// Per geometry.ts's portal contract: an arrow bound at BOTH terminals to
 		// geo shapes. Drop point becomes the entrance mouth's center; the exit
 		// mouth is placed PORTAL_GAP to the right. Mirrors what a user gets by
-		// hand-drawing two boxes and connecting them with the arrow tool.
+		// hand-drawing two boxes and connecting them with the arrow tool. Each mouth
+		// gets a native text label ("Enter Portal"/"Exit Portal") so which is which
+		// reads at a glance, without checking the legend or debug overlay.
 		create: (editor, point) => {
 			const entranceId = createShapeId()
 			const exitId = createShapeId()
@@ -61,8 +63,8 @@ export const TRAY_ITEMS: TrayItem[] = [
 			}
 
 			editor.createShapes([
-				{ id: entranceId, type: 'geo', x: entranceX, y: entranceY, props: mouthProps },
-				{ id: exitId, type: 'geo', x: exitX, y: entranceY, props: mouthProps },
+				{ id: entranceId, type: 'geo', x: entranceX, y: entranceY, props: { ...mouthProps, richText: toRichText('Enter Portal') } },
+				{ id: exitId, type: 'geo', x: exitX, y: entranceY, props: { ...mouthProps, richText: toRichText('Exit Portal') } },
 				{
 					id: arrowId,
 					type: 'arrow',
@@ -101,7 +103,9 @@ export const TRAY_ITEMS: TrayItem[] = [
 		// mouth's center; the exits sit PORTAL_GAP to the right, offset up/down by
 		// MULTIPLIER_EXIT_OFFSET_Y so the two linking arrows diverge instead of
 		// overlapping. Colored violet (vs. the portal's blue) so it reads as a
-		// distinct piece on the canvas even before Play.
+		// distinct piece on the canvas even before Play. Each mouth gets a native
+		// text label ("Enter Multiplier"/"Exit Multiplier") for the same reason
+		// the portal's mouths do.
 		create: (editor, point) => {
 			const entranceId = createShapeId()
 			const exitAId = createShapeId()
@@ -126,9 +130,9 @@ export const TRAY_ITEMS: TrayItem[] = [
 			}
 
 			editor.createShapes([
-				{ id: entranceId, type: 'geo', x: entranceX, y: entranceY, props: mouthProps },
-				{ id: exitAId, type: 'geo', x: exitX, y: exitAY, props: mouthProps },
-				{ id: exitBId, type: 'geo', x: exitX, y: exitBY, props: mouthProps },
+				{ id: entranceId, type: 'geo', x: entranceX, y: entranceY, props: { ...mouthProps, richText: toRichText('Enter Multiplier') } },
+				{ id: exitAId, type: 'geo', x: exitX, y: exitAY, props: { ...mouthProps, richText: toRichText('Exit Multiplier') } },
+				{ id: exitBId, type: 'geo', x: exitX, y: exitBY, props: { ...mouthProps, richText: toRichText('Exit Multiplier') } },
 				{
 					id: arrowAId,
 					type: 'arrow',
