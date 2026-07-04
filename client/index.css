@@ -1,9 +1,22 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@500;700&display=swap');
 @import url('tldraw/tldraw.css');
 
+html,
+body,
+#root {
+	/* The whole app sizes off this chain. `.RoomWrapper` is `position:absolute;
+	   inset:0`, so without a real height here it falls back to sizing against the
+	   viewport — which works UNTIL tldraw opens a dialog (it mutates <body>, which
+	   re-roots `.RoomWrapper`'s containing block to the 0-height #root and collapses
+	   the entire app to ~8px). Pinning 100% height makes the layout robust: opening
+	   the embed/export/etc. dialog no longer blanks the canvas. */
+	height: 100%;
+}
+
 body {
 	font-family: 'Inter', sans-serif;
 	overscroll-behavior: none;
+	margin: 0;
 }
 
 .RoomWrapper {

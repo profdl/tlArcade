@@ -18,9 +18,17 @@
  *     })`, the same native hit-test registerSnapping/isThrowable use to find the
  *     grid under a piece.
  *
- * TANK = NATIVE GEO SHAPES ONLY. A geo shape is tldraw's built-in rectangle/
- * ellipse/etc. (`type === 'geo'`). Hand-drawn shapes from the draw tool are
- * `type === 'draw'` and are deliberately NOT tanks — a creature ignores them.
+ * TANK = NATIVE GEO **or MEDIA/EMBED** SHAPES. A geo shape is tldraw's built-in
+ * rectangle/ellipse/etc. (`type === 'geo'`); a media shape is an embedded image or
+ * video (`type === 'image' | 'video'`); an embed is an embedded web page such as a
+ * YouTube video (`type === 'embed'`). All are rectangular surfaces a creature can
+ * swim inside — so dropping a fish on a photo or a YouTube embed makes it a
+ * fishtank, exactly like dropping it on a rectangle. See TANK_TYPES below for the
+ * single source of truth. Hand-drawn shapes from the draw tool are `type ===
+ * 'draw'` and are deliberately NOT tanks — a creature ignores them.
+ *
+ * FOOD stays GEO-ONLY: only a green *geo* shape is food (a media/embed shape has no
+ * color prop to turn black when eaten), so the food logic still filters to 'geo'.
  *
  * MOTION = gentle wander + wall AVOIDANCE (steering, not bounce) + propulsion.
  * Each creature carries a slow drifting heading that meanders (seeded per
@@ -50,6 +58,20 @@ type SwimmableShape = CreatureShape
 
 /** Shape types this loop drives. One source of truth for the filter + type guard below. */
 const SWIMMABLE_TYPES = new Set<string>(['creature'])
+
+/**
+ * Shape types that count as a TANK — a rectangular surface a creature swims inside.
+ * The single source of truth for every "is this a tank?" hit-test (geoUnderPoint,
+ * collectGeos). tldraw's built-in rectangle/ellipse/etc. are all `type === 'geo'`;
+ * embedded images and videos are `'image'` / `'video'`; an embedded web page (a
+ * YouTube video, a tweet, etc.) is `'embed'`. All are bounded by a page-space AABB,
+ * which is all the swim loop needs (it confines + steers against the bounding box),
+ * so a fish dropped on any of them swims around inside it. Hand-drawn ('draw'),
+ * frames, and our custom shapes are NOT tanks. NOTE: FOOD is a separate, narrower
+ * concept — only green 'geo' shapes — because a media/embed shape has no color prop;
+ * nearestFood still filters to 'geo'.
+ */
+const TANK_TYPES = new Set<string>(['geo', 'image', 'video', 'embed'])
 
 /** The orientation kind for facing/propulsion. */
 function swimKind(shape: SwimmableShape): CreatureKind {
@@ -918,9 +940,10 @@ function axisPush(loClear: number, hiClear: number, margin: number): number {
 }
 
 /**
- * The native geo shape under a creature's centre, if any — its tank. Mirrors the
- * grid hit-test in registerSnapping/isThrowable, but filtered to `type === 'geo'`
- * so ONLY tldraw's built-in geo shapes count (draw/frame/our shapes are skipped).
+ * The native tank shape under a creature's centre, if any — its tank. Mirrors the
+ * grid hit-test in registerSnapping/isThrowable, but filtered to TANK_TYPES (geo,
+ * media — image/video, and embed — e.g. a YouTube video) so those built-ins count
+ * (draw/frame/our shapes are skipped).
  *
  * Returns the tank's page-space AABB. Wall avoidance + clamping use this axis-
  * aligned box, so a ROTATED tank contains the creature in its bounding box, not
@@ -969,20 +992,21 @@ function tankUnderWithId(editor: Editor, id: TLShapeId): { id: TLShapeId; bounds
 }
 
 /**
- * The native geo shape whose page-space AABB contains `point` (the innermost/smallest
- * such, so a creature inside a small room nested in a big one picks the room). Opt A:
- * when useSpatialIndex is on, query tldraw's native R-tree (getShapeIdsInsideBounds)
- * for the few candidates overlapping the point, then keep the geos that truly contain it
- * — far cheaper than getShapeAtPoint, which additionally z-sorts every page shape and
- * runs label/mask/hollow-area logic we don't need. Opt OFF: the original getShapeAtPoint.
+ * The native TANK shape (geo OR media — see TANK_TYPES) whose page-space AABB contains
+ * `point` (the innermost/smallest such, so a creature inside a small room nested in a big
+ * one picks the room). Opt A: when useSpatialIndex is on, query tldraw's native R-tree
+ * (getShapeIdsInsideBounds) for the few candidates overlapping the point, then keep the
+ * tank shapes that truly contain it — far cheaper than getShapeAtPoint, which additionally
+ * z-sorts every page shape and runs label/mask/hollow-area logic we don't need. Opt OFF:
+ * the original getShapeAtPoint.
  *
- * Both paths agree on the result: "the geo box under this point". We pick the SMALLEST
+ * Both paths agree on the result: "the tank box under this point". We pick the SMALLEST
  * area on a tie so nesting resolves to the tightest enclosing tank (getShapeAtPoint's
  * hollow-area tiebreak does the same), keeping behaviour identical with the opt on or off.
  */
 function geoUnderPoint(editor: Editor, point: { x: number; y: number }): { id: TLShapeId; bounds: Box } | undefined {
 	if (!swimOpts.useSpatialIndex) {
-		const tank = editor.getShapeAtPoint(point, { filter: (s) => s.type === 'geo', hitInside: true })
+		const tank = editor.getShapeAtPoint(point, { filter: (s) => TANK_TYPES.has(s.type), hitInside: true })
 		if (!tank) return undefined
 		const tankBounds = editor.getShapePageBounds(tank.id)
 		return tankBounds ? { id: tank.id, bounds: tankBounds } : undefined
@@ -993,7 +1017,7 @@ function geoUnderPoint(editor: Editor, point: { x: number; y: number }): { id: T
 	let bestArea = Infinity
 	for (const cid of candidateIds) {
 		const shape = editor.getShape(cid)
-		if (!shape || shape.type !== 'geo') continue
+		if (!shape || !TANK_TYPES.has(shape.type)) continue
 		const b = editor.getShapePageBounds(cid)
 		if (!b || !b.containsPoint(point)) continue // AABB overlap → confirm true contains
 		const area = b.width * b.height
@@ -1039,12 +1063,14 @@ function resolveCluster(editor: Editor, creatureId: TLShapeId): Cluster | undefi
 	return buildClusterFromSeed(seed.id, seed.bounds, collectGeos(editor))
 }
 
-/** Collect every native geo shape on the page with its page-space AABB. The one O(N)
- *  sweep both the per-creature resolveCluster and the shared ClusterCache build on. */
+/** Collect every native TANK shape on the page (geo OR media — see TANK_TYPES) with its
+ *  page-space AABB. The one O(N) sweep both the per-creature resolveCluster and the shared
+ *  ClusterCache build on, so touching tanks of any tank-type cluster together (a fish can
+ *  swim from a rectangle into an abutting photo as one connected level). */
 function collectGeos(editor: Editor): { id: TLShapeId; box: Box }[] {
 	const geos: { id: TLShapeId; box: Box }[] = []
 	for (const shape of editor.getCurrentPageShapes()) {
-		if (shape.type !== 'geo') continue
+		if (!TANK_TYPES.has(shape.type)) continue
 		const box = editor.getShapePageBounds(shape.id)
 		if (box) geos.push({ id: shape.id, box })
 	}
