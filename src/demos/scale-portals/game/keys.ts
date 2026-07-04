@@ -39,10 +39,14 @@ export function registerKeyState(): KeyState {
 		e.stopPropagation()
 		down.delete(key)
 	}
+	// If the window loses focus mid-move, the matching keyup lands elsewhere and never
+	// clears the key — leaving the player drifting forever. Drop all held keys on blur.
+	const onBlur = () => down.clear()
 
 	// Capture phase so we intercept before tldraw's document-level shortcut handlers.
 	window.addEventListener('keydown', onKeyDown, { capture: true })
 	window.addEventListener('keyup', onKeyUp, { capture: true })
+	window.addEventListener('blur', onBlur)
 
 	const isDown = (key: string) => down.has(key)
 
@@ -55,6 +59,7 @@ export function registerKeyState(): KeyState {
 		dispose: () => {
 			window.removeEventListener('keydown', onKeyDown, { capture: true })
 			window.removeEventListener('keyup', onKeyUp, { capture: true })
+			window.removeEventListener('blur', onBlur)
 			down.clear()
 		},
 	}

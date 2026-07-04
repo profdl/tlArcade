@@ -46,7 +46,7 @@ export const CHILD_GAP = GAP * CHILD_SCALE
 /** Player is always ~1/8 of the current room, so it reads the same at any depth. */
 export const PLAYER_FRACTION = 0.12
 /** Speed as room-widths per second — pacing (time to cross a room) is depth-invariant. */
-export const PLAYER_SPEED_ROOMS_PER_SEC = 0.75
+export const PLAYER_SPEED_ROOMS_PER_SEC = 2.25
 
 /** Camera dive-in/out animation. */
 export const ZOOM_DURATION_MS = 350

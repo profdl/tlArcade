@@ -1,22 +1,27 @@
 /**
  * MAP GEOMETRY — the PURE rectangle layout for one level of Scale Portals.
  * =========================================================================
- * Turns a WFC room grid (../wfc/collapse.ts) into the list of rectangles to emit:
- * room rects, doorway rects, and exactly one special marker rect (a `portal` in a
- * parent-style map, an `exit` in a child-style map). NO tldraw import — takes an
- * id-factory instead of calling createShapeId — so this geometry is unit-testable
- * without an editor (see __tests__/mapGeometry.test.ts).
+ * Turns a WFC room grid (../wfc/collapse.ts) into the list of rectangles to emit.
+ * NO tldraw import — takes an id-factory instead of calling createShapeId — so this
+ * geometry is unit-testable without an editor (see __tests__/mapGeometry.test.ts).
+ *
+ * Two ROLES:
+ *   • 'parent' — a big map of blue rooms. Some rooms (a checkerboard, so they
+ *     ALTERNATE with plain rooms) are PORTALS: each holds a whole nested child map.
+ *     A portal room looks like any other blue room — the tiny map sitting inside it
+ *     is what marks it — so there's no border to distinguish it.
+ *   • 'child' — a smaller map nested inside a portal room. It's a PASS-THROUGH: it
+ *     has an ENTRANCE (where the player appears, on the edge facing one parent
+ *     tunnel) and an EXIT marker (on the edge facing another), so you walk in one
+ *     side and out the other.
  *
  * Both `roomSize` and `gap` are parameters (not fixed constants) so the SAME
  * function builds a parent map and a smaller child map that nests exactly inside
- * one of the parent's rooms — the caller (levelManager/gameLoop) is responsible
- * for scaling both by the same factor, since scaling only `roomSize` would leave
- * the child map's doorway gaps too wide to fit the parent room's footprint.
+ * one parent room — the caller (gameLoop) scales both by the same factor.
  */
-import { collapse } from '../wfc/collapse.ts'
+import { collapse, type TileGrid } from '../wfc/collapse.ts'
 import { pruneAndConnect, type Present } from '../wfc/connectivity.ts'
-import { DELTA, DIRS, type Dir } from '../wfc/tiles.ts'
-import type { TileGrid } from '../wfc/collapse.ts'
+import { DELTA, DIRS, opposite, type Dir } from '../wfc/tiles.ts'
 
 /** How far (fraction of the room) a doorway pokes into each room it connects. */
 export const DOOR_OVERLAP = 0.1
@@ -25,11 +30,12 @@ export const DOOR_MOUTH = 0.34
 
 export const ROOM_PROPS = { geo: 'rectangle', color: 'blue', fill: 'fill' } as const
 export const CHILD_ROOM_PROPS = { geo: 'rectangle', color: 'light-green', fill: 'fill' } as const
-/** Outline only (no fill) so a nested child map's tiny rects stay visible inside it. */
-export const PORTAL_PROPS = { geo: 'rectangle', color: 'violet', fill: 'none' } as const
-export const EXIT_PROPS = { geo: 'rectangle', color: 'orange', fill: 'fill' } as const
+/** A child map's entrance/exit rooms — orange, so they read as "in/out of this map". */
+export const PORTAL_ROOM_PROPS = { geo: 'rectangle', color: 'orange', fill: 'fill' } as const
 
-export type RoomRectKind = 'room' | 'door' | 'portal' | 'exit'
+/** 'portal' = a parent room hosting a child map. 'entrance'/'exit' = a child's two
+ *  orange in/out rooms (both let you leave the child). */
+export type RoomRectKind = 'room' | 'door' | 'portal' | 'entrance' | 'exit'
 
 export type RoomRect<Id> = {
 	id: Id
@@ -44,19 +50,22 @@ export type RoomRect<Id> = {
 export type GridCell = { x: number; y: number }
 export type PageRect = { x: number; y: number; w: number; h: number }
 
+/** A parent room that hosts a nested child map, plus the tunnel sides it connects on. */
+export type PortalInfo = { cell: GridCell; rect: PageRect; doorDirs: Dir[] }
+
 export type MapLayout<Id> = {
 	rects: RoomRect<Id>[]
 	extent: { w: number; h: number }
+	/** Where the player appears in this map. For a child, this is its entrance room. */
 	spawnCell: GridCell
 	spawnRect: PageRect
-	/** The special marker cell/rect — a portal (parent maps) or an exit (child maps). */
-	special: 'portal' | 'exit'
-	specialCell: GridCell
-	specialRect: PageRect
-	/** Directions in which the special cell has a door to a present neighbour — i.e. the
-	 *  side(s) a tunnel enters this room. Lets a child map align its exit to the parent
-	 *  tunnel so the two connect for a smooth transition. */
-	specialDoorDirs: Dir[]
+	/** Parent maps: the rooms that hold nested child maps. Empty for a child map. */
+	portals: PortalInfo[]
+	/** Child maps: the two orange in/out rooms. The entrance is also the spawn
+	 *  (spawnCell/spawnRect); the exit is the far one. Both let you leave the child.
+	 *  Undefined for a parent map. */
+	exitCell?: GridCell
+	exitRect?: PageRect
 }
 
 /** Total page-space size of a `width x height` grid at the given room size/gap. */
@@ -74,27 +83,10 @@ function firstPresentCell(present: Present, width: number, height: number): Grid
 	throw new Error('buildMapLayout: grid has no present cells')
 }
 
-/** The present cell farthest (Manhattan distance) from `from`, ties broken by scan order. */
-function farthestPresentCell(present: Present, width: number, height: number, from: GridCell): GridCell {
-	let best: GridCell = from
-	let bestDist = -1
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			if (!present[y][x]) continue
-			const dist = Math.abs(x - from.x) + Math.abs(y - from.y)
-			if (dist > bestDist) {
-				bestDist = dist
-				best = { x, y }
-			}
-		}
-	}
-	return best
-}
-
 /**
  * The present cell on grid `edge`, nearest the centre of that edge. Used to place a
- * child map's exit on the side facing the parent tunnel, so it lines up with the tunnel
- * mouth. Falls back to the nearest present cell if that whole edge was pruned away.
+ * child map's entrance/exit on the side facing a parent tunnel, so it lines up with
+ * the tunnel mouth. Falls back to the nearest present cell if that edge was pruned away.
  */
 function cellOnEdge(present: Present, width: number, height: number, edge: Dir): GridCell {
 	const line: GridCell[] =
@@ -124,13 +116,11 @@ function doorDirsOf(grid: TileGrid, present: Present, width: number, height: num
 export type BuildMapLayoutOptions = {
 	/** Fraction of rooms to randomly remove (kept 4-connected) — see pruneAndConnect. */
 	removeProb?: number
-	/** 'portal': mark the cell farthest from spawn. 'exit': the spawn/exit room. */
-	special: 'portal' | 'exit'
-	/**
-	 * For an exit map: which grid edge the exit (and spawn) room should sit on — set to
-	 * the side the parent tunnel enters from, so the exit lines up with it. When omitted,
-	 * the exit is just the default spawn cell.
-	 */
+	/** 'parent': mark a checkerboard of rooms as portals. 'child': a pass-through map. */
+	role: 'parent' | 'child'
+	/** Child only: grid edge to place the entrance/spawn on (faces the tunnel you enter from). */
+	entranceEdge?: Dir
+	/** Child only: grid edge to place the exit marker on (faces the onward tunnel). */
 	exitEdge?: Dir
 	/** Room fill/color for normal rooms + doorways at this depth. Defaults to ROOM_PROPS. */
 	roomProps?: Record<string, unknown>
@@ -159,30 +149,42 @@ export function buildMapLayout<Id>(
 	const pitch = roomSize + gap
 	const roomX = (x: number) => originX + x * pitch
 	const roomY = (y: number) => originY + y * pitch
-
-	// The exit room is also where the player emerges (spawn === exit), so it sits right
-	// at the parent tunnel when exitEdge is given. The portal case keeps spawn at the
-	// first present cell and marks the farthest room as the portal.
-	const defaultSpawn = firstPresentCell(present, width, height)
-	let specialCell: GridCell
-	let spawnCell: GridCell
-	if (opts.special === 'exit') {
-		specialCell = opts.exitEdge ? cellOnEdge(present, width, height, opts.exitEdge) : defaultSpawn
-		spawnCell = specialCell
-	} else {
-		spawnCell = defaultSpawn
-		specialCell = farthestPresentCell(present, width, height, defaultSpawn)
-	}
-
 	const cellRect = (cell: GridCell): PageRect => ({ x: roomX(cell.x), y: roomY(cell.y), w: roomSize, h: roomSize })
+	const isCell = (c: GridCell, x: number, y: number) => c.x === x && c.y === y
 
-	// 1) ROOMS — one rect per present cell; the special cell gets portal/exit props instead.
+	const spawnCell =
+		opts.role === 'child' && opts.entranceEdge
+			? cellOnEdge(present, width, height, opts.entranceEdge)
+			: firstPresentCell(present, width, height)
+
+	// PARENT: mark a checkerboard of present rooms (excluding spawn) as portals, so
+	// portal rooms ALTERNATE with plain blue rooms. CHILD: pick the exit marker room.
+	const portals: PortalInfo[] = []
+	let exitCell: GridCell | undefined
+	if (opts.role === 'parent') {
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) {
+				if (!present[y][x] || isCell(spawnCell, x, y)) continue
+				if ((x + y) % 2 !== 1) continue // checkerboard: only "odd" cells host maps
+				portals.push({ cell: { x, y }, rect: cellRect({ x, y }), doorDirs: doorDirsOf(grid, present, width, height, x, y) })
+			}
+		}
+	} else {
+		exitCell = opts.exitEdge ? cellOnEdge(present, width, height, opts.exitEdge) : firstPresentCell(present, width, height)
+	}
+	const isPortal = (x: number, y: number) => portals.some((p) => isCell(p.cell, x, y))
+
+	// 1) ROOMS — one rect per present cell. Parent portal rooms look like normal blue
+	//    rooms (no border — the nested map inside marks them). A child's entrance and
+	//    exit rooms are BOTH orange (the two in/out portals); other child rooms are green.
 	for (let y = 0; y < height; y++) {
 		for (let x = 0; x < width; x++) {
 			if (!present[y][x]) continue
-			const isSpecial = x === specialCell.x && y === specialCell.y
-			const kind: RoomRectKind = isSpecial ? opts.special : 'room'
-			const props = isSpecial ? (opts.special === 'portal' ? PORTAL_PROPS : EXIT_PROPS) : roomProps
+			const portal = isPortal(x, y)
+			const entrance = opts.role === 'child' && isCell(spawnCell, x, y)
+			const exit = exitCell != null && isCell(exitCell, x, y)
+			const kind: RoomRectKind = portal ? 'portal' : entrance ? 'entrance' : exit ? 'exit' : 'room'
+			const props = entrance || exit ? PORTAL_ROOM_PROPS : roomProps
 			rects.push({ id: newId(), kind, x: roomX(x), y: roomY(y), w: roomSize, h: roomSize, props })
 		}
 	}
@@ -223,9 +225,17 @@ export function buildMapLayout<Id>(
 		extent: roomExtent(width, height, roomSize, gap),
 		spawnCell,
 		spawnRect: cellRect(spawnCell),
-		special: opts.special,
-		specialCell,
-		specialRect: cellRect(specialCell),
-		specialDoorDirs: doorDirsOf(grid, present, width, height, specialCell.x, specialCell.y),
+		portals,
+		exitCell,
+		exitRect: exitCell ? cellRect(exitCell) : undefined,
 	}
+}
+
+/** Choose the two edges a child map's entrance and exit sit on, from a portal room's
+ *  tunnel sides. Entrance faces the first tunnel; exit faces the second (or the
+ *  opposite edge when the portal only has one tunnel), so the child is a pass-through. */
+export function entranceExitEdges(doorDirs: Dir[]): { entrance: Dir; exit: Dir } {
+	const entrance = doorDirs[0] ?? 'W'
+	const exit = doorDirs[1] ?? opposite(entrance)
+	return { entrance, exit }
 }

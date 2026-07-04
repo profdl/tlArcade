@@ -1,9 +1,9 @@
 /**
  * MAP GEOMETRY tests — the nesting invariant (a child map fits exactly inside a
- * parent portal room) and basic layout sanity. Pure, no editor.
+ * parent portal room), checkerboard portals, and the child pass-through. Pure, no editor.
  */
 import { describe, it, expect } from 'vitest'
-import { buildMapLayout, roomExtent } from '../mapGeometry'
+import { buildMapLayout, entranceExitEdges, roomExtent } from '../mapGeometry'
 import {
 	CHILD_FILL,
 	CHILD_GAP,
@@ -24,6 +24,9 @@ function counter() {
 	return () => `rect-${n++}`
 }
 
+const parent = (removeProb = 0) =>
+	buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, { removeProb, role: 'parent' })
+
 describe('nesting invariant', () => {
 	it('scales child room AND gap by the same factor', () => {
 		// If only roomSize scaled, this ratio would differ — the classic bug.
@@ -39,63 +42,57 @@ describe('nesting invariant', () => {
 	})
 })
 
-describe('buildMapLayout', () => {
-	it('emits a portal marker in the parent map, distinct from spawn', () => {
-		const layout = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
-			removeProb: 0,
-			special: 'portal',
-		})
-		expect(layout.special).toBe('portal')
-		expect(layout.rects.filter((r) => r.kind === 'portal')).toHaveLength(1)
-		// Portal is the farthest present cell from spawn, so they must differ on a full grid.
-		expect(layout.specialCell).not.toEqual(layout.spawnCell)
+describe('parent map — alternating portals', () => {
+	it('marks a checkerboard of portal rooms, none on the spawn, all reachable', () => {
+		const layout = parent()
+		expect(layout.portals.length).toBeGreaterThan(1) // several small-maps, not one at the end
+		expect(layout.exitRect).toBeUndefined() // a parent has no exit marker
+		for (const p of layout.portals) {
+			// checkerboard parity, never the spawn room, and reachable (>=1 tunnel).
+			expect((p.cell.x + p.cell.y) % 2).toBe(1)
+			expect(p.cell).not.toEqual(layout.spawnCell)
+			expect(p.doorDirs.length).toBeGreaterThan(0)
+		}
+		// Portal rooms render as normal rooms (no distinct "portal" fill / border).
+		expect(layout.rects.filter((r) => r.kind === 'portal').every((r) => r.props.color === 'blue')).toBe(true)
 	})
+})
 
-	it('puts the child exit marker on the spawn cell', () => {
+describe('child map — pass-through entrance + exit', () => {
+	it('places entrance (spawn) and exit on the requested edges, both as orange portals', () => {
 		const layout = buildMapLayout(counter(), CHILD_W, CHILD_H, CHILD_SEED, 0, 0, CHILD_ROOM, CHILD_GAP, {
 			removeProb: 0.2,
-			special: 'exit',
-		})
-		expect(layout.special).toBe('exit')
-		expect(layout.rects.filter((r) => r.kind === 'exit')).toHaveLength(1)
-		expect(layout.specialCell).toEqual(layout.spawnCell)
-	})
-
-	it('places the exit on the requested edge so it faces the parent tunnel', () => {
-		// exitEdge:'W' → exit must be in column x=0; the player spawns there too so it
-		// emerges at the tunnel seam. 'E' → column x=width-1.
-		const west = buildMapLayout(counter(), CHILD_W, CHILD_H, CHILD_SEED, 0, 0, CHILD_ROOM, CHILD_GAP, {
-			removeProb: 0.2,
-			special: 'exit',
-			exitEdge: 'W',
-		})
-		expect(west.specialCell.x).toBe(0)
-		expect(west.spawnCell).toEqual(west.specialCell)
-
-		const east = buildMapLayout(counter(), CHILD_W, CHILD_H, CHILD_SEED, 0, 0, CHILD_ROOM, CHILD_GAP, {
-			removeProb: 0.2,
-			special: 'exit',
+			role: 'child',
+			entranceEdge: 'W',
 			exitEdge: 'E',
 		})
-		expect(east.specialCell.x).toBe(CHILD_W - 1)
+		expect(layout.spawnCell.x).toBe(0) // entrance on the west edge
+		expect(layout.exitCell?.x).toBe(CHILD_W - 1) // exit on the east edge
+		// Two orange in/out portals — entrance and exit — and never a plain green entrance.
+		expect(layout.rects.filter((r) => r.kind === 'entrance')).toHaveLength(1)
+		expect(layout.rects.filter((r) => r.kind === 'exit')).toHaveLength(1)
+		expect(layout.rects.filter((r) => r.kind === 'entrance' || r.kind === 'exit').every((r) => r.props.color === 'orange')).toBe(true)
+		expect(layout.portals).toHaveLength(0) // a child hosts no further portals here
 	})
 
-	it('reports the door directions of the special cell (the tunnel sides)', () => {
-		const layout = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
-			removeProb: 0,
-			special: 'portal',
-		})
-		// The portal is reachable, so it has at least one door to a present neighbour.
-		expect(layout.specialDoorDirs.length).toBeGreaterThan(0)
-		expect(layout.specialDoorDirs.every((d) => ['N', 'E', 'S', 'W'].includes(d))).toBe(true)
+	it('derives entrance/exit edges from a portal room’s tunnels', () => {
+		expect(entranceExitEdges(['N', 'S'])).toEqual({ entrance: 'N', exit: 'S' })
+		// One tunnel → exit falls back to the opposite edge, so it's still a pass-through.
+		expect(entranceExitEdges(['E'])).toEqual({ entrance: 'E', exit: 'W' })
+		expect(entranceExitEdges([])).toEqual({ entrance: 'W', exit: 'E' })
 	})
+})
 
+describe('buildMapLayout — general', () => {
 	it('is deterministic for a fixed seed', () => {
-		const a = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, { removeProb: 0, special: 'portal' })
-		const b = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, { removeProb: 0, special: 'portal' })
-		expect(a.rects.map((r) => ({ kind: r.kind, x: r.x, y: r.y, w: r.w, h: r.h }))).toEqual(
-			b.rects.map((r) => ({ kind: r.kind, x: r.x, y: r.y, w: r.w, h: r.h }))
-		)
+		const shape = (r: { kind: string; x: number; y: number; w: number; h: number }) => ({
+			kind: r.kind,
+			x: r.x,
+			y: r.y,
+			w: r.w,
+			h: r.h,
+		})
+		expect(parent().rects.map(shape)).toEqual(parent().rects.map(shape))
 	})
 
 	it('positions all rects within the reported extent', () => {
@@ -103,7 +100,7 @@ describe('buildMapLayout', () => {
 		const originY = 50
 		const layout = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, originX, originY, PARENT_ROOM, GAP, {
 			removeProb: 0,
-			special: 'portal',
+			role: 'parent',
 		})
 		for (const r of layout.rects) {
 			expect(r.x).toBeGreaterThanOrEqual(originX - 0.001)

@@ -3,17 +3,19 @@
  * ===================================================================================
  * Builds the parent map, drops the player, and rides editor.on('tick') to move the
  * player (WASD/arrows), slide-collide against the current level's floor, and dive
- * IN/OUT of scales when the player steps onto a portal (parent) or exit (child) marker.
+ * IN/OUT of scales at portals.
  *
- * The nesting is purely geometric: the child map's rectangles are written at a small
- * scale INSIDE the parent's portal room, so they sit there visibly the whole time and
- * `editor.zoomToBounds` on the child's bounds IS the "dive in" effect — no frames, no
- * clipping. Camera animations are non-blocking, so a held movement key keeps driving
- * the player smoothly while the camera eases.
+ * The parent map ALTERNATES plain blue rooms with portal rooms; each portal room holds
+ * a whole nested child map, written at a small scale INSIDE it (so it sits there
+ * visibly the whole time — the map-within-a-map). Walking into a portal room dives into
+ * its child; the child is a PASS-THROUGH with an entrance (where you appear, at the
+ * tunnel you came from) and an exit marker (walk onto it to pop back out).
  *
- * Follows the repo's native-first behaviour pattern (see toolkit's registerSwimming):
- * one register* function, rides the shared tick, writes shape positions via
- * editor.run(..., { history: 'ignore' }), and returns a disposer.
+ * `editor.zoomToBounds` on a map's bounds IS the dive effect — no frames, no clipping.
+ * Camera animations are non-blocking, so a held key keeps moving the player as the
+ * camera eases. Follows the repo's native-first behaviour pattern (see toolkit's
+ * registerSwimming): one register* fn, rides the tick, writes via editor.run(...,
+ * { history: 'ignore' }), returns a disposer.
  */
 import { createShapeId, type Editor, type TLShapeId, type TLShapePartial } from 'tldraw'
 import {
@@ -34,9 +36,9 @@ import {
 	ZOOM_DURATION_MS,
 	ZOOM_INSET,
 } from './constants.ts'
-import { aabbOverlaps, resolveMove, type AABB } from './collision.ts'
-import { buildMapLayout, roomExtent, CHILD_ROOM_PROPS, type MapLayout, type PageRect } from './mapGeometry.ts'
-import { LevelManager, walkableRects, type LevelState } from './levelManager.ts'
+import { aabbOverlaps, resolveMove } from './collision.ts'
+import { buildMapLayout, entranceExitEdges, roomExtent, CHILD_ROOM_PROPS, type MapLayout, type PageRect, type PortalInfo } from './mapGeometry.ts'
+import { LevelManager, portalKey, walkableRects, type LevelState } from './levelManager.ts'
 import type { KeyState } from './keys.ts'
 import { createPlayer, getPlayerAABB, PLAYER_SHAPE_ID, setPlayerPosition, setPlayerRect } from './player.ts'
 
@@ -50,8 +52,14 @@ function centre(r: PageRect): { x: number; y: number } {
 	return { x: r.x + r.w / 2, y: r.y + r.h / 2 }
 }
 
-/** Write a level's rects to the store, sent to BACK, in one history-ignored batch. */
-function writeLevelRects(editor: Editor, layout: MapLayout<TLShapeId>): void {
+/** A distinct child seed per portal, so every small map is a different layout. */
+function childSeedFor(cell: { x: number; y: number }): number {
+	return (CHILD_SEED ^ (cell.x * 73856093) ^ (cell.y * 19349663)) >>> 0
+}
+
+/** Write a level's rects to the store in one history-ignored batch. `toBack` sends them
+ *  behind everything (parent map); children are left on top so they show inside portals. */
+function writeLevelRects(editor: Editor, layout: MapLayout<TLShapeId>, toBack: boolean): void {
 	const partials = layout.rects.map((r) => ({
 		id: r.id,
 		type: 'geo',
@@ -62,7 +70,7 @@ function writeLevelRects(editor: Editor, layout: MapLayout<TLShapeId>): void {
 	editor.run(
 		() => {
 			editor.createShapes(partials)
-			editor.sendToBack(layout.rects.map((r) => r.id))
+			if (toBack) editor.sendToBack(layout.rects.map((r) => r.id))
 		},
 		{ history: 'ignore' }
 	)
@@ -82,10 +90,10 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		{ history: 'ignore', ignoreShapeLock: true }
 	)
 
-	// ── Build + write the PARENT map at the page origin. ─────────────────────────
+	// ── Build + write the PARENT map at the page origin (sent to back). ──────────
 	const parentLayout = buildMapLayout(() => createShapeId(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
 		removeProb: PARENT_REMOVE_PROB,
-		special: 'portal',
+		role: 'parent',
 	})
 	const parent: LevelState<TLShapeId> = {
 		depth: 0,
@@ -97,26 +105,22 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		parentDepth: null,
 	}
 	manager.pushRoot(parent)
-	writeLevelRects(editor, parentLayout)
+	writeLevelRects(editor, parentLayout, true)
 
-	// Build + write the CHILD map eagerly, nested inside the parent's portal room, so
-	// it sits there visibly (a tiny map-within-a-map) BEFORE you enter — the whole
-	// pitch of the demo. It's cached under the parent's depth, so diving in just reuses
-	// these shapes (no regeneration, no duplication) — verified by a constant shape count.
-	function buildChildInside(parentLevel: LevelState<TLShapeId>): LevelState<TLShapeId> {
+	// Build + write EACH portal's child map eagerly, nested inside its portal room, so the
+	// tiny maps sit there visibly before you enter. Each is cached by portal cell, so
+	// diving in reuses its shapes (no regeneration/duplication). The child is a pass-through:
+	// its entrance faces one of the portal room's tunnels, its exit faces another.
+	function buildChildInside(parentLevel: LevelState<TLShapeId>, portal: PortalInfo): LevelState<TLShapeId> {
 		const childExtent = roomExtent(CHILD_W, CHILD_H, CHILD_ROOM, CHILD_GAP)
-		const portal = parentLevel.layout.specialRect
-		const originX = portal.x + (portal.w - childExtent.w) / 2
-		const originY = portal.y + (portal.h - childExtent.h) / 2
-		// Put the child's exit/spawn room on the side the parent tunnel enters from, so it
-		// lines up with the tunnel mouth (the child map is centred in the portal room, so
-		// its edge cell on that side sits right where the tunnel pokes in) — a smooth,
-		// connected seam between the two maps.
-		const tunnelDir = parentLevel.layout.specialDoorDirs[0]
-		const layout = buildMapLayout(() => createShapeId(), CHILD_W, CHILD_H, CHILD_SEED, originX, originY, CHILD_ROOM, CHILD_GAP, {
+		const originX = portal.rect.x + (portal.rect.w - childExtent.w) / 2
+		const originY = portal.rect.y + (portal.rect.h - childExtent.h) / 2
+		const { entrance, exit } = entranceExitEdges(portal.doorDirs)
+		const layout = buildMapLayout(() => createShapeId(), CHILD_W, CHILD_H, childSeedFor(portal.cell), originX, originY, CHILD_ROOM, CHILD_GAP, {
 			removeProb: CHILD_REMOVE_PROB,
-			special: 'exit',
-			exitEdge: tunnelDir,
+			role: 'child',
+			entranceEdge: entrance,
+			exitEdge: exit,
 			roomProps: CHILD_ROOM_PROPS,
 		})
 		const child: LevelState<TLShapeId> = {
@@ -127,13 +131,13 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 			originX,
 			originY,
 			parentDepth: parentLevel.depth,
-			parentPortalRect: portal,
+			parentPortalRect: portal.rect,
 		}
-		manager.cacheChild(parentLevel.depth, child)
-		writeLevelRects(editor, layout)
+		manager.cacheChild(portalKey(portal.cell), child)
+		writeLevelRects(editor, layout, false)
 		return child
 	}
-	buildChildInside(parent)
+	for (const portal of parentLayout.portals) buildChildInside(parent, portal)
 
 	// Player spawns at the parent's spawn-room centre, sized to the parent room.
 	const spawn = centre(parentLayout.spawnRect)
@@ -142,15 +146,13 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 	// Frame the parent map immediately (no animation on first mount).
 	editor.zoomToBounds(mapBounds(parent), { inset: ZOOM_INSET, animation: { duration: 0 } })
 
-	// A marker only triggers once the player has STEPPED OFF it since arriving — so
-	// spawning on top of a marker (the child's exit, or the portal you return through)
-	// doesn't immediately re-fire. Re-armed on any tick the player isn't overlapping it.
+	// A trigger only fires once the player has STEPPED OFF the marker since arriving — so
+	// spawning on a portal (after diving out) or on the entrance doesn't immediately re-fire.
 	let triggerArmed = false
 
-	function diveIn(): void {
+	function diveIn(portal: PortalInfo): void {
 		const from = manager.current()
-		// The child was written at startup and cached; build lazily only as a fallback.
-		const child = manager.getCachedChild(from.depth) ?? buildChildInside(from)
+		const child = manager.getCachedChild(portalKey(portal.cell)) ?? buildChildInside(from, portal)
 		manager.pushChild(child)
 		const dest = centre(child.layout.spawnRect)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(child.roomSize))
@@ -188,16 +190,24 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 			if (resolved.x !== box.x || resolved.y !== box.y) setPlayerPosition(editor, resolved.x, resolved.y)
 		}
 
-		// Marker trigger: only when armed (player stepped off the marker since arriving).
-		const marker: AABB = level.layout.specialRect
-		const onMarker = aabbOverlaps(getPlayerAABB(editor), marker)
-		if (!triggerArmed) {
-			if (!onMarker) triggerArmed = true
-			return
-		}
-		if (onMarker) {
-			if (level.layout.special === 'portal') diveIn()
-			else diveOut()
+		const player = getPlayerAABB(editor)
+		if (level.layout.exitRect) {
+			// In a child: walk onto EITHER orange portal (entrance or exit) to pop back out.
+			const outRects = [level.layout.spawnRect, level.layout.exitRect]
+			const onPortal = outRects.some((r) => aabbOverlaps(player, r))
+			if (!triggerArmed) {
+				if (!onPortal) triggerArmed = true
+				return
+			}
+			if (onPortal) diveOut()
+		} else {
+			// In the parent: walk into any portal room to dive into its child map.
+			const hit = level.layout.portals.find((p) => aabbOverlaps(player, p.rect))
+			if (!triggerArmed) {
+				if (!hit) triggerArmed = true
+				return
+			}
+			if (hit) diveIn(hit)
 		}
 	}
 

@@ -5,9 +5,9 @@
  * third depth is additive later: pushChild()/popToParent() don't know or care how
  * deep the stack already is.
  *
- * Each level's child is generated lazily (on first portal entry) and cached by its
- * parent's depth, so walking in/out/in again reuses the same child map instead of
- * regenerating (and reseeding) it.
+ * Each portal's child map is generated once and cached BY PORTAL (a "x,y" key), so
+ * a parent with several portals holds several distinct children, and walking
+ * in/out/in again reuses the same child instead of regenerating (and reseeding) it.
  */
 import type { AABB } from './collision.ts'
 import type { MapLayout, PageRect } from './mapGeometry.ts'
@@ -24,6 +24,11 @@ export type LevelState<Id> = {
 	parentPortalRect?: PageRect
 }
 
+/** Stable cache key for a portal room (its grid cell). */
+export function portalKey(cell: { x: number; y: number }): string {
+	return `${cell.x},${cell.y}`
+}
+
 /** Every rect in a level's layout is walkable floor (rooms, doorways, and the
  *  portal/exit marker cell, which is still a normal room the player stands in). */
 export function walkableRects<Id>(level: LevelState<Id>): AABB[] {
@@ -32,7 +37,7 @@ export function walkableRects<Id>(level: LevelState<Id>): AABB[] {
 
 export class LevelManager<Id> {
 	private levels: LevelState<Id>[] = []
-	private childCache = new Map<number, LevelState<Id>>()
+	private childCache = new Map<string, LevelState<Id>>()
 
 	pushRoot(level: LevelState<Id>): void {
 		this.levels = [level]
@@ -58,11 +63,11 @@ export class LevelManager<Id> {
 		return this.current().depth
 	}
 
-	getCachedChild(parentDepth: number): LevelState<Id> | undefined {
-		return this.childCache.get(parentDepth)
+	getCachedChild(key: string): LevelState<Id> | undefined {
+		return this.childCache.get(key)
 	}
 
-	cacheChild(parentDepth: number, level: LevelState<Id>): void {
-		this.childCache.set(parentDepth, level)
+	cacheChild(key: string, level: LevelState<Id>): void {
+		this.childCache.set(key, level)
 	}
 }
