@@ -24,9 +24,14 @@ export type LevelState<Id> = {
 	parentSlotRect?: PageRect
 }
 
-/** Stable cache key for a submap cell (its grid coordinates). */
-export function submapKey(cell: { x: number; y: number }): string {
-	return `${cell.x},${cell.y}`
+/**
+ * Stable cache key for a submap SLOT, keyed by its PAGE position. Grid coordinates
+ * alone would collide across depths (a depth-1 map and a depth-2 map can both have a
+ * submap at cell (1,0)); the slot's page origin is unique in the whole nested world,
+ * so the same slot always reuses its one cached child. Rounded to shrug off float drift.
+ */
+export function submapKey(slotRect: { x: number; y: number }): string {
+	return `${Math.round(slotRect.x)},${Math.round(slotRect.y)}`
 }
 
 /** Every rect in a level's layout is walkable floor (rooms, doorways, and the

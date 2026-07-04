@@ -42,16 +42,25 @@ describe('LevelManager', () => {
 		expect(m.currentDepth()).toBe(0)
 	})
 
-	it('caches a child by submap cell key and returns the same instance', () => {
+	it('caches a child by submap SLOT page position and returns the same instance', () => {
 		const m = new LevelManager<string>()
 		m.pushRoot(level(0, null))
-		expect(m.getCachedChild(submapKey({ x: 1, y: 0 }))).toBeUndefined()
+		const slotA = { x: 320, y: 0, w: 100, h: 100 }
+		expect(m.getCachedChild(submapKey(slotA))).toBeUndefined()
 
 		const child = level(1, 0)
-		m.cacheChild(submapKey({ x: 1, y: 0 }), child)
-		expect(m.getCachedChild(submapKey({ x: 1, y: 0 }))).toBe(child)
-		// A different portal has no child yet.
-		expect(m.getCachedChild(submapKey({ x: 0, y: 1 }))).toBeUndefined()
+		m.cacheChild(submapKey(slotA), child)
+		expect(m.getCachedChild(submapKey(slotA))).toBe(child)
+		// A different slot has no child yet.
+		expect(m.getCachedChild(submapKey({ x: 0, y: 320, w: 100, h: 100 }))).toBeUndefined()
+	})
+
+	it('keys by page position so same-cell slots at different depths do NOT collide', () => {
+		// A depth-1 map and a depth-2 map can each have a submap at grid cell (1,0); the
+		// slots sit at different PAGE positions, so their cache keys must differ.
+		const depth1Slot = { x: 320, y: 0, w: 100, h: 100 }
+		const depth2Slot = { x: 71.6, y: 12.4, w: 22, h: 22 }
+		expect(submapKey(depth1Slot)).not.toBe(submapKey(depth2Slot))
 	})
 
 	it('throws if asked for current before any level is pushed', () => {

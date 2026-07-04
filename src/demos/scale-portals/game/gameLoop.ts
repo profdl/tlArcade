@@ -5,8 +5,9 @@
  * player (WASD/arrows), slide-collide against the current level's floor, and dive
  * IN/OUT of scales at submap slots.
  *
- * The world ALTERNATES blue rooms with free-standing small-maps (the cell-role model,
- * see mapGeometry.ts): a submap cell renders no room — its nested child map sits in
+ * The world ALTERNATES rooms with free-standing small-maps (the cell-role model,
+ * see mapGeometry.ts); each scale has its own colour (blue → green → light-red at the
+ * smallest, roomPropsForDepth): a submap cell renders no room — its nested child map sits in
  * the cell's SLOT, and the parent's tunnels run right up to (and a few px into) the
  * slot. Walking to the end of such a tunnel overlaps the slot and dives you in,
  * arriving at the GATE facing the side you came from. Stepping onto ANY gate
@@ -21,26 +22,29 @@
  */
 import { createShapeId, type Editor, type TLShapeId, type TLShapePartial } from 'tldraw'
 import {
-	CHILD_GAP,
+	CHILD_FILL,
 	CHILD_H,
 	CHILD_REMOVE_PROB,
-	CHILD_ROOM,
+	CHILD_SCALE,
 	CHILD_W,
 	GAP,
+	gapAtDepth,
+	MAX_DEPTH,
 	PARENT_H,
 	PARENT_REMOVE_PROB,
 	PARENT_ROOM,
 	PARENT_W,
 	PLAYER_FRACTION,
 	PLAYER_SPEED_ROOMS_PER_SEC,
+	roomAtDepth,
 	SLOT,
 	SLOT_POKE,
 	ZOOM_DURATION_MS,
 	ZOOM_INSET,
 } from './constants.ts'
-import { aabbOverlaps, resolveMove } from './collision.ts'
-import { buildMapLayout, childSeedFor, CHILD_ROOM_PROPS, type GateInfo, type MapLayout, type PageRect, type SubmapInfo } from './mapGeometry.ts'
-import { validateWorld, type WorldChild } from './validateWorld.ts'
+import { aabbOverlaps, resolveMove, type AABB } from './collision.ts'
+import { buildMapLayout, childSeedFor, roomPropsForDepth, type GateInfo, type MapLayout, type PageRect, type SubmapInfo } from './mapGeometry.ts'
+import { validateWorldTree, type WorldNode } from './validateWorld.ts'
 import { LevelManager, submapKey, walkableRects, type LevelState } from './levelManager.ts'
 import type { KeyState } from './keys.ts'
 import type { Dir } from '../wfc/tiles.ts'
@@ -51,9 +55,43 @@ function mapBounds(level: LevelState<TLShapeId>): PageRect {
 	return { x: level.originX, y: level.originY, w: level.layout.extent.w, h: level.layout.extent.h }
 }
 
+/**
+ * Frame a level's map in the viewport. zoomToBounds fits the map to the view, so the
+ * on-screen framing is identical at every depth (each level's extent is CHILD_SCALE^depth
+ * the root's, and the camera compensates). The inset is scaled by CHILD_SCALE^depth so the
+ * page-px margin around the map shrinks in step with the map — a constant on-screen margin.
+ */
+function frameLevel(editor: Editor, level: LevelState<TLShapeId>, durationMs: number): void {
+	editor.zoomToBounds(mapBounds(level), {
+		inset: ZOOM_INSET * CHILD_SCALE ** level.depth,
+		animation: { duration: durationMs },
+	})
+}
+
 /** Centre of a page rect. */
 function centre(r: PageRect): { x: number; y: number } {
 	return { x: r.x + r.w / 2, y: r.y + r.h / 2 }
+}
+
+export type PortalHit =
+	| { kind: 'out'; gate: GateInfo }
+	| { kind: 'in'; submap: SubmapInfo }
+	| { kind: 'none' }
+
+/**
+ * Which portal (if any) the player is standing on — PURE, so it's unit-testable without
+ * an editor. A level can be BOTH host and guest at once (an intermediate map has gates
+ * to leave by AND submap slots to descend into), so we check BOTH, not one-or-the-other.
+ * Gate (dive OUT) wins ties: you ARRIVE standing on a gate, whereas a slot is only reached
+ * by walking a tunnel to its dead end — and gate cells vs submap cells never coincide
+ * anyway (gates force role 'room'), so a genuine tie shouldn't occur.
+ */
+export function portalAt<Id>(layout: MapLayout<Id>, player: AABB): PortalHit {
+	const gate = layout.gates.find((g) => aabbOverlaps(player, g.rect))
+	if (gate) return { kind: 'out', gate }
+	const submap = layout.submaps.find((s) => aabbOverlaps(player, s.slotRect))
+	if (submap) return { kind: 'in', submap }
+	return { kind: 'none' }
 }
 
 /** A fresh 32-bit world seed — a NEW map every game start. */
@@ -113,9 +151,10 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 	console.info(`[scale-portals] world seed: ${worldSeed} (reproduce with ?seed=${worldSeed})`)
 	const parentLayout = buildMapLayout(() => createShapeId(), PARENT_W, PARENT_H, worldSeed, 0, 0, PARENT_ROOM, GAP, {
 		removeProb: PARENT_REMOVE_PROB,
-		role: 'parent',
+		hasSlots: true,
 		slotSize: SLOT,
 		slotPoke: SLOT_POKE,
+		roomProps: roomPropsForDepth(0, MAX_DEPTH), // depth 0 → blue
 	})
 	const parent: LevelState<TLShapeId> = {
 		depth: 0,
@@ -129,50 +168,62 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 	manager.pushRoot(parent)
 	writeLevelRects(editor, parentLayout, true)
 
-	// Build + write EACH submap's child map eagerly, filling its slot, so the tiny maps
-	// sit there visibly before you enter. Each is cached by cell, so diving in reuses
-	// its shapes (no regeneration/duplication). Gates: one per tunnel direction.
-	const builtChildren: WorldChild<TLShapeId>[] = []
-	function buildChildInSlot(parentLevel: LevelState<TLShapeId>, submap: SubmapInfo): LevelState<TLShapeId> {
+	// Build + write EVERY submap's child map eagerly and RECURSIVELY, filling its slot,
+	// so every tiny map (at every depth) sits there visibly before you enter. Each child
+	// is cached by its slot's page position, so diving in reuses its shapes. A child at
+	// depth d < MAX_DEPTH is itself a HOST (has its own slots) and we recurse into it; at
+	// depth === MAX_DEPTH it's a LEAF (all rooms + gates, no slots). Room/gap compound
+	// CHILD_SCALE per depth (roomAtDepth/gapAtDepth). Gates: one per host-tunnel direction.
+	const worldTree: WorldNode<TLShapeId>[] = []
+	function buildChildInSlot(parentLevel: LevelState<TLShapeId>, submap: SubmapInfo): WorldNode<TLShapeId> {
+		const depth = parentLevel.depth + 1
+		const isHost = depth < MAX_DEPTH
+		const roomSize = roomAtDepth(depth)
+		const gap = gapAtDepth(depth)
 		const layout = buildMapLayout(
 			() => createShapeId(),
 			CHILD_W,
 			CHILD_H,
-			childSeedFor(worldSeed, submap.cell),
+			childSeedFor(worldSeed, submap.cell, depth),
 			submap.slotRect.x,
 			submap.slotRect.y,
-			CHILD_ROOM,
-			CHILD_GAP,
+			roomSize,
+			gap,
 			{
 				removeProb: CHILD_REMOVE_PROB,
-				role: 'child',
+				hasSlots: isHost,
 				gateEdges: submap.doorDirs,
-				roomProps: CHILD_ROOM_PROPS,
+				// One colour per zoom level; the deepest (leaf) map is light-red.
+				roomProps: roomPropsForDepth(depth, MAX_DEPTH),
+				// A host child offers its own slots (scaled to its own room), so nesting continues.
+				...(isHost ? { slotSize: roomSize * CHILD_FILL, slotPoke: SLOT_POKE * CHILD_SCALE ** depth } : {}),
 			}
 		)
-		const child: LevelState<TLShapeId> = {
-			depth: parentLevel.depth + 1,
+		const level: LevelState<TLShapeId> = {
+			depth,
 			layout,
-			roomSize: CHILD_ROOM,
-			gap: CHILD_GAP,
+			roomSize,
+			gap,
 			originX: submap.slotRect.x,
 			originY: submap.slotRect.y,
 			parentDepth: parentLevel.depth,
 			parentSlotRect: submap.slotRect,
 		}
-		manager.cacheChild(submapKey(submap.cell), child)
+		manager.cacheChild(submapKey(submap.slotRect), level)
 		writeLevelRects(editor, layout, false)
-		builtChildren.push({ submap, layout })
-		return child
+		// Recurse: build this host child's own children (its grandchildren of the root).
+		const children = isHost ? layout.submaps.map((s) => buildChildInSlot(level, s)) : []
+		const node: WorldNode<TLShapeId> = { submap, layout, children }
+		return node
 	}
-	for (const submap of parentLayout.submaps) buildChildInSlot(parent, submap)
+	for (const submap of parentLayout.submaps) worldTree.push(buildChildInSlot(parent, submap))
 
-	// With random seeds, the gate↔tunnel connection invariants must hold for ANY world —
-	// assert them loudly in dev (they're also swept across hundreds of seeds in tests).
+	// With random seeds, the gate↔tunnel connection invariants must hold for ANY world at
+	// EVERY depth — assert them loudly in dev (also swept across hundreds of seeds in tests).
 	if (import.meta.env.DEV) {
-		const violations = validateWorld(parentLayout, builtChildren, { w: CHILD_W, h: CHILD_H })
+		const violations = validateWorldTree(parentLayout, worldTree, { w: CHILD_W, h: CHILD_H })
 		for (const v of violations) {
-			 
+
 			console.error(`[scale-portals] INVARIANT VIOLATED (seed ${worldSeed}): ${v}`)
 		}
 	}
@@ -181,8 +232,9 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 	const spawn = centre(parentLayout.spawnRect)
 	createPlayer(editor, spawn.x, spawn.y, playerSizeFor(PARENT_ROOM))
 
-	// Frame the parent world immediately (no animation on first mount).
-	editor.zoomToBounds(mapBounds(parent), { inset: ZOOM_INSET, animation: { duration: 0 } })
+	// Frame the root world immediately (no animation on first mount). Depth 0, so the
+	// inset scale is 1 — this is the widest-out framing (~10% zoom in tldraw's native range).
+	frameLevel(editor, parent, 0)
 
 	// A trigger only fires once the player has STEPPED OFF it since arriving — so
 	// emerging next to a slot (or arriving on a gate) doesn't immediately re-fire.
@@ -190,7 +242,11 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 
 	function diveIn(submap: SubmapInfo): void {
 		const from = manager.current()
-		const child = manager.getCachedChild(submapKey(submap.cell)) ?? buildChildInSlot(from, submap)
+		// Every reachable submap is built eagerly, so the cache always hits; the fallback
+		// builds it (and its subtree) on demand — buildChildInSlot caches by slot, so we
+		// re-read the level from the cache afterwards regardless of which path ran.
+		if (!manager.getCachedChild(submapKey(submap.slotRect))) buildChildInSlot(from, submap)
+		const child = manager.getCachedChild(submapKey(submap.slotRect))!
 		manager.pushChild(child)
 		// Arrive at the gate FACING the tunnel you came through: the player touched the
 		// slot on some side; that side's gate is the pairing. Fallback (shouldn't happen
@@ -201,10 +257,7 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		const dest = gate ? centre(gate.rect) : centre(submap.slotRect)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(child.roomSize))
 		editor.bringToFront([PLAYER_SHAPE_ID])
-		editor.zoomToBounds(mapBounds(child), {
-			inset: (ZOOM_INSET * CHILD_ROOM) / PARENT_ROOM,
-			animation: { duration: ZOOM_DURATION_MS },
-		})
+		frameLevel(editor, child, ZOOM_DURATION_MS)
 		triggerArmed = false
 	}
 
@@ -230,7 +283,7 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 						: { x: c.x, y: slot.y + slot.h + margin }
 		setPlayerRect(editor, dest.x, dest.y, size)
 		editor.bringToFront([PLAYER_SHAPE_ID])
-		editor.zoomToBounds(mapBounds(parentLevel), { inset: ZOOM_INSET, animation: { duration: ZOOM_DURATION_MS } })
+		frameLevel(editor, parentLevel, ZOOM_DURATION_MS)
 		triggerArmed = false
 	}
 
@@ -250,23 +303,15 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		}
 
 		const player = getPlayerAABB(editor)
-		if (level.layout.gates.length > 0) {
-			// In a child: walk onto ANY gate to dive back out toward its tunnel.
-			const gate = level.layout.gates.find((g) => aabbOverlaps(player, g.rect))
-			if (!triggerArmed) {
-				if (!gate) triggerArmed = true
-				return
-			}
-			if (gate) diveOut(gate)
-		} else {
-			// In the parent: reaching the end of a tunnel overlaps a submap's slot → dive.
-			const hit = level.layout.submaps.find((s) => aabbOverlaps(player, s.slotRect))
-			if (!triggerArmed) {
-				if (!hit) triggerArmed = true
-				return
-			}
-			if (hit) diveIn(hit)
+		const portal = portalAt(level.layout, player)
+		// A trigger only fires once you've STEPPED OFF every portal since arriving — so
+		// landing on a gate (dive-out arrival) or beside a slot doesn't instantly re-fire.
+		if (!triggerArmed) {
+			if (portal.kind === 'none') triggerArmed = true
+			return
 		}
+		if (portal.kind === 'out') diveOut(portal.gate)
+		else if (portal.kind === 'in') diveIn(portal.submap)
 	}
 
 	editor.on('tick', onTick)

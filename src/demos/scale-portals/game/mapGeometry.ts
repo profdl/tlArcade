@@ -22,14 +22,18 @@
  * abstraction means room↔room, room↔submap, and submap↔submap edges all just work,
  * whatever the role pattern.
  *
- * A CHILD map (role 'child') is a plain all-rooms map plus GATES: one gate
- * room per requested edge — the edges being the host submap cell's door directions
- * — so every tunnel that reaches the slot has exactly one gate facing it (1–4
- * gates, straight or bent). Gates are symmetric: any gate both receives arrivals
- * from its tunnel and dives you back out toward it. There is no entrance/exit.
+ * SLOTS AND GATES ARE INDEPENDENT — the same map can have BOTH. `hasSlots` makes
+ * a level a HOST (it offers submap slots to nest deeper maps); a non-empty
+ * `gateEdges` makes it a GUEST (it carries one gate room per requested edge — the
+ * edges being its own host cell's door directions — so every tunnel that reaches
+ * its slot has exactly one gate facing it, 1–4 gates, straight or bent). A ROOT
+ * map is host-only (slots, no gates); an INTERMEDIATE map is both (slots + gates)
+ * so nesting can continue past depth 1; a LEAF map is guest-only (gates, no slots).
+ * Gates are symmetric: any gate both receives arrivals from its tunnel and dives
+ * you back out toward it. There is no entrance/exit.
  *
- * Both `roomSize` and `gap` are parameters so the SAME function builds a parent
- * world and the smaller child maps nested in its slots.
+ * Both `roomSize` and `gap` are parameters so the SAME function builds the root
+ * world and the smaller maps nested in its slots, at any depth.
  */
 import { collapse, type TileGrid } from '../wfc/collapse.ts'
 import { pruneAndConnect, type Present } from '../wfc/connectivity.ts'
@@ -42,10 +46,27 @@ export const DOOR_MOUTH = 0.34
 
 export const ROOM_PROPS = { geo: 'rectangle', color: 'blue', fill: 'fill' } as const
 export const CHILD_ROOM_PROPS = { geo: 'rectangle', color: 'light-green', fill: 'fill' } as const
-/** A child map's gate rooms — same colour as its regular rooms (the gate's position
- *  at a tunnel mouth is what marks it, not a special colour). Kept as a separate
- *  const so gates can be re-tinted in one place. */
-export const GATE_PROPS = { geo: 'rectangle', color: 'light-green', fill: 'fill' } as const
+
+/**
+ * ONE COLOUR PER ZOOM LEVEL, so you can tell at a glance how deep you are. Depth 0
+ * (the root, biggest) is blue; each dive shifts hue; the SMALLEST scale (the leaf,
+ * === maxDepth) is always light-red. Colours are anchored to BOTH ends: depth 0 and
+ * the leaf are pinned, the middle depths fill in from an ordered palette, so the
+ * scheme still reads right if MAX_DEPTH changes. tldraw palette names only. */
+const DEPTH_COLORS = ['blue', 'light-green', 'violet', 'orange', 'yellow'] as const
+const SMALLEST_COLOR = 'light-red'
+
+/** The room/door fill colour for a map at `depth`, given the deepest depth in the world.
+ *  Leaf (depth === maxDepth) → light-red; otherwise the depth-th palette colour. */
+export function colorForDepth(depth: number, maxDepth: number): string {
+	if (depth >= maxDepth) return SMALLEST_COLOR
+	return DEPTH_COLORS[Math.min(depth, DEPTH_COLORS.length - 1)]
+}
+
+/** Room props (geo/fill) for a map at `depth` — same shape as ROOM_PROPS, per-depth colour. */
+export function roomPropsForDepth(depth: number, maxDepth: number): Record<string, unknown> {
+	return { geo: 'rectangle', color: colorForDepth(depth, maxDepth), fill: 'fill' }
+}
 
 export type RoomRectKind = 'room' | 'door' | 'gate'
 
@@ -88,10 +109,12 @@ export function roomExtent(width: number, height: number, roomSize: number, gap:
 	return { w: width * pitch - gap, h: height * pitch - gap }
 }
 
-/** A distinct child seed per submap cell, derived from the world seed, so ONE seed
- *  reproduces the entire world — the parent layout and every small-map. */
-export function childSeedFor(worldSeed: number, cell: GridCell): number {
-	return (worldSeed ^ 0x9e3779b9 ^ (cell.x * 73856093) ^ (cell.y * 19349663)) >>> 0
+/** A distinct child seed per submap cell AND depth, derived from the world seed, so ONE
+ *  seed reproduces the entire nested world. Depth is mixed in so two submaps at the same
+ *  grid cell but different depths (e.g. cell (1,0) at depth 1 and at depth 2) don't clone
+ *  the same map. Defaults depth to 1 for callers that predate nesting. */
+export function childSeedFor(worldSeed: number, cell: GridCell, depth = 1): number {
+	return (worldSeed ^ 0x9e3779b9 ^ (cell.x * 73856093) ^ (cell.y * 19349663) ^ (depth * 83492791)) >>> 0
 }
 
 function firstPresentCell(present: Present, width: number, height: number): GridCell {
@@ -179,19 +202,23 @@ function assignGateCells(present: Present, width: number, height: number, edges:
 export type BuildMapLayoutOptions = {
 	/** Fraction of rooms to randomly remove (kept 4-connected) — see pruneAndConnect. */
 	removeProb?: number
-	/** 'parent': a world of rooms + submap slots. 'child': an all-rooms map with gates. */
-	role: 'parent' | 'child'
 	/**
-	 * Parent only: which role each present cell plays. Defaults to checkerboard parity
+	 * HOST flag: does this level offer submap slots to nest deeper maps into? A root
+	 * or intermediate map sets this true; a leaf map (deepest scale) sets it false.
+	 * Independent of `gateEdges` — a map can have both slots (host) and gates (guest).
+	 */
+	hasSlots: boolean
+	/**
+	 * Host only: which role each present cell plays. Defaults to checkerboard parity
 	 * ((x+y) odd → submap), never the spawn cell. THE modularity seam — swap for
-	 * sparser submaps, all-rooms, weighted random, etc.
+	 * sparser submaps, all-rooms, weighted random, etc. Ignored when `hasSlots` false.
 	 */
 	roleFor?: (cell: GridCell) => CellRole
-	/** Parent only: slot side length (the square a child map fills), page px. */
+	/** Host only: slot side length (the square a child map fills), page px. */
 	slotSize?: number
-	/** Parent only: how far a tunnel pokes INTO a slot (so the dive trigger can fire). */
+	/** Host only: how far a tunnel pokes INTO a slot (so the dive trigger can fire). */
 	slotPoke?: number
-	/** Child only: edges to place one gate on (the host cell's door dirs). */
+	/** Guest only: edges to place one gate on (this map's host cell's door dirs). */
 	gateEdges?: Dir[]
 	/** Room fill/color for normal rooms + doorways at this depth. Defaults to ROOM_PROPS. */
 	roomProps?: Record<string, unknown>
@@ -228,7 +255,7 @@ export function buildMapLayout<Id>(
 	// from pruning — a pruned gate cell would make the gate slide along its edge, off
 	// the tunnel's centreline, visually disconnecting portal from tunnel.
 	let keep: Present | undefined
-	if (opts.role === 'child' && opts.gateEdges && opts.gateEdges.length > 0) {
+	if (opts.gateEdges && opts.gateEdges.length > 0) {
 		keep = Array.from({ length: height }, () => Array.from({ length: width }, () => false))
 		for (const edge of opts.gateEdges) {
 			const cell = edgeMiddleCell(width, height, edge)
@@ -247,11 +274,25 @@ export function buildMapLayout<Id>(
 
 	const spawnCell = firstPresentCell(present, width, height)
 
-	// ── ROLES. Parent: rooms vs submap slots (pluggable; default checkerboard). ──
+	// ── GATES. Guest maps: one gate per requested edge (distinct cells). Computed FIRST
+	//    because a gate is where a tunnel from the level above ARRIVES — it must be a
+	//    solid walkable room, so gate cells force role 'room' below (they can never be
+	//    submap slots, which would leave the arriving tunnel facing empty space). ──────
+	const gates: GateInfo[] =
+		opts.gateEdges && opts.gateEdges.length > 0
+			? assignGateCells(present, width, height, opts.gateEdges).map(({ edge, cell }) => ({ edge, cell, rect: cellRect(cell) }))
+			: []
+	const gateAt = (x: number, y: number) => gates.find((g) => isCell(g.cell, x, y))
+
+	// ── ROLES. Host: rooms vs submap slots (pluggable; default checkerboard). The spawn
+	//    cell and every gate cell are pinned to 'room' — you must be able to stand where
+	//    you arrive, so neither can be a slot. This is what lets an INTERMEDIATE map be
+	//    both host (slots) and guest (gates): gates simply override the parity there. ──
 	const defaultRoleFor = (c: GridCell): CellRole =>
 		(c.x + c.y) % 2 === 1 && !isCell(spawnCell, c.x, c.y) ? 'submap' : 'room'
-	const roleFor = opts.role === 'parent' ? (opts.roleFor ?? defaultRoleFor) : () => 'room' as CellRole
-	const roleAt = (x: number, y: number): CellRole => (isCell(spawnCell, x, y) ? 'room' : roleFor({ x, y }))
+	const roleFor = opts.hasSlots ? (opts.roleFor ?? defaultRoleFor) : () => 'room' as CellRole
+	const roleAt = (x: number, y: number): CellRole =>
+		isCell(spawnCell, x, y) || gateAt(x, y) ? 'room' : roleFor({ x, y })
 
 	const slotSize = opts.slotSize ?? roomSize
 	const slotPoke = opts.slotPoke ?? 0
@@ -261,7 +302,7 @@ export function buildMapLayout<Id>(
 	}
 
 	const submaps: SubmapInfo[] = []
-	if (opts.role === 'parent') {
+	if (opts.hasSlots) {
 		for (let y = 0; y < height; y++) {
 			for (let x = 0; x < width; x++) {
 				if (!present[y][x] || roleAt(x, y) !== 'submap') continue
@@ -269,13 +310,6 @@ export function buildMapLayout<Id>(
 			}
 		}
 	}
-
-	// ── GATES. Child: one gate per requested edge (distinct cells). ──────────────
-	const gates: GateInfo[] =
-		opts.role === 'child' && opts.gateEdges && opts.gateEdges.length > 0
-			? assignGateCells(present, width, height, opts.gateEdges).map(({ edge, cell }) => ({ edge, cell, rect: cellRect(cell) }))
-			: []
-	const gateAt = (x: number, y: number) => gates.find((g) => isCell(g.cell, x, y))
 
 	// 1) ROOMS — one rect per present ROOM cell (submap cells emit nothing here; the
 	//    nested child map occupies their slot).
@@ -290,7 +324,9 @@ export function buildMapLayout<Id>(
 				y: cellY(y),
 				w: roomSize,
 				h: roomSize,
-				props: gate ? GATE_PROPS : roomProps,
+				// Gates take the map's own depth colour — their POSITION at a tunnel mouth
+				// marks them, not a special tint — so each whole map reads as one colour.
+				props: roomProps,
 			})
 		}
 	}

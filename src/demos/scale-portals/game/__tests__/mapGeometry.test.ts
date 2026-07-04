@@ -4,7 +4,7 @@
  * nesting invariant. Pure, no editor.
  */
 import { describe, it, expect } from 'vitest'
-import { buildMapLayout, roomExtent, CHILD_ROOM_PROPS, type PageRect } from '../mapGeometry'
+import { buildMapLayout, roomExtent, colorForDepth, roomPropsForDepth, CHILD_ROOM_PROPS, type PageRect } from '../mapGeometry'
 import {
 	CHILD_GAP,
 	CHILD_H,
@@ -12,6 +12,7 @@ import {
 	CHILD_SEED,
 	CHILD_W,
 	GAP,
+	MAX_DEPTH,
 	PARENT_H,
 	PARENT_ROOM,
 	PARENT_SEED,
@@ -30,15 +31,16 @@ function counter() {
 const parent = (removeProb = 0) =>
 	buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
 		removeProb,
-		role: 'parent',
+		hasSlots: true,
 		slotSize: SLOT,
 		slotPoke: SLOT_POKE,
 	})
 
+// A LEAF child: gates, no slots (the deepest scale).
 const child = (gateEdges: Dir[], seed = CHILD_SEED, removeProb = 0.2) =>
 	buildMapLayout(counter(), CHILD_W, CHILD_H, seed, 0, 0, CHILD_ROOM, CHILD_GAP, {
 		removeProb,
-		role: 'child',
+		hasSlots: false,
 		gateEdges,
 		roomProps: CHILD_ROOM_PROPS,
 	})
@@ -98,7 +100,7 @@ describe('parent world — cell roles', () => {
 	it('supports a pluggable role function (all-rooms → no submaps)', () => {
 		const layout = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
 			removeProb: 0,
-			role: 'parent',
+			hasSlots: true,
 			slotSize: SLOT,
 			slotPoke: SLOT_POKE,
 			roleFor: () => 'room',
@@ -125,8 +127,8 @@ describe('child map — per-tunnel gates', () => {
 				seen.add(`${g.cell.x},${g.cell.y}`)
 			}
 			expect(seen.size).toBe(edges.length) // all distinct
-			// Gates match the rooms' colour (position at the tunnel mouth marks them, not
-			// a special tint), and every rect in a child is green.
+			// Gates inherit the map's own roomProps colour (position at the tunnel mouth
+			// marks them, not a special tint), so a whole map reads as ONE colour.
 			const gateRects = layout.rects.filter((r) => r.kind === 'gate')
 			expect(gateRects).toHaveLength(edges.length)
 			expect(layout.rects.every((r) => r.props.color === 'light-green')).toBe(true)
@@ -153,6 +155,52 @@ describe('child map — per-tunnel gates', () => {
 			}
 			expect(layout.rects.filter((r) => r.kind === 'gate')).toHaveLength(edges.length)
 		}
+	})
+})
+
+describe('intermediate map — host AND guest (slots + gates together)', () => {
+	it('a hasSlots map with gateEdges emits BOTH submap slots and gates', () => {
+		// This is what makes 3+ scales possible: an intermediate map hosts deeper maps
+		// (submap slots) while itself being a child of the level above (gates).
+		const layout = buildMapLayout(counter(), CHILD_W, CHILD_H, CHILD_SEED, 0, 0, CHILD_ROOM, CHILD_GAP, {
+			removeProb: 0,
+			hasSlots: true,
+			slotSize: CHILD_ROOM * 0.82,
+			slotPoke: SLOT_POKE,
+			gateEdges: ['W', 'E'],
+			roomProps: CHILD_ROOM_PROPS,
+		})
+		expect(layout.submaps.length).toBeGreaterThan(0) // it's a host
+		expect(layout.gates.length).toBe(2) // it's also a guest
+		// A submap cell never also carries a gate (gates are rooms; submaps have no room).
+		const gateCells = new Set(layout.gates.map((g) => `${g.cell.x},${g.cell.y}`))
+		for (const s of layout.submaps) expect(gateCells.has(`${s.cell.x},${s.cell.y}`)).toBe(false)
+	})
+})
+
+describe('per-depth colour palette (one colour per zoom level)', () => {
+	it('gives every depth a DISTINCT colour', () => {
+		const colors = Array.from({ length: MAX_DEPTH + 1 }, (_, d) => colorForDepth(d, MAX_DEPTH))
+		expect(new Set(colors).size).toBe(colors.length)
+	})
+
+	it('paints the root blue and the smallest (leaf) scale light-red', () => {
+		expect(colorForDepth(0, MAX_DEPTH)).toBe('blue')
+		expect(colorForDepth(MAX_DEPTH, MAX_DEPTH)).toBe('light-red')
+		// The leaf is light-red regardless of how deep the world goes.
+		expect(colorForDepth(4, 4)).toBe('light-red')
+		expect(colorForDepth(1, 1)).toBe('light-red')
+	})
+
+	it('roomPropsForDepth carries that colour through to a built map (rooms AND gates)', () => {
+		const layout = buildMapLayout(counter(), CHILD_W, CHILD_H, CHILD_SEED, 0, 0, CHILD_ROOM, CHILD_GAP, {
+			removeProb: 0,
+			hasSlots: false,
+			gateEdges: ['W', 'E'],
+			roomProps: roomPropsForDepth(MAX_DEPTH, MAX_DEPTH), // the leaf scale
+		})
+		expect(layout.rects.length).toBeGreaterThan(0)
+		expect(layout.rects.every((r) => r.props.color === 'light-red')).toBe(true)
 	})
 })
 
