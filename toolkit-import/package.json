@@ -1,0 +1,42 @@
+{
+	"name": "tldraw-sync-cloudflare",
+	"private": true,
+	"version": "0.0.0",
+	"author": {
+		"name": "tldraw GB Ltd.",
+		"email": "hello@tldraw.com"
+	},
+	"homepage": "https://tldraw.dev",
+	"license": "MIT",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsc && vite build",
+		"preview": "vite preview",
+		"test": "node --experimental-strip-types worker/__tests__/referee.test.mjs && node --experimental-strip-types client/grid/__tests__/geometry.test.mjs && node --experimental-strip-types client/creature/__tests__/snakeSteering.test.mjs && node --experimental-strip-types client/wfc/__tests__/collapse.test.mjs && node --experimental-strip-types client/wfc/__tests__/tankGeometry.test.mjs && node --experimental-strip-types client/wfc/__tests__/chaosGeometry.test.mjs && node --experimental-strip-types client/wfc/__tests__/regionMask.test.mjs"
+	},
+	"dependencies": {
+		"@tldraw/editor": "^5.1.1",
+		"@tldraw/sync": "^5.1.1",
+		"@tldraw/sync-core": "^5.1.1",
+		"@tldraw/tlschema": "^5.1.1",
+		"cloudflare-workers-unfurl": "^0.0.8",
+		"itty-router": "^5.0.18",
+		"lodash.throttle": "^4.1.1",
+		"react": "^19.2.1",
+		"react-dom": "^19.2.1",
+		"react-router-dom": "^6.28.2",
+		"tldraw": "^5.1.1"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "^1.29.1",
+		"@types/lodash.throttle": "^4.1.9",
+		"@types/react": "^19.2.7",
+		"@types/react-dom": "^19.2.3",
+		"@vitejs/plugin-react": "^6.0.1",
+		"concurrently": "^9.1.2",
+		"typescript": "^5.8.3",
+		"vite": "^8.0.1",
+		"wrangler": "^4.75.0"
+	}
+}
