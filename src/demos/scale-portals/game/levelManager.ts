@@ -34,10 +34,12 @@ export function submapKey(slotRect: { x: number; y: number }): string {
 	return `${Math.round(slotRect.x)},${Math.round(slotRect.y)}`
 }
 
-/** Every rect in a level's layout is walkable floor (rooms, doorways, and the
- *  portal/exit marker cell, which is still a normal room the player stands in). */
+/** The walkable floor of a level: rooms, doorways, and gate rooms. Portal-doorway rects
+ *  (kind 'portal') are excluded — they're orange markers/triggers laid OVER walkable
+ *  floor (a hallway on the host side, a gate room on the guest side), not floor of their
+ *  own, so they must not extend the walkable area past the slot boundary. */
 export function walkableRects<Id>(level: LevelState<Id>): AABB[] {
-	return level.layout.rects.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }))
+	return level.layout.rects.filter((r) => r.kind !== 'portal').map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }))
 }
 
 export class LevelManager<Id> {

@@ -14,6 +14,8 @@
  *      "portal connects to tunnel" guarantee; tunnels poke into the slot).
  *   5. Gate cells are distinct.
  *   6. The child map's extent exactly fills its slot.
+ *   7. Portal-doorways line up: the host has one 'in' doorway per submap tunnel, and
+ *      each child has one 'out' doorway per gate edge (the dive triggers).
  *
  * These hold at every scale: a depth-1 map is validated against the root's tunnels,
  * a depth-2 map against the depth-1 map's tunnels, and so on — recursively.
@@ -55,6 +57,13 @@ function validateHost<Id>(
 		violations.push(`${label}: host has ${host.submaps.length} submaps but ${children.length} children`)
 	}
 
+	// 7a. Host: one 'in' portal-doorway per submap tunnel direction (the dive-in trigger).
+	const hostIn = host.portals.filter((p) => p.kind === 'in').length
+	const expectedIn = host.submaps.reduce((n, s) => n + s.doorDirs.length, 0)
+	if (hostIn !== expectedIn) {
+		violations.push(`${label}: host has ${hostIn} IN doorways, expected ${expectedIn} (one per submap tunnel)`)
+	}
+
 	for (const { submap, layout } of children) {
 		const at = `${label}/submap(${submap.cell.x},${submap.cell.y})`
 
@@ -86,6 +95,12 @@ function validateHost<Id>(
 		// 5. Distinct gate cells.
 		const cells = new Set(layout.gates.map((g) => `${g.cell.x},${g.cell.y}`))
 		if (cells.size !== layout.gates.length) violations.push(`${at}: gate cells not distinct`)
+
+		// 7b. Child: one 'out' portal-doorway per gate edge (the dive-out trigger).
+		const outEdges = layout.portals.filter((p) => p.kind === 'out').map((p) => p.dir).sort()
+		if (outEdges.join(',') !== gateEdges.join(',')) {
+			violations.push(`${at}: OUT doorways [${outEdges}] don't match gates [${gateEdges}]`)
+		}
 
 		// 6. Child extent exactly fills the slot.
 		if (

@@ -2,7 +2,7 @@
  * LEVEL MANAGER tests — push/pop stack behaviour and the child cache.
  */
 import { describe, it, expect } from 'vitest'
-import { LevelManager, submapKey, type LevelState } from '../levelManager'
+import { LevelManager, submapKey, walkableRects, type LevelState } from '../levelManager'
 import type { MapLayout } from '../mapGeometry'
 
 /** A bare layout stub — the manager only stores it, never inspects its rects. */
@@ -14,6 +14,7 @@ function stubLayout(): MapLayout<string> {
 		spawnRect: { x: 0, y: 0, w: 10, h: 10 },
 		submaps: [],
 		gates: [],
+		portals: [],
 	}
 }
 
@@ -66,5 +67,22 @@ describe('LevelManager', () => {
 	it('throws if asked for current before any level is pushed', () => {
 		const m = new LevelManager<string>()
 		expect(() => m.current()).toThrow()
+	})
+})
+
+describe('walkableRects', () => {
+	it('includes floor (rooms/doors/gates) but EXCLUDES portal-doorway markers', () => {
+		const layout = stubLayout()
+		layout.rects = [
+			{ id: 'room', kind: 'room', x: 0, y: 0, w: 10, h: 10, props: {} },
+			{ id: 'door', kind: 'door', x: 10, y: 3, w: 4, h: 4, props: {} },
+			{ id: 'gate', kind: 'gate', x: 20, y: 0, w: 10, h: 10, props: {} },
+			{ id: 'portal', kind: 'portal', x: 8, y: 3, w: 2, h: 4, props: {} },
+		]
+		const level: LevelState<string> = { depth: 0, layout, roomSize: 10, gap: 2, originX: 0, originY: 0, parentDepth: null }
+		const walkable = walkableRects(level)
+		expect(walkable).toHaveLength(3) // the portal is dropped
+		// The portal rect's footprint is not present in the walkable set.
+		expect(walkable.some((r) => r.x === 8 && r.w === 2)).toBe(false)
 	})
 })

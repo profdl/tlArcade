@@ -143,6 +143,16 @@ describe('validateWorldTree — catches broken worlds (not vacuously green)', ()
 		expect(violations.some((v) => v.includes("don't match tunnels"))).toBe(true)
 	})
 
+	it('flags a missing OUT portal-doorway (a gate with no dive-out trigger)', () => {
+		const { root, tree } = buildWorld(42)
+		const broken = structuredClone(tree)
+		const idx = broken[0].layout.portals.findIndex((p) => p.kind === 'out')
+		expect(idx, 'expected the depth-1 child to have an OUT doorway').toBeGreaterThanOrEqual(0)
+		broken[0].layout.portals.splice(idx, 1)
+		const violations = validateWorldTree(root, broken, childGrid)
+		expect(violations.some((v) => v.includes('OUT doorways'))).toBe(true)
+	})
+
 	it('flags a gate off the edge-middle (disconnected from the tunnel centreline)', () => {
 		const { root, tree } = buildWorld(42)
 		const broken = structuredClone(tree)

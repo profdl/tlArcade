@@ -3,11 +3,13 @@
 A top-down movement demo about travelling between **scales**. The world is a
 grid whose cells **alternate between rooms and free-standing small-maps**: a
 small-map cell has no room around it — a whole tiny map just sits there, and
-the tunnels from neighbouring rooms flow straight into its **gates, one per
-tunnel**. Walk a tunnel to its end and the camera dives in; you arrive at the
-gate facing the tunnel you came through. Step onto any gate and you dive back
-out into that gate's tunnel, walking on toward the next room. Travel literally
-alternates room → small-map → room.
+the tunnels from neighbouring rooms flow straight into it. Where a tunnel meets
+a small-map sits an **orange portal-doorway** on the boundary — a small
+rectangle, NOT a whole room. Walk a tunnel onto a doorway and the camera dives
+in; you arrive at the **centre of the matching doorway** inside the small-map,
+facing the tunnel you came through. Walk onto any doorway inside a small-map and
+you dive back out to the centre of its doorway in the tunnel above, walking on
+toward the next room. Travel literally alternates room → small-map → room.
 
 **The nesting goes 4 scales deep, one colour per scale.** A small-map isn't a
 dead end — it's a map with its OWN small-maps in it, so you can dive again, and
@@ -26,9 +28,9 @@ inequality — bump `ZOOM_CEILING` to nest deeper still.
 ## Controls
 
 - **WASD** or **arrow keys** — move the red player.
-- Walk a tunnel to its end (into the tiny map) to dive in.
-- Inside a small-map, walk onto any **gate** (a room at a tunnel mouth) to
-  dive back out toward that gate's tunnel.
+- Walk a tunnel onto the **orange portal-doorway** at its mouth to dive in.
+- Inside a small-map, walk onto any **portal-doorway** (orange, on the boundary
+  at a tunnel mouth) to dive back out toward that doorway's tunnel.
 
 ## How it works
 
@@ -61,9 +63,21 @@ inequality — bump `ZOOM_CEILING` to nest deeper still.
   per door direction of its host cell (1–4 gates, straight or bent — e.g. a
   bend joins a west tunnel to a north tunnel). A gate is just a room at a
   tunnel mouth — it takes its own map's colour, so a whole map reads as one
-  colour; its POSITION is what marks it. Arrival gate = the side
-  you touched the slot from; any gate dives you back out toward its own
-  tunnel. The pairing is geometric, so entrances and exits can't get mixed up.
+  colour. The gate is the walkable landing room; the dive is triggered by the
+  portal-doorway on its boundary (below). The pairing is geometric (by tunnel
+  direction), so entrances and exits can't get mixed up.
+- **Portal-doorways are the dive triggers — small rects on the boundary, not
+  whole rooms** (`PortalInfo`/`buildMapLayout` in `game/mapGeometry.ts`,
+  `portalAt`/`diveIn`/`diveOut` in `game/gameLoop.ts`). Every hallway↔small-map
+  junction gets an orange doorway (`PORTAL_PROPS`) flush on the boundary, one
+  per tunnel: an `'in'` doorway just OUTSIDE the slot (in the hallway, on the
+  host map) and an `'out'` doorway just INSIDE the gate room (on the guest map).
+  Each is offset toward its own map's walkable interior so its **centre is
+  always walkable** — you enter/exit at that centre. They are drawn but excluded
+  from collision (`walkableRects` skips kind `'portal'`): pure markers/triggers
+  laid over the floor they sit on. The tunnel direction pairs the two ends, so a
+  dive lands you on the matching doorway on the far side, and re-diving needs you
+  to step off the doorway first (arming).
 - **Nesting is purely geometric — no frames, no clipping.** Nested maps are
   written at a small scale inside their slots (`game/constants.ts` pins the
   child extent to exactly the SLOT), always visible before you enter. Room and
@@ -89,7 +103,8 @@ number reproduces the entire world. Add `?seed=<number>` to the URL to replay
 a specific world. Because worlds are random, the connection guarantees are
 enforced rather than eyeballed: `game/validateWorld.ts` states the invariants
 (one gate per tunnel, gates on tunnel centrelines, every gate strictly
-overlapping its tunnel, child extent === slot) and `validateWorldTree` applies
+overlapping its tunnel, child extent === slot, one `'in'` doorway per host
+tunnel and one `'out'` doorway per gate) and `validateWorldTree` applies
 them **recursively at every scale** (depth-2 gates against the depth-1 map's
 tunnels, and so on) — swept across 300 seeds in tests and asserted at runtime
 in dev. Nothing persists to localStorage.
@@ -100,8 +115,12 @@ Pure logic is covered by vitest (`npm test`): WFC determinism/edge-agreement
 (`wfc/__tests__`), the slot-fit nesting invariant, cell roles (no room behind
 a submap, tunnel-per-door poking into the slot, pluggable role function,
 intermediate maps carrying BOTH slots and gates), per-tunnel gate placement
-incl. bent/1-gate/4-gate combos (`game/__tests__/mapGeometry`), the recursive
-whole-tree world validation to `MAX_DEPTH` across 300 seeds — including a
-deliberately-broken gate at a DEEP scale, so the recursion isn't vacuously
-green (`game/__tests__/validateWorld`), the slide collision resolver, and the
-level stack (incl. page-position cache keys that don't collide across depths).
+incl. bent/1-gate/4-gate combos, portal-doorway placement (one `'in'` per host
+tunnel overlapping it, one orange `'out'` per gate inside the gate room)
+(`game/__tests__/mapGeometry`), the dive IN/OUT/none decision on doorways
+(`game/__tests__/portalAt`), the recursive whole-tree world validation to
+`MAX_DEPTH` across 300 seeds — including a deliberately-broken gate AND a missing
+portal at a DEEP scale, so the recursion isn't vacuously green
+(`game/__tests__/validateWorld`), the slide collision resolver (portals excluded
+from walkable floor), and the level stack (incl. page-position cache keys that
+don't collide across depths).

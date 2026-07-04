@@ -161,10 +161,11 @@ describe('child map — per-tunnel gates', () => {
 			}
 			expect(seen.size).toBe(edges.length) // all distinct
 			// Gates inherit the map's own roomProps colour (position at the tunnel mouth
-			// marks them, not a special tint), so a whole map reads as ONE colour.
+			// marks them, not a special tint), so a whole map reads as ONE colour —
+			// except portal-doorways, which are deliberately orange markers.
 			const gateRects = layout.rects.filter((r) => r.kind === 'gate')
 			expect(gateRects).toHaveLength(edges.length)
-			expect(layout.rects.every((r) => r.props.color === 'light-green')).toBe(true)
+			expect(layout.rects.filter((r) => r.kind !== 'portal').every((r) => r.props.color === 'light-green')).toBe(true)
 		}
 	})
 
@@ -233,7 +234,56 @@ describe('per-depth colour palette (one colour per zoom level)', () => {
 			roomProps: roomPropsForDepth(MAX_DEPTH, MAX_DEPTH), // the leaf scale
 		})
 		expect(layout.rects.length).toBeGreaterThan(0)
-		expect(layout.rects.every((r) => r.props.color === 'light-red')).toBe(true)
+		// Every non-portal rect takes the depth colour; portal-doorways are orange markers.
+		expect(layout.rects.filter((r) => r.kind !== 'portal').every((r) => r.props.color === 'light-red')).toBe(true)
+	})
+})
+
+describe('portal-doorways (dive triggers on the boundary, not the whole slot/gate)', () => {
+	it('host emits one IN doorway per submap tunnel, carrying its submap; no OUT doorways', () => {
+		const layout = parent()
+		const inn = layout.portals.filter((p) => p.kind === 'in')
+		const expected = layout.submaps.reduce((n, s) => n + s.doorDirs.length, 0)
+		expect(inn).toHaveLength(expected)
+		for (const p of inn) {
+			expect(p.submap).toBeDefined()
+			expect(p.submap!.doorDirs).toContain(p.dir)
+		}
+		expect(layout.portals.some((p) => p.kind === 'out')).toBe(false) // parents are host-only
+	})
+
+	it('guest (leaf) emits one OUT doorway per gate edge; no IN doorways', () => {
+		const layout = child(['W', 'E'], CHILD_SEED, 0)
+		const out = layout.portals.filter((p) => p.kind === 'out')
+		expect(out.map((p) => p.dir).sort()).toEqual(['E', 'W'])
+		expect(layout.portals.some((p) => p.kind === 'in')).toBe(false) // leaves are guest-only
+	})
+
+	it('draws every doorway as an orange rect of kind "portal"', () => {
+		const layout = child(['W', 'E'], CHILD_SEED, 0)
+		const portalRects = layout.rects.filter((r) => r.kind === 'portal')
+		expect(portalRects).toHaveLength(layout.portals.length)
+		expect(portalRects.every((r) => r.props.color === 'orange')).toBe(true)
+	})
+
+	it('every IN doorway overlaps a host tunnel, so it is reachable by walking the tunnel', () => {
+		const layout = parent()
+		const tunnels = layout.rects.filter((r) => r.kind === 'door')
+		for (const p of layout.portals.filter((p) => p.kind === 'in')) {
+			expect(tunnels.some((t) => overlaps(t, p.rect))).toBe(true)
+		}
+	})
+
+	it('every OUT doorway straddles the gate edge but keeps its CENTRE inside the gate room (walkable landing)', () => {
+		const layout = child(['W', 'E', 'N', 'S'], CHILD_SEED, 0)
+		const inside = (px: number, py: number, r: PageRect) =>
+			px >= r.x - 0.001 && px <= r.x + r.w + 0.001 && py >= r.y - 0.001 && py <= r.y + r.h + 0.001
+		for (const p of layout.portals.filter((p) => p.kind === 'out')) {
+			const gate = layout.gates.find((g) => g.edge === p.dir)!
+			const c = { x: p.rect.x + p.rect.w / 2, y: p.rect.y + p.rect.h / 2 }
+			expect(inside(c.x, c.y, gate.rect)).toBe(true) // centre is walkable gate floor
+			expect(overlaps(p.rect, gate.rect)).toBe(true) // and the doorway meets the gate
+		}
 	})
 })
 

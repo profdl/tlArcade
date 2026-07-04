@@ -47,8 +47,33 @@ export const DOOR_OVERLAP = 0.1
 /** The doorway's mouth width, as a fraction of the room side. */
 export const DOOR_MOUTH = 0.34
 
+/**
+ * PORTAL-DOORWAYS. The dive trigger is NOT the whole slot/gate any more — it's a small
+ * orange rect drawn like a door in a FLOORPLAN: a narrow opening set in the wall on the
+ * boundary between a submap and its hallway. Each doorway is sized to its OWN map's room
+ * (a host 'in' door to the parent room, a guest 'out' door to the child room), so it
+ * reads as a proper door at that scale, and — crucially — its CENTRE lands on that map's
+ * walkable floor, since that centre is exactly where a dive drops the arriving player.
+ *
+ * Geometry, all fractions of the owning map's room:
+ *   • PORTAL_MOUTH — the door opening, across the tunnel. Narrow (< DOOR_MOUTH), like a
+ *     real doorway rather than a wall-wide band.
+ *   • PORTAL_REACH — how far the door reaches into the owning map's walkable INTERIOR.
+ *   • PORTAL_CROSS — how far it overhangs ACROSS the boundary onto the far side, so it
+ *     reads as sitting on the wall line.
+ * REACH > CROSS by more than the player's half-width (PLAYER_FRACTION/2 = 0.06), so the
+ * rect's centre sits far enough inside the interior that the whole player lands on
+ * walkable floor, clear of the non-walkable boundary. (Kept as bare fractions, not
+ * imported from constants.ts, so this module stays constants-free and unit-testable.)
+ */
+export const PORTAL_MOUTH = 0.25
+export const PORTAL_REACH = 0.2
+export const PORTAL_CROSS = 0.04
+
 export const ROOM_PROPS = { geo: 'rectangle', color: 'blue', fill: 'fill' } as const
 export const CHILD_ROOM_PROPS = { geo: 'rectangle', color: 'light-green', fill: 'fill' } as const
+/** Portal-doorways are always orange (a marker over walkable floor), at every depth. */
+export const PORTAL_PROPS = { geo: 'rectangle', color: 'orange', fill: 'fill' } as const
 
 /**
  * ONE COLOUR PER ZOOM LEVEL, so you can tell at a glance how deep you are. Depth 0
@@ -71,7 +96,7 @@ export function roomPropsForDepth(depth: number, maxDepth: number): Record<strin
 	return { geo: 'rectangle', color: colorForDepth(depth, maxDepth), fill: 'fill' }
 }
 
-export type RoomRectKind = 'room' | 'door' | 'gate'
+export type RoomRectKind = 'room' | 'door' | 'gate' | 'portal'
 
 export type RoomRect<Id> = {
 	id: Id
@@ -94,6 +119,23 @@ export type SubmapInfo = { cell: GridCell; slotRect: PageRect; doorDirs: Dir[] }
 /** A child map's in/out room: which edge it faces (= the tunnel it pairs with). */
 export type GateInfo = { edge: Dir; cell: GridCell; rect: PageRect }
 
+/**
+ * A portal-doorway: the small orange rect that triggers a dive (and marks where you
+ * land). `dir` is the tunnel direction that pairs the two ends of one connection.
+ *   • kind 'in'  — on a HOST map, at a submap's tunnel mouth (dive IN here; also the
+ *     landing spot when you dive OUT of that submap). Carries the `submap` to descend into.
+ *   • kind 'out' — on a GUEST map, at a gate (dive OUT here; also the landing spot when
+ *     you dive IN to this map through the matching tunnel).
+ */
+export type PortalInfo = {
+	kind: 'in' | 'out'
+	dir: Dir
+	/** The orange doorway rect on the boundary. Trigger + marker, and its CENTRE is the
+	 *  walkable point a dive drops the arriving player onto. */
+	rect: PageRect
+	submap?: SubmapInfo
+}
+
 export type MapLayout<Id> = {
 	rects: RoomRect<Id>[]
 	extent: { w: number; h: number }
@@ -104,6 +146,8 @@ export type MapLayout<Id> = {
 	submaps: SubmapInfo[]
 	/** Child maps: one gate per host-cell door direction. Empty for parents. */
 	gates: GateInfo[]
+	/** Portal-doorways: 'in' at each submap tunnel mouth (hosts), 'out' at each gate (guests). */
+	portals: PortalInfo[]
 }
 
 /** Total page-space size of a `width x height` grid at the given room size/gap. */
@@ -395,6 +439,39 @@ export function buildMapLayout<Id>(
 		}
 	}
 
+	// 3) PORTAL-DOORWAYS — the small orange rects that trigger a dive and mark where you
+	//    land. A HOST emits one 'in' doorway per submap tunnel, straddling the slot edge
+	//    but reaching into the hallway (parent-walkable); a GUEST emits one 'out' doorway
+	//    per gate, straddling the child edge but reaching into the gate room (child-
+	//    walkable). Both are drawn (added to `rects`) but excluded from collision
+	//    (walkableRects skips kind 'portal') — pure markers over existing floor. Each
+	//    rect's CENTRE is where the arriving player is placed, so it must land on walkable
+	//    floor: REACH exceeds CROSS by > the player half-width, keeping the centre inside.
+	const reach = roomSize * PORTAL_REACH
+	const cross = roomSize * PORTAL_CROSS
+	const thick = reach + cross
+	const portalMouth = roomSize * PORTAL_MOUTH
+	/** Doorway rect straddling `box`'s `edge`: reaches `reach` into the OWNING interior and
+	 *  overhangs `cross` across the boundary onto the far side (so it reads as one door on
+	 *  the line, its centre still on the walkable interior). `outward` true → the interior
+	 *  is OUTSIDE the box (host slot → hallway); false → INSIDE the box (guest gate room). */
+	const doorway = (box: PageRect, edge: Dir, outward: boolean): PageRect => {
+		const cx = box.x + box.w / 2
+		const cy = box.y + box.h / 2
+		if (edge === 'W') return { x: (outward ? box.x - reach : box.x - cross), y: cy - portalMouth / 2, w: thick, h: portalMouth }
+		if (edge === 'E') return { x: (outward ? box.x + box.w - cross : box.x + box.w - reach), y: cy - portalMouth / 2, w: thick, h: portalMouth }
+		if (edge === 'N') return { x: cx - portalMouth / 2, y: (outward ? box.y - reach : box.y - cross), w: portalMouth, h: thick }
+		return { x: cx - portalMouth / 2, y: (outward ? box.y + box.h - cross : box.y + box.h - reach), w: portalMouth, h: thick }
+	}
+	const portals: PortalInfo[] = []
+	for (const submap of submaps) {
+		for (const dir of submap.doorDirs) portals.push({ kind: 'in', dir, rect: doorway(submap.slotRect, dir, true), submap })
+	}
+	for (const gate of gates) {
+		portals.push({ kind: 'out', dir: gate.edge, rect: doorway(cellRect(gate.cell), gate.edge, false) })
+	}
+	for (const p of portals) rects.push({ id: newId(), kind: 'portal', x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h, props: PORTAL_PROPS })
+
 	return {
 		rects,
 		extent: roomExtent(width, height, roomSize, gap),
@@ -402,5 +479,6 @@ export function buildMapLayout<Id>(
 		spawnRect: cellRect(spawnCell),
 		submaps,
 		gates,
+		portals,
 	}
 }

@@ -8,11 +8,12 @@
  * The world ALTERNATES rooms with free-standing small-maps (the cell-role model,
  * see mapGeometry.ts); each scale has its own colour (blue → green → light-red at the
  * smallest, roomPropsForDepth): a submap cell renders no room — its nested child map sits in
- * the cell's SLOT, and the parent's tunnels run right up to (and a few px into) the
- * slot. Walking to the end of such a tunnel overlaps the slot and dives you in,
- * arriving at the GATE facing the side you came from. Stepping onto ANY gate
- * dives you back out into that gate's tunnel — deterministic 1:1 tunnel↔gate pairing,
- * no entrance/exit roles.
+ * the cell's SLOT, and the parent's tunnels run right up to it. On the boundary at each
+ * tunnel mouth sits a small orange PORTAL-DOORWAY. Walking onto an 'in' doorway (in the
+ * hallway) dives you in, landing at the CENTRE of the matching 'out' doorway inside the
+ * child (in the gate room facing the tunnel you came from). Walking onto an 'out' doorway
+ * dives you back out to the centre of its 'in' doorway in the tunnel above — deterministic
+ * 1:1 pairing by tunnel direction, no entrance/exit roles.
  *
  * `editor.zoomToBounds` on a map's bounds IS the dive effect — no frames, no clipping.
  * Camera animations are non-blocking, so a held key keeps moving the player as the
@@ -43,11 +44,10 @@ import {
 	ZOOM_INSET,
 } from './constants.ts'
 import { aabbOverlaps, resolveMove, type AABB } from './collision.ts'
-import { buildMapLayout, childSeedFor, roomPropsForDepth, type GateInfo, type MapLayout, type PageRect, type SubmapInfo } from './mapGeometry.ts'
+import { buildMapLayout, childSeedFor, roomPropsForDepth, type MapLayout, type PageRect, type PortalInfo, type SubmapInfo } from './mapGeometry.ts'
 import { validateWorldTree, type WorldNode } from './validateWorld.ts'
 import { LevelManager, submapKey, walkableRects, type LevelState } from './levelManager.ts'
 import type { KeyState } from './keys.ts'
-import type { Dir } from '../wfc/tiles.ts'
 import { createPlayer, getPlayerAABB, PLAYER_SHAPE_ID, setPlayerPosition, setPlayerRect } from './player.ts'
 
 /**
@@ -82,39 +82,27 @@ function centre(r: PageRect): { x: number; y: number } {
 }
 
 export type PortalHit =
-	| { kind: 'out'; gate: GateInfo }
-	| { kind: 'in'; submap: SubmapInfo }
+	| { kind: 'in' | 'out'; portal: PortalInfo }
 	| { kind: 'none' }
 
 /**
- * Which portal (if any) the player is standing on — PURE, so it's unit-testable without
- * an editor. A level can be BOTH host and guest at once (an intermediate map has gates
- * to leave by AND submap slots to descend into), so we check BOTH, not one-or-the-other.
- * Gate (dive OUT) wins ties: you ARRIVE standing on a gate, whereas a slot is only reached
- * by walking a tunnel to its dead end — and gate cells vs submap cells never coincide
- * anyway (gates force role 'room'), so a genuine tie shouldn't occur.
+ * Which portal-doorway (if any) the player is standing on — PURE, so it's unit-testable
+ * without an editor. A level can be BOTH host and guest at once (an intermediate map has
+ * 'out' doorways to leave by AND 'in' doorways to descend into), so we check BOTH.
+ * 'out' wins ties: you ARRIVE standing on a doorway, and an 'out' doorway (inside a gate
+ * room) vs an 'in' doorway (out in a hallway) never coincide anyway.
  */
 export function portalAt<Id>(layout: MapLayout<Id>, player: AABB): PortalHit {
-	const gate = layout.gates.find((g) => aabbOverlaps(player, g.rect))
-	if (gate) return { kind: 'out', gate }
-	const submap = layout.submaps.find((s) => aabbOverlaps(player, s.slotRect))
-	if (submap) return { kind: 'in', submap }
+	const out = layout.portals.find((p) => p.kind === 'out' && aabbOverlaps(player, p.rect))
+	if (out) return { kind: 'out', portal: out }
+	const inn = layout.portals.find((p) => p.kind === 'in' && aabbOverlaps(player, p.rect))
+	if (inn) return { kind: 'in', portal: inn }
 	return { kind: 'none' }
 }
 
 /** A fresh 32-bit world seed — a NEW map every game start. */
 export function randomWorldSeed(): number {
 	return (Math.random() * 0x100000000) >>> 0
-}
-
-/** Which side of `rect` the point is off toward — the dominant axis of the offset from
- *  the rect's centre. Used to turn "where the player touched a slot" into a gate edge. */
-function approachSide(px: number, py: number, rect: PageRect): Dir {
-	const c = centre(rect)
-	const dx = px - c.x
-	const dy = py - c.y
-	if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? 'W' : 'E'
-	return dy < 0 ? 'N' : 'S'
 }
 
 /** Write a level's rects to the store in one history-ignored batch. `toBack` sends them
@@ -254,7 +242,12 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 	// dive already framed the player), the per-tick follow resumes seamlessly.
 	let followHoldMs = 0
 
-	function diveIn(submap: SubmapInfo): void {
+	// Dive IN through an 'in' doorway: descend into its submap, LANDING on the child's
+	// matching 'out' doorway (same tunnel direction) — its centre sits in the gate room,
+	// child-walkable. Fallbacks: the gate centre, then the slot centre.
+	function diveIn(portal: PortalInfo): void {
+		const submap = portal.submap
+		if (!submap) return
 		const from = manager.current()
 		// Every reachable submap is built eagerly, so the cache always hits; the fallback
 		// builds it (and its subtree) on demand — buildChildInSlot caches by slot, so we
@@ -262,13 +255,9 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		if (!manager.getCachedChild(submapKey(submap.slotRect))) buildChildInSlot(from, submap)
 		const child = manager.getCachedChild(submapKey(submap.slotRect))!
 		manager.pushChild(child)
-		// Arrive at the gate FACING the tunnel you came through: the player touched the
-		// slot on some side; that side's gate is the pairing. Fallback (shouldn't happen
-		// — a tunnel implies a door implies a gate): the first gate.
-		const player = getPlayerAABB(editor)
-		const side = approachSide(player.x + player.w / 2, player.y + player.h / 2, submap.slotRect)
-		const gate = child.layout.gates.find((g) => g.edge === side) ?? child.layout.gates[0]
-		const dest = gate ? centre(gate.rect) : centre(submap.slotRect)
+		const outPortal = child.layout.portals.find((p) => p.kind === 'out' && p.dir === portal.dir)
+		const gate = child.layout.gates.find((g) => g.edge === portal.dir)
+		const dest = outPortal ? centre(outPortal.rect) : gate ? centre(gate.rect) : centre(submap.slotRect)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(child.roomSize))
 		editor.bringToFront([PLAYER_SHAPE_ID])
 		frameLevel(editor, child, dest.x, dest.y, ZOOM_DURATION_MS)
@@ -276,26 +265,34 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		triggerArmed = false
 	}
 
-	function diveOut(gate: GateInfo): void {
+	// Dive OUT through an 'out' doorway: pop to the parent, LANDING on the parent's
+	// matching 'in' doorway (same submap + tunnel direction) — its centre sits in the
+	// hallway, parent-walkable. Fallback (no matching portal): just outside the slot edge
+	// on the tunnel centreline, the pre-doorway behaviour.
+	function diveOut(portal: PortalInfo): void {
 		const child = manager.current()
 		const parentLevel = manager.popToParent()
 		if (!parentLevel || !child.parentSlotRect) return
-		// Emerge just OUTSIDE the slot in this gate's tunnel: offset from the slot edge
-		// along the gate's axis by half the parent-size player plus a small margin,
-		// centred on the tunnel's centreline (the cell centreline). The tunnel mouth
-		// (~82px) comfortably fits the parent player (~29px).
 		const slot = child.parentSlotRect
 		const size = playerSizeFor(parentLevel.roomSize)
-		const margin = size / 2 + 6
-		const c = centre(slot)
-		const dest =
-			gate.edge === 'W'
-				? { x: slot.x - margin, y: c.y }
-				: gate.edge === 'E'
-					? { x: slot.x + slot.w + margin, y: c.y }
-					: gate.edge === 'N'
-						? { x: c.x, y: slot.y - margin }
-						: { x: c.x, y: slot.y + slot.h + margin }
+		const inPortal = parentLevel.layout.portals.find(
+			(p) => p.kind === 'in' && p.dir === portal.dir && p.submap != null && submapKey(p.submap.slotRect) === submapKey(slot)
+		)
+		let dest: { x: number; y: number }
+		if (inPortal) {
+			dest = centre(inPortal.rect)
+		} else {
+			const margin = size / 2 + 6
+			const c = centre(slot)
+			dest =
+				portal.dir === 'W'
+					? { x: slot.x - margin, y: c.y }
+					: portal.dir === 'E'
+						? { x: slot.x + slot.w + margin, y: c.y }
+						: portal.dir === 'N'
+							? { x: c.x, y: slot.y - margin }
+							: { x: c.x, y: slot.y + slot.h + margin }
+		}
 		setPlayerRect(editor, dest.x, dest.y, size)
 		editor.bringToFront([PLAYER_SHAPE_ID])
 		frameLevel(editor, parentLevel, dest.x, dest.y, ZOOM_DURATION_MS)
@@ -326,14 +323,15 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		else editor.centerOnPoint({ x: player.x + player.w / 2, y: player.y + player.h / 2 })
 
 		const portal = portalAt(level.layout, player)
-		// A trigger only fires once you've STEPPED OFF every portal since arriving — so
-		// landing on a gate (dive-out arrival) or beside a slot doesn't instantly re-fire.
+		// A trigger only fires once you've STEPPED OFF every doorway since arriving — so
+		// landing ON a doorway (every dive lands you on the destination doorway's centre)
+		// doesn't instantly re-fire; you must step off and walk back onto it.
 		if (!triggerArmed) {
 			if (portal.kind === 'none') triggerArmed = true
 			return
 		}
-		if (portal.kind === 'out') diveOut(portal.gate)
-		else if (portal.kind === 'in') diveIn(portal.submap)
+		if (portal.kind === 'out') diveOut(portal.portal)
+		else if (portal.kind === 'in') diveIn(portal.portal)
 	}
 
 	editor.on('tick', onTick)
