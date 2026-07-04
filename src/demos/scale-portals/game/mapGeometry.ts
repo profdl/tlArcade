@@ -15,7 +15,8 @@
  */
 import { collapse } from '../wfc/collapse.ts'
 import { pruneAndConnect, type Present } from '../wfc/connectivity.ts'
-import { DELTA, type Dir } from '../wfc/tiles.ts'
+import { DELTA, DIRS, type Dir } from '../wfc/tiles.ts'
+import type { TileGrid } from '../wfc/collapse.ts'
 
 /** How far (fraction of the room) a doorway pokes into each room it connects. */
 export const DOOR_OVERLAP = 0.1
@@ -52,6 +53,10 @@ export type MapLayout<Id> = {
 	special: 'portal' | 'exit'
 	specialCell: GridCell
 	specialRect: PageRect
+	/** Directions in which the special cell has a door to a present neighbour — i.e. the
+	 *  side(s) a tunnel enters this room. Lets a child map align its exit to the parent
+	 *  tunnel so the two connect for a smooth transition. */
+	specialDoorDirs: Dir[]
 }
 
 /** Total page-space size of a `width x height` grid at the given room size/gap. */
@@ -86,11 +91,47 @@ function farthestPresentCell(present: Present, width: number, height: number, fr
 	return best
 }
 
+/**
+ * The present cell on grid `edge`, nearest the centre of that edge. Used to place a
+ * child map's exit on the side facing the parent tunnel, so it lines up with the tunnel
+ * mouth. Falls back to the nearest present cell if that whole edge was pruned away.
+ */
+function cellOnEdge(present: Present, width: number, height: number, edge: Dir): GridCell {
+	const line: GridCell[] =
+		edge === 'W'
+			? Array.from({ length: height }, (_, y) => ({ x: 0, y }))
+			: edge === 'E'
+				? Array.from({ length: height }, (_, y) => ({ x: width - 1, y }))
+				: edge === 'N'
+					? Array.from({ length: width }, (_, x) => ({ x, y: 0 }))
+					: Array.from({ length: width }, (_, x) => ({ x, y: height - 1 }))
+	const centre = edge === 'W' || edge === 'E' ? (height - 1) / 2 : (width - 1) / 2
+	const axis = (c: GridCell) => (edge === 'W' || edge === 'E' ? c.y : c.x)
+	const onEdge = line.filter((c) => present[c.y][c.x]).sort((a, b) => Math.abs(axis(a) - centre) - Math.abs(axis(b) - centre))
+	return onEdge[0] ?? firstPresentCell(present, width, height)
+}
+
+/** The directions in which cell `(cx,cy)` has a door to a PRESENT in-grid neighbour. */
+function doorDirsOf(grid: TileGrid, present: Present, width: number, height: number, cx: number, cy: number): Dir[] {
+	return DIRS.filter((dir) => {
+		if (grid[cy][cx].edges[dir] !== 'door') return false
+		const nx = cx + DELTA[dir].dx
+		const ny = cy + DELTA[dir].dy
+		return nx >= 0 && nx < width && ny >= 0 && ny < height && present[ny][nx]
+	})
+}
+
 export type BuildMapLayoutOptions = {
 	/** Fraction of rooms to randomly remove (kept 4-connected) — see pruneAndConnect. */
 	removeProb?: number
-	/** 'portal': mark the cell farthest from spawn. 'exit': mark the spawn cell itself. */
+	/** 'portal': mark the cell farthest from spawn. 'exit': the spawn/exit room. */
 	special: 'portal' | 'exit'
+	/**
+	 * For an exit map: which grid edge the exit (and spawn) room should sit on — set to
+	 * the side the parent tunnel enters from, so the exit lines up with it. When omitted,
+	 * the exit is just the default spawn cell.
+	 */
+	exitEdge?: Dir
 	/** Room fill/color for normal rooms + doorways at this depth. Defaults to ROOM_PROPS. */
 	roomProps?: Record<string, unknown>
 }
@@ -119,9 +160,19 @@ export function buildMapLayout<Id>(
 	const roomX = (x: number) => originX + x * pitch
 	const roomY = (y: number) => originY + y * pitch
 
-	const spawnCell = firstPresentCell(present, width, height)
-	const specialCell =
-		opts.special === 'exit' ? spawnCell : farthestPresentCell(present, width, height, spawnCell)
+	// The exit room is also where the player emerges (spawn === exit), so it sits right
+	// at the parent tunnel when exitEdge is given. The portal case keeps spawn at the
+	// first present cell and marks the farthest room as the portal.
+	const defaultSpawn = firstPresentCell(present, width, height)
+	let specialCell: GridCell
+	let spawnCell: GridCell
+	if (opts.special === 'exit') {
+		specialCell = opts.exitEdge ? cellOnEdge(present, width, height, opts.exitEdge) : defaultSpawn
+		spawnCell = specialCell
+	} else {
+		spawnCell = defaultSpawn
+		specialCell = farthestPresentCell(present, width, height, defaultSpawn)
+	}
 
 	const cellRect = (cell: GridCell): PageRect => ({ x: roomX(cell.x), y: roomY(cell.y), w: roomSize, h: roomSize })
 
@@ -175,5 +226,6 @@ export function buildMapLayout<Id>(
 		special: opts.special,
 		specialCell,
 		specialRect: cellRect(specialCell),
+		specialDoorDirs: doorDirsOf(grid, present, width, height, specialCell.x, specialCell.y),
 	}
 }

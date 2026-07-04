@@ -15,6 +15,7 @@ function stubLayout(): MapLayout<string> {
 		special: 'portal',
 		specialCell: { x: 2, y: 2 },
 		specialRect: { x: 20, y: 20, w: 10, h: 10 },
+		specialDoorDirs: [],
 	}
 }
 

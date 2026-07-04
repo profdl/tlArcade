@@ -61,6 +61,35 @@ describe('buildMapLayout', () => {
 		expect(layout.specialCell).toEqual(layout.spawnCell)
 	})
 
+	it('places the exit on the requested edge so it faces the parent tunnel', () => {
+		// exitEdge:'W' → exit must be in column x=0; the player spawns there too so it
+		// emerges at the tunnel seam. 'E' → column x=width-1.
+		const west = buildMapLayout(counter(), CHILD_W, CHILD_H, CHILD_SEED, 0, 0, CHILD_ROOM, CHILD_GAP, {
+			removeProb: 0.2,
+			special: 'exit',
+			exitEdge: 'W',
+		})
+		expect(west.specialCell.x).toBe(0)
+		expect(west.spawnCell).toEqual(west.specialCell)
+
+		const east = buildMapLayout(counter(), CHILD_W, CHILD_H, CHILD_SEED, 0, 0, CHILD_ROOM, CHILD_GAP, {
+			removeProb: 0.2,
+			special: 'exit',
+			exitEdge: 'E',
+		})
+		expect(east.specialCell.x).toBe(CHILD_W - 1)
+	})
+
+	it('reports the door directions of the special cell (the tunnel sides)', () => {
+		const layout = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
+			removeProb: 0,
+			special: 'portal',
+		})
+		// The portal is reachable, so it has at least one door to a present neighbour.
+		expect(layout.specialDoorDirs.length).toBeGreaterThan(0)
+		expect(layout.specialDoorDirs.every((d) => ['N', 'E', 'S', 'W'].includes(d))).toBe(true)
+	})
+
 	it('is deterministic for a fixed seed', () => {
 		const a = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, { removeProb: 0, special: 'portal' })
 		const b = buildMapLayout(counter(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, { removeProb: 0, special: 'portal' })

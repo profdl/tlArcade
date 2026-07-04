@@ -108,9 +108,15 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		const portal = parentLevel.layout.specialRect
 		const originX = portal.x + (portal.w - childExtent.w) / 2
 		const originY = portal.y + (portal.h - childExtent.h) / 2
+		// Put the child's exit/spawn room on the side the parent tunnel enters from, so it
+		// lines up with the tunnel mouth (the child map is centred in the portal room, so
+		// its edge cell on that side sits right where the tunnel pokes in) — a smooth,
+		// connected seam between the two maps.
+		const tunnelDir = parentLevel.layout.specialDoorDirs[0]
 		const layout = buildMapLayout(() => createShapeId(), CHILD_W, CHILD_H, CHILD_SEED, originX, originY, CHILD_ROOM, CHILD_GAP, {
 			removeProb: CHILD_REMOVE_PROB,
 			special: 'exit',
+			exitEdge: tunnelDir,
 			roomProps: CHILD_ROOM_PROPS,
 		})
 		const child: LevelState<TLShapeId> = {
