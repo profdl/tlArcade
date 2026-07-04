@@ -1,0 +1,52 @@
+.switcher {
+	min-height: 100vh;
+	box-sizing: border-box;
+	padding: 48px 24px;
+	font-family: ui-sans-serif, system-ui, sans-serif;
+	background: #fafafa;
+}
+
+.switcher-title {
+	margin: 0 0 4px;
+	font-size: 32px;
+}
+
+.switcher-sub {
+	margin: 0 0 32px;
+	color: #666;
+}
+
+.switcher-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 16px;
+	max-width: 960px;
+}
+
+.switcher-card {
+	display: block;
+	padding: 16px;
+	border: 1px solid #e5e5e5;
+	border-radius: 10px;
+	background: #fff;
+	text-decoration: none;
+	color: inherit;
+	transition: box-shadow 0.12s ease, transform 0.12s ease;
+}
+
+.switcher-card:hover {
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+	transform: translateY(-2px);
+}
+
+.switcher-card-title {
+	margin: 0 0 8px;
+	font-size: 16px;
+}
+
+.switcher-card-blurb {
+	margin: 0;
+	font-size: 13px;
+	color: #666;
+	line-height: 1.4;
+}
