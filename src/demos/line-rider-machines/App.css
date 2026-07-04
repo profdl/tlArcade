@@ -1,12 +1,12 @@
-.lr-root {
+.lrm-root {
 	position: fixed;
 	inset: 0;
 }
 
-/* Stacking: canvas < sled (.lr-sled-svg, 300) < control panel (.lr-panel, 400).
+/* Stacking: canvas < sled (.lrm-sled-svg, 300) < control panel (.lrm-panel, 400).
    The sled is an SVG overlay spanning the viewport; the rider rig's polygon and
    lead-point dot are positioned in screen space each frame by the rAF loop. */
-.lr-sled-svg {
+.lrm-sled-svg {
 	position: absolute;
 	inset: 0;
 	width: 100%;
@@ -17,7 +17,7 @@
 }
 /* The snail character. The rAF loop sets its transform; we just lift it off the
    track with a soft shadow so it reads as sitting ON the line, not behind it. */
-.lr-snail {
+.lrm-snail {
 	filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
 }
 
@@ -25,7 +25,7 @@
    player can see (and aim) where the snail will drop from. non-scaling-stroke
    keeps the dot size constant on screen even though the group scales with zoom,
    so the dots stay crisp while the ring tracks the snail's size. */
-.lr-start-ring {
+.lrm-start-ring {
 	fill: none;
 	stroke: #5fa463;
 	stroke-width: 4;
@@ -34,7 +34,7 @@
 	vector-effect: non-scaling-stroke;
 }
 
-.lr-panel {
+.lrm-panel {
 	position: absolute;
 	top: 8px;
 	left: 50%;
@@ -53,7 +53,7 @@
 	pointer-events: auto;
 }
 
-.lr-btn {
+.lrm-btn {
 	border: 1px solid #d4d4d4;
 	background: #fff;
 	border-radius: 7px;
@@ -66,42 +66,42 @@
 	cursor: pointer;
 	transition: all 0.12s ease;
 }
-.lr-btn:hover:not(:disabled) {
+.lrm-btn:hover:not(:disabled) {
 	background: #f4f4f5;
 }
-.lr-btn:disabled {
+.lrm-btn:disabled {
 	opacity: 0.45;
 	cursor: not-allowed;
 }
-.lr-play {
+.lrm-play {
 	background: #2f9e44;
 	color: #fff;
 	border-color: #2f9e44;
 }
-.lr-stop {
+.lrm-stop {
 	background: #e03131;
 	color: #fff;
 	border-color: #e03131;
 }
-.lr-active {
+.lrm-active {
 	background: #e7f5ff;
 	border-color: #4263eb;
 }
 
-.lr-stat {
+.lrm-stat {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	min-width: 34px;
 	line-height: 1.1;
 }
-.lr-stat b {
+.lrm-stat b {
 	font-size: 11px;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 	color: #333;
 }
-.lr-stat small {
+.lrm-stat small {
 	font-size: 8px;
 	text-transform: uppercase;
 	letter-spacing: 0.4px;
@@ -111,7 +111,7 @@
 /* Drag-and-drop tray: a left-side rail of track-piece presets. Sits below the
    panel's z-index band conceptually but needs its own stacking context so
    drop targets on the canvas don't intercept its pointer events. */
-.lr-tray {
+.lrm-tray {
 	position: absolute;
 	top: 56px;
 	left: 8px;
@@ -128,7 +128,7 @@
 	font-family: ui-sans-serif, system-ui, sans-serif;
 	pointer-events: auto;
 }
-.lr-tray-item {
+.lrm-tray-item {
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -138,15 +138,15 @@
 	user-select: none;
 	touch-action: none;
 }
-.lr-tray-item:hover {
+.lrm-tray-item:hover {
 	background: #f4f4f5;
 }
-.lr-tray-item small {
+.lrm-tray-item small {
 	font-size: 10px;
 	color: #555;
 	white-space: nowrap;
 }
-.lr-tray-swatch {
+.lrm-tray-swatch {
 	width: 22px;
 	height: 12px;
 	border-radius: 3px;
@@ -154,7 +154,7 @@
 	flex-shrink: 0;
 }
 /* Follows the cursor once a drag leaves the tray bounds; hidden otherwise. */
-.lr-tray-preview {
+.lrm-tray-preview {
 	display: none;
 	position: absolute;
 	left: 0;
@@ -172,7 +172,7 @@
 }
 
 /* Legend drops below the control panel, sharing its card styling. */
-.lr-legend {
+.lrm-legend {
 	position: absolute;
 	top: 46px;
 	left: 50%;
@@ -188,41 +188,41 @@
 	font-family: ui-sans-serif, system-ui, sans-serif;
 	pointer-events: auto;
 }
-.lr-legend-title {
+.lrm-legend-title {
 	font-size: 10px;
 	font-weight: 600;
 	color: #666;
 	margin-bottom: 6px;
 }
-.lr-legend-row {
+.lrm-legend-row {
 	display: flex;
 	align-items: center;
 	gap: 6px;
 	padding: 2px 0;
 }
-.lr-legend-row b {
+.lrm-legend-row b {
 	font-size: 11px;
 	font-weight: 600;
 	color: #333;
 	min-width: 72px;
 }
-.lr-legend-row small {
+.lrm-legend-row small {
 	font-size: 10px;
 	color: #999;
 }
-.lr-legend-swatches {
+.lrm-legend-swatches {
 	display: inline-flex;
 	gap: 2px;
 	width: 30px;
 	flex-shrink: 0;
 }
-.lr-legend-swatch {
+.lrm-legend-swatch {
 	width: 12px;
 	height: 12px;
 	border-radius: 3px;
 	border: 1px solid rgba(0, 0, 0, 0.15);
 }
-.lr-legend-note {
+.lrm-legend-note {
 	margin-top: 6px;
 	padding-top: 6px;
 	border-top: 1px solid #eee;

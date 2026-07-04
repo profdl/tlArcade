@@ -97,22 +97,22 @@ function specOf(shape: TLShape): KindSpec {
  * Create one per editor and reuse it.
  */
 export function makeSegmentsComputed(editor: Editor): Computed<TrackSegment[]> {
-	return computed('lr-track-segments', () => collectSegmentsNow(editor))
+	return computed('lrm-track-segments', () => collectSegmentsNow(editor))
 }
 
 /** Reactive view of the checkpoint boxes, bound to one editor. See makeSegmentsComputed. */
 export function makeCheckpointsComputed(editor: Editor): Computed<Checkpoint[]> {
-	return computed('lr-checkpoints', () => collectCheckpointsNow(editor))
+	return computed('lrm-checkpoints', () => collectCheckpointsNow(editor))
 }
 
 /** Reactive view of the portals, bound to one editor. See makeSegmentsComputed. */
 export function makePortalsComputed(editor: Editor): Computed<Portal[]> {
-	return computed('lr-portals', () => collectPortalsNow(editor))
+	return computed('lrm-portals', () => collectPortalsNow(editor))
 }
 
 /** Reactive view of the multipliers, bound to one editor. See makeSegmentsComputed. */
 export function makeMultipliersComputed(editor: Editor): Computed<Multiplier[]> {
-	return computed('lr-multipliers', () => collectMultipliersNow(editor))
+	return computed('lrm-multipliers', () => collectMultipliersNow(editor))
 }
 
 /**

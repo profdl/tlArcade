@@ -17,9 +17,9 @@ export function ShapeTray() {
 	const rDraggingPreview = useRef<HTMLDivElement>(null)
 
 	const editor = useEditor()
-	const playing = useValue('lr-tray-playing', () => playingAtom.get(), [])
+	const playing = useValue('lrm-tray-playing', () => playingAtom.get(), [])
 
-	const dragState = useAtom<DragState>('lr-tray-dragState', () => ({ name: 'idle' }))
+	const dragState = useAtom<DragState>('lrm-tray-dragState', () => ({ name: 'idle' }))
 
 	const { handlePointerDown, handlePointerUp } = useMemo(() => {
 		let target: HTMLDivElement | null = null
@@ -87,12 +87,12 @@ export function ShapeTray() {
 		return { handlePointerDown, handlePointerUp }
 	}, [dragState, editor])
 
-	const state = useValue('lr-tray-dragState-read', () => dragState.get(), [dragState])
+	const state = useValue('lrm-tray-dragState-read', () => dragState.get(), [dragState])
 
 	// Follow the cursor with a preview swatch once a drag has left the tray, and
 	// hide it again over the tray itself (dropping there is a no-op cancel).
 	useQuickReactor(
-		'lr-tray-drag-preview',
+		'lrm-tray-drag-preview',
 		() => {
 			const current = dragState.get()
 			const preview = rDraggingPreview.current
@@ -123,21 +123,21 @@ export function ShapeTray() {
 
 	return (
 		<>
-			<div className="lr-tray" ref={rTrayContainer}>
+			<div className="lrm-tray" ref={rTrayContainer}>
 				{TRAY_ITEMS.map((item, index) => (
 					<div
 						key={item.id}
-						className="lr-tray-item"
+						className="lrm-tray-item"
 						data-tray-item-index={index}
 						onPointerDown={handlePointerDown}
 						onPointerUp={handlePointerUp}
 					>
-						<span className="lr-tray-swatch" style={{ background: item.swatch }} />
+						<span className="lrm-tray-swatch" style={{ background: item.swatch }} />
 						<small>{item.label}</small>
 					</div>
 				))}
 			</div>
-			<div className="lr-tray-preview" ref={rDraggingPreview}>
+			<div className="lrm-tray-preview" ref={rDraggingPreview}>
 				{state.name === 'dragging' ? <span>{state.item.label}</span> : null}
 			</div>
 		</>

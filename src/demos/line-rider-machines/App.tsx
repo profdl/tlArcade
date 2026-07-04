@@ -23,7 +23,7 @@ const components: TLComponents = {
 	),
 }
 
-// A panel button that reflects an on/off state: gets the `lr-active` class and
+// A panel button that reflects an on/off state: gets the `lrm-active` class and
 // `aria-pressed` when `active`, with the title swapping to match. Collapses the
 // handful of near-identical toggle buttons (follow / mute / collisions / legend)
 // in the panel into one place.
@@ -40,7 +40,7 @@ function ToggleButton({
 }) {
 	return (
 		<button
-			className={active ? 'lr-btn lr-icon lr-active' : 'lr-btn lr-icon'}
+			className={active ? 'lrm-btn lrm-icon lrm-active' : 'lrm-btn lrm-icon'}
 			title={title}
 			aria-pressed={active}
 			onClick={onClick}
@@ -103,26 +103,26 @@ function App() {
 	}, [editor])
 
 	return (
-		<div className="lr-root">
+		<div className="lrm-root">
 			<Tldraw persistenceKey="line-rider" components={components} onMount={handleMount} />
 
-			<div className="lr-panel">
+			<div className="lrm-panel">
 				<button
-					className={playing ? 'lr-btn lr-stop' : 'lr-btn lr-play'}
+					className={playing ? 'lrm-btn lrm-stop' : 'lrm-btn lrm-play'}
 					onClick={togglePlay}
 					title={playing ? 'Pause' : 'Play'}
 				>
 					{playing ? '❚❚' : '▶'}
 				</button>
 				<button
-					className="lr-btn lr-icon"
+					className="lrm-btn lrm-icon"
 					title="Reset to start"
 					onClick={handleReset}
 				>
 					↺
 				</button>
 				<button
-					className="lr-btn lr-icon"
+					className="lrm-btn lrm-icon"
 					disabled={playing}
 					title="Set start here"
 					onClick={() => {
@@ -161,16 +161,16 @@ function App() {
 				>
 					?
 				</ToggleButton>
-				<span className="lr-stat">
+				<span className="lrm-stat">
 					<b>{Math.round(stats.distance)}</b>
 					<small>dist</small>
 				</span>
-				<span className="lr-stat">
+				<span className="lrm-stat">
 					<b>{Math.round(stats.speed)}</b>
 					<small>speed</small>
 				</span>
 				{score.total > 0 && (
-					<span className="lr-stat">
+					<span className="lrm-stat">
 						<b>
 							{score.collected}/{score.total}
 						</b>
@@ -180,27 +180,27 @@ function App() {
 			</div>
 
 			{showLegend && (
-				<div className="lr-legend">
-					<div className="lr-legend-title">Draw with a color to set its behavior</div>
+				<div className="lrm-legend">
+					<div className="lrm-legend-title">Draw with a color to set its behavior</div>
 					{LEGEND.map((row) => (
-						<div className="lr-legend-row" key={row.label}>
-							<span className="lr-legend-swatches">
+						<div className="lrm-legend-row" key={row.label}>
+							<span className="lrm-legend-swatches">
 								{row.swatches.map((c) => (
-									<span className="lr-legend-swatch" key={c} style={{ background: c }} />
+									<span className="lrm-legend-swatch" key={c} style={{ background: c }} />
 								))}
 							</span>
 							<b>{row.label}</b>
 							<small>{row.desc}</small>
 						</div>
 					))}
-					<div className="lr-legend-note">
+					<div className="lrm-legend-note">
 						Drop a sticky note as a flag — collect them all on your run.
 					</div>
-					<div className="lr-legend-note">
+					<div className="lrm-legend-note">
 						Draw an arrow from one shape to another to link them as a portal —
 						enter the first, shoot out the second.
 					</div>
-					<div className="lr-legend-note">
+					<div className="lrm-legend-note">
 						Draw arrows from one shape to TWO others to make a multiplier —
 						it splits you into two riders, one out each exit.
 					</div>

@@ -375,10 +375,10 @@ export function Rider() {
   }, [editor]);
 
   // Full-viewport SVG overlay; the rAF loop writes the snail group's transform in
-  // screen space each frame. Static appearance lives in App.css (.lr-snail / the
-  // start marker .lr-start-*).
+  // screen space each frame. Static appearance lives in App.css (.lrm-snail / the
+  // start marker .lrm-start-*).
   return (
-    <svg className="lr-sled-svg" aria-hidden="true">
+    <svg className="lrm-sled-svg" aria-hidden="true">
       {/* Collision debug overlay (Show Collisions button). The rAF loop fills the
 			    three child groups in viewport coords: kind-colored segment highlights,
 			    vertex dots, and the sled-rig contact circles. Drawn first so the snail
@@ -393,8 +393,8 @@ export function Rider() {
 			    the spawn point so the player can see (and aim) where the sled will drop
 			    from. Centered on its own origin so the rAF loop only has to translate +
 			    scale the group (scale tracks camera zoom — see START_RING_R). */}
-      <g ref={startRef} className="lr-start-marker" opacity="0">
-        <circle className="lr-start-ring" r={START_RING_R} cy={START_RING_CY} />
+      <g ref={startRef} className="lrm-start-marker" opacity="0">
+        <circle className="lrm-start-ring" r={START_RING_R} cy={START_RING_CY} />
       </g>
       {/* A fixed pool of MAX_RIDERS snail slots -- one per POSSIBLE rider, not
           one per CURRENT rider, so a multiplier split never has to mount/unmount
@@ -412,7 +412,7 @@ export function Rider() {
           ref={(el) => {
             snailRefs.current[i] = el;
           }}
-          className="lr-snail"
+          className="lrm-snail"
           opacity="0"
         >
           <g
