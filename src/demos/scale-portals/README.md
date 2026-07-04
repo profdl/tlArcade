@@ -1,19 +1,20 @@
 # Scale Portals
 
-A top-down movement demo about travelling between **scales**. You walk a big
-map of blue rooms that **alternates** plain rooms with **portal rooms** — each
-portal room literally contains a whole smaller map inside it. Walk into a portal
-room and the camera dives in; you're now walking that child map at its own scale.
-Each child map is a **pass-through** with two orange portals (an entrance and an
-exit) — step onto either one to dive back out.
+A top-down movement demo about travelling between **scales**. The world is a
+grid whose cells **alternate between blue rooms and free-standing small-maps**:
+a small-map cell has no room around it — a whole tiny map just sits there, and
+the blue tunnels from neighbouring rooms flow straight into its **orange
+gates, one per tunnel**. Walk a tunnel to its end and the camera dives in;
+you arrive at the gate facing the tunnel you came through. Step onto any gate
+and you dive back out into that gate's tunnel, walking on toward the next
+room. Travel literally alternates room → small-map → room.
 
 ## Controls
 
 - **WASD** or **arrow keys** — move the red player.
-- Walk into a **room that has a tiny map inside it** (a portal room) to dive into
-  that map.
-- Inside a child map, walk onto either **orange portal** (entrance or exit) to
-  dive back out.
+- Walk a tunnel to its end (into the tiny map) to dive in.
+- Inside a small-map, walk onto any **orange gate** to dive back out toward
+  that gate's tunnel.
 
 ## How it works
 
@@ -21,34 +22,41 @@ exit) — step onto either one to dive back out.
   (`wfc/collapse.ts`, `wfc/tiles.ts`, `wfc/connectivity.ts`) is copied from the
   Toolkit demo. It produces a grid of rooms joined by doorways, then prunes and
   re-connects so every room is reachable.
-- **The parent alternates rooms and maps.** A checkerboard of the parent's rooms
-  are portals (`role: 'parent'` in `game/mapGeometry.ts`); each holds its own
-  child map with a distinct seed. Portal rooms look like normal blue rooms — the
-  tiny map sitting inside is what marks them (no border).
-- **Nesting is purely geometric — no frames, no clipping.** Each child map is
-  generated at a small scale and written *inside* its portal room's footprint
-  (`game/constants.ts` derives the child scale so the child map fills the portal
-  room exactly). So the child maps are always sitting there, visibly tiny, before
-  you enter. `editor.zoomToBounds` on a child's bounds *is* the dive-in effect.
-- **Each child is a pass-through.** Its two orange portals — an entrance (where
-  you appear) and an exit — sit on the edges facing the portal room's tunnels, so
-  they line up with the parent corridors. Green rooms are just floor; only the
-  orange portals let you leave.
+- **The cell-role model** (`game/mapGeometry.ts`): each present cell is either
+  a `room` (blue rect) or a `submap` (no rect — a SLOT centred in the cell
+  holds a nested child map). Role assignment is a pluggable function
+  (default: checkerboard parity), so different world patterns are one function
+  swap. Doors are built **port-to-port**: a room's port pokes slightly into
+  the room; a submap's port pokes slightly INTO the slot — which is exactly
+  what lets the player's dive trigger fire at the end of a tunnel.
+- **Gates are per-tunnel, not entrance/exit.** Each child map gets one orange
+  gate per door direction of its host cell (1–4 gates, straight or bent —
+  e.g. a bend joins a west tunnel to a north tunnel). Arrival gate = the side
+  you touched the slot from; any gate dives you back out toward its own
+  tunnel. The pairing is geometric, so entrances and exits can't get mixed up.
+- **Nesting is purely geometric — no frames, no clipping.** Child maps are
+  written at a small scale inside their slots (`game/constants.ts` pins the
+  child extent to exactly the SLOT), always visible before you enter.
+  `editor.zoomToBounds` on a child's bounds *is* the dive effect.
 - **The player is one locked `geo` ellipse.** Movement is a `window` keydown/
-  keyup tracker (`game/keys.ts`, which also clears held keys on window blur so the
-  player can't drift) plus `editor.on('tick')` (`game/gameLoop.ts`), with
-  axis-separated AABB slide collision (`game/collision.ts`) against the current
-  level's rooms + doorways.
-- **Depth is a stack** (`game/levelManager.ts`) and each portal's child is cached
-  by portal, so a third depth is additive — the demo scopes to two (parent + its
-  child maps) with a return trip.
+  keyup tracker (`game/keys.ts`, which clears held keys on window blur) plus
+  `editor.on('tick')` (`game/gameLoop.ts`), with axis-separated AABB slide
+  collision (`game/collision.ts`). Slots are NOT walkable — you can never
+  stand on a small-map at parent scale; you fall into it.
+- **Depth is a stack** (`game/levelManager.ts`) and each submap's child is
+  cached by cell, so re-entering reuses the same shapes. Child generation
+  reuses the same `buildMapLayout`, so deeper nesting later is the same call
+  at child scale.
 
-Seeds are fixed (`PARENT_SEED` / `CHILD_SEED`), so the maps are the same every
-reload. Nothing persists to localStorage.
+Seeds are fixed (`PARENT_SEED`; per-submap child seeds are hashed from the
+cell coordinates), so the world is the same every reload. Nothing persists to
+localStorage.
 
 ## Tests
 
 Pure logic is covered by vitest (`npm test`): WFC determinism/edge-agreement
-(`wfc/__tests__`), the nesting invariant, checkerboard portals and the child's
-two-portal pass-through (`game/__tests__/mapGeometry`), the slide collision
-resolver, and the level stack.
+(`wfc/__tests__`), the slot-fit nesting invariant, cell roles (no room behind
+a submap, tunnel-per-door poking into the slot, pluggable role function),
+per-tunnel gate placement incl. bent/1-gate/4-gate combos
+(`game/__tests__/mapGeometry`), the slide collision resolver, and the level
+stack.

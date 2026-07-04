@@ -224,12 +224,14 @@ function presentRegionSize(present: Present, width: number, height: number, sx: 
  *
  * `initialMask` (optional) is the starting present-set: when given, only those cells are
  * part of the map to begin with (the rest are already absent), and pruning thins WITHIN it.
- * This is how an irregular ORGANIC-BLOB outline is fed in (see regionMask.ts) — the blob
- * replaces the full square as the starting footprint, so the final map's boundary is ragged.
- * The mask MUST be a single 4-connected region (regionMask guarantees this) or connectGrid
- * can't stitch it; cells outside it never become rooms.
+ * The mask MUST be a single 4-connected region or connectGrid can't stitch it; cells
+ * outside it never become rooms.
+ *
+ * `keep` (optional) marks cells that must NEVER be pruned — Scale Portals uses it to
+ * protect a child map's GATE cells (the edge-middles facing the parent tunnels), so a
+ * gate can't be pruned away and slide off its tunnel's centreline.
  */
-export function pruneAndConnect(grid: TileGrid, seed: number, removeProb: number, initialMask?: Present): PrunedGrid {
+export function pruneAndConnect(grid: TileGrid, seed: number, removeProb: number, initialMask?: Present, keep?: Present): PrunedGrid {
 	const height = grid.length
 	const width = grid[0]?.length ?? 0
 	// Start from the blob mask if provided (a fresh copy so we don't mutate the caller's),
@@ -253,6 +255,7 @@ export function pruneAndConnect(grid: TileGrid, seed: number, removeProb: number
 	for (const { x, y } of cells) {
 		if (presentCount <= 1) break // always keep at least one room
 		if (!present[y][x]) continue // already outside the map (blob mask) — nothing to remove
+		if (keep?.[y]?.[x]) continue // protected (e.g. a gate cell) — never pruned
 		if (rng() >= removeProb) continue // this cell survives the dice roll
 		// Tentatively remove; keep the removal only if the rest stays one 4-connected region.
 		present[y][x] = false

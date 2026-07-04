@@ -2,11 +2,10 @@
  * CONSTANTS — the tuning knobs for the Scale Portals demo, in one place.
  * =======================================================================
  * The nesting invariant lives here: the child map's total extent is derived from
- * the parent ROOM footprint (not eyeballed), so a whole child map fits exactly
- * inside one parent room. Because roomExtent() is linear in (roomSize, gap),
- * scaling BOTH by the same CHILD_SCALE makes childExtent === parentMapExtent *
- * CHILD_SCALE, which we pin to a fraction of the parent room. See
- * mapGeometry.test.ts for the assertion.
+ * the SLOT a submap cell offers (not eyeballed), so a whole child map fits exactly
+ * in that slot. Because roomExtent() is linear in (roomSize, gap), scaling BOTH by
+ * the same CHILD_SCALE makes childExtent === parentMapExtent * CHILD_SCALE, which
+ * we pin to the slot side. See mapGeometry.test.ts for the assertion.
  */
 import { roomExtent } from './mapGeometry.ts'
 
@@ -32,14 +31,26 @@ export const CHILD_SEED = 2
 /** Full page-space extent of the parent map (square for a square grid). */
 export const PARENT_MAP_EXTENT = roomExtent(PARENT_W, PARENT_H, PARENT_ROOM, GAP)
 
-/** The child map fills this fraction of the portal room's footprint (small inset margin). */
+/** The child map fills this fraction of its host cell's footprint (small inset margin). */
 export const CHILD_FILL = 0.82
 /**
- * Scale applied to BOTH child roomSize and child gap. Derived so the child map's
- * full extent equals CHILD_FILL of one parent ROOM — i.e. it nests inside the
- * portal room. (Uses the parent extent's width; the grid is square so w === h.)
+ * SLOT — the square a submap cell offers to its nested child map (centred in the
+ * cell footprint). The child map's extent is pinned to exactly this, so tunnels
+ * built to the slot edge meet the child's gate rooms.
  */
-export const CHILD_SCALE = (PARENT_ROOM * CHILD_FILL) / PARENT_MAP_EXTENT.w
+export const SLOT = PARENT_ROOM * CHILD_FILL
+/**
+ * How far a tunnel pokes INTO a slot (page px). The dive trigger is a strict AABB
+ * overlap with the slot, so the player must be able to advance a few px onto it
+ * while still standing in the walkable tunnel.
+ */
+export const SLOT_POKE = 12
+/**
+ * Scale applied to BOTH child roomSize and child gap. Derived so the child map's
+ * full extent equals the SLOT — i.e. it exactly fills a submap cell's slot.
+ * (Uses the parent extent's width; the grid is square so w === h.)
+ */
+export const CHILD_SCALE = SLOT / PARENT_MAP_EXTENT.w
 export const CHILD_ROOM = PARENT_ROOM * CHILD_SCALE
 export const CHILD_GAP = GAP * CHILD_SCALE
 

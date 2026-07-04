@@ -5,8 +5,8 @@
  * third depth is additive later: pushChild()/popToParent() don't know or care how
  * deep the stack already is.
  *
- * Each portal's child map is generated once and cached BY PORTAL (a "x,y" key), so
- * a parent with several portals holds several distinct children, and walking
+ * Each submap cell's child map is generated once and cached BY CELL (a "x,y" key),
+ * so a parent with several submaps holds several distinct children, and walking
  * in/out/in again reuses the same child instead of regenerating (and reseeding) it.
  */
 import type { AABB } from './collision.ts'
@@ -20,12 +20,12 @@ export type LevelState<Id> = {
 	originX: number
 	originY: number
 	parentDepth: number | null
-	/** The parent's portal rect in PAGE space — where the player reappears on exit. */
-	parentPortalRect?: PageRect
+	/** The host submap cell's SLOT rect in PAGE space — the footprint this child fills. */
+	parentSlotRect?: PageRect
 }
 
-/** Stable cache key for a portal room (its grid cell). */
-export function portalKey(cell: { x: number; y: number }): string {
+/** Stable cache key for a submap cell (its grid coordinates). */
+export function submapKey(cell: { x: number; y: number }): string {
 	return `${cell.x},${cell.y}`
 }
 

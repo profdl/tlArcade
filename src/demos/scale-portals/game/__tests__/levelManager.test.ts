@@ -2,7 +2,7 @@
  * LEVEL MANAGER tests — push/pop stack behaviour and the child cache.
  */
 import { describe, it, expect } from 'vitest'
-import { LevelManager, portalKey, type LevelState } from '../levelManager'
+import { LevelManager, submapKey, type LevelState } from '../levelManager'
 import type { MapLayout } from '../mapGeometry'
 
 /** A bare layout stub — the manager only stores it, never inspects its rects. */
@@ -12,7 +12,8 @@ function stubLayout(): MapLayout<string> {
 		extent: { w: 100, h: 100 },
 		spawnCell: { x: 0, y: 0 },
 		spawnRect: { x: 0, y: 0, w: 10, h: 10 },
-		portals: [],
+		submaps: [],
+		gates: [],
 	}
 }
 
@@ -41,16 +42,16 @@ describe('LevelManager', () => {
 		expect(m.currentDepth()).toBe(0)
 	})
 
-	it('caches a child by portal key and returns the same instance', () => {
+	it('caches a child by submap cell key and returns the same instance', () => {
 		const m = new LevelManager<string>()
 		m.pushRoot(level(0, null))
-		expect(m.getCachedChild(portalKey({ x: 1, y: 0 }))).toBeUndefined()
+		expect(m.getCachedChild(submapKey({ x: 1, y: 0 }))).toBeUndefined()
 
 		const child = level(1, 0)
-		m.cacheChild(portalKey({ x: 1, y: 0 }), child)
-		expect(m.getCachedChild(portalKey({ x: 1, y: 0 }))).toBe(child)
+		m.cacheChild(submapKey({ x: 1, y: 0 }), child)
+		expect(m.getCachedChild(submapKey({ x: 1, y: 0 }))).toBe(child)
 		// A different portal has no child yet.
-		expect(m.getCachedChild(portalKey({ x: 0, y: 1 }))).toBeUndefined()
+		expect(m.getCachedChild(submapKey({ x: 0, y: 1 }))).toBeUndefined()
 	})
 
 	it('throws if asked for current before any level is pushed', () => {

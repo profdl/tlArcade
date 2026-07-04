@@ -1,15 +1,17 @@
 /**
  * GAME LOOP — the impure orchestrator (the one file that touches the editor + tick).
  * ===================================================================================
- * Builds the parent map, drops the player, and rides editor.on('tick') to move the
+ * Builds the parent world, drops the player, and rides editor.on('tick') to move the
  * player (WASD/arrows), slide-collide against the current level's floor, and dive
- * IN/OUT of scales at portals.
+ * IN/OUT of scales at submap slots.
  *
- * The parent map ALTERNATES plain blue rooms with portal rooms; each portal room holds
- * a whole nested child map, written at a small scale INSIDE it (so it sits there
- * visibly the whole time — the map-within-a-map). Walking into a portal room dives into
- * its child; the child is a PASS-THROUGH with an entrance (where you appear, at the
- * tunnel you came from) and an exit marker (walk onto it to pop back out).
+ * The world ALTERNATES blue rooms with free-standing small-maps (the cell-role model,
+ * see mapGeometry.ts): a submap cell renders no room — its nested child map sits in
+ * the cell's SLOT, and the parent's tunnels run right up to (and a few px into) the
+ * slot. Walking to the end of such a tunnel overlaps the slot and dives you in,
+ * arriving at the orange GATE facing the side you came from. Stepping onto ANY gate
+ * dives you back out into that gate's tunnel — deterministic 1:1 tunnel↔gate pairing,
+ * no entrance/exit roles.
  *
  * `editor.zoomToBounds` on a map's bounds IS the dive effect — no frames, no clipping.
  * Camera animations are non-blocking, so a held key keeps moving the player as the
@@ -33,13 +35,16 @@ import {
 	PARENT_W,
 	PLAYER_FRACTION,
 	PLAYER_SPEED_ROOMS_PER_SEC,
+	SLOT,
+	SLOT_POKE,
 	ZOOM_DURATION_MS,
 	ZOOM_INSET,
 } from './constants.ts'
 import { aabbOverlaps, resolveMove } from './collision.ts'
-import { buildMapLayout, entranceExitEdges, roomExtent, CHILD_ROOM_PROPS, type MapLayout, type PageRect, type PortalInfo } from './mapGeometry.ts'
-import { LevelManager, portalKey, walkableRects, type LevelState } from './levelManager.ts'
+import { buildMapLayout, CHILD_ROOM_PROPS, type GateInfo, type MapLayout, type PageRect, type SubmapInfo } from './mapGeometry.ts'
+import { LevelManager, submapKey, walkableRects, type LevelState } from './levelManager.ts'
 import type { KeyState } from './keys.ts'
+import type { Dir } from '../wfc/tiles.ts'
 import { createPlayer, getPlayerAABB, PLAYER_SHAPE_ID, setPlayerPosition, setPlayerRect } from './player.ts'
 
 /** The full page-space bounds of a level's map — what the camera zooms to fit. */
@@ -52,13 +57,23 @@ function centre(r: PageRect): { x: number; y: number } {
 	return { x: r.x + r.w / 2, y: r.y + r.h / 2 }
 }
 
-/** A distinct child seed per portal, so every small map is a different layout. */
+/** A distinct child seed per submap cell, so every small map is a different layout. */
 function childSeedFor(cell: { x: number; y: number }): number {
 	return (CHILD_SEED ^ (cell.x * 73856093) ^ (cell.y * 19349663)) >>> 0
 }
 
+/** Which side of `rect` the point is off toward — the dominant axis of the offset from
+ *  the rect's centre. Used to turn "where the player touched a slot" into a gate edge. */
+function approachSide(px: number, py: number, rect: PageRect): Dir {
+	const c = centre(rect)
+	const dx = px - c.x
+	const dy = py - c.y
+	if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? 'W' : 'E'
+	return dy < 0 ? 'N' : 'S'
+}
+
 /** Write a level's rects to the store in one history-ignored batch. `toBack` sends them
- *  behind everything (parent map); children are left on top so they show inside portals. */
+ *  behind everything (the parent world); children stay on top so they show in slots. */
 function writeLevelRects(editor: Editor, layout: MapLayout<TLShapeId>, toBack: boolean): void {
 	const partials = layout.rects.map((r) => ({
 		id: r.id,
@@ -90,10 +105,12 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		{ history: 'ignore', ignoreShapeLock: true }
 	)
 
-	// ── Build + write the PARENT map at the page origin (sent to back). ──────────
+	// ── Build + write the PARENT world at the page origin (sent to back). ────────
 	const parentLayout = buildMapLayout(() => createShapeId(), PARENT_W, PARENT_H, PARENT_SEED, 0, 0, PARENT_ROOM, GAP, {
 		removeProb: PARENT_REMOVE_PROB,
 		role: 'parent',
+		slotSize: SLOT,
+		slotPoke: SLOT_POKE,
 	})
 	const parent: LevelState<TLShapeId> = {
 		depth: 0,
@@ -107,54 +124,64 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 	manager.pushRoot(parent)
 	writeLevelRects(editor, parentLayout, true)
 
-	// Build + write EACH portal's child map eagerly, nested inside its portal room, so the
-	// tiny maps sit there visibly before you enter. Each is cached by portal cell, so
-	// diving in reuses its shapes (no regeneration/duplication). The child is a pass-through:
-	// its entrance faces one of the portal room's tunnels, its exit faces another.
-	function buildChildInside(parentLevel: LevelState<TLShapeId>, portal: PortalInfo): LevelState<TLShapeId> {
-		const childExtent = roomExtent(CHILD_W, CHILD_H, CHILD_ROOM, CHILD_GAP)
-		const originX = portal.rect.x + (portal.rect.w - childExtent.w) / 2
-		const originY = portal.rect.y + (portal.rect.h - childExtent.h) / 2
-		const { entrance, exit } = entranceExitEdges(portal.doorDirs)
-		const layout = buildMapLayout(() => createShapeId(), CHILD_W, CHILD_H, childSeedFor(portal.cell), originX, originY, CHILD_ROOM, CHILD_GAP, {
-			removeProb: CHILD_REMOVE_PROB,
-			role: 'child',
-			entranceEdge: entrance,
-			exitEdge: exit,
-			roomProps: CHILD_ROOM_PROPS,
-		})
+	// Build + write EACH submap's child map eagerly, filling its slot, so the tiny maps
+	// sit there visibly before you enter. Each is cached by cell, so diving in reuses
+	// its shapes (no regeneration/duplication). Gates: one per tunnel direction.
+	function buildChildInSlot(parentLevel: LevelState<TLShapeId>, submap: SubmapInfo): LevelState<TLShapeId> {
+		const layout = buildMapLayout(
+			() => createShapeId(),
+			CHILD_W,
+			CHILD_H,
+			childSeedFor(submap.cell),
+			submap.slotRect.x,
+			submap.slotRect.y,
+			CHILD_ROOM,
+			CHILD_GAP,
+			{
+				removeProb: CHILD_REMOVE_PROB,
+				role: 'child',
+				gateEdges: submap.doorDirs,
+				roomProps: CHILD_ROOM_PROPS,
+			}
+		)
 		const child: LevelState<TLShapeId> = {
 			depth: parentLevel.depth + 1,
 			layout,
 			roomSize: CHILD_ROOM,
 			gap: CHILD_GAP,
-			originX,
-			originY,
+			originX: submap.slotRect.x,
+			originY: submap.slotRect.y,
 			parentDepth: parentLevel.depth,
-			parentPortalRect: portal.rect,
+			parentSlotRect: submap.slotRect,
 		}
-		manager.cacheChild(portalKey(portal.cell), child)
+		manager.cacheChild(submapKey(submap.cell), child)
 		writeLevelRects(editor, layout, false)
 		return child
 	}
-	for (const portal of parentLayout.portals) buildChildInside(parent, portal)
+	for (const submap of parentLayout.submaps) buildChildInSlot(parent, submap)
 
 	// Player spawns at the parent's spawn-room centre, sized to the parent room.
 	const spawn = centre(parentLayout.spawnRect)
 	createPlayer(editor, spawn.x, spawn.y, playerSizeFor(PARENT_ROOM))
 
-	// Frame the parent map immediately (no animation on first mount).
+	// Frame the parent world immediately (no animation on first mount).
 	editor.zoomToBounds(mapBounds(parent), { inset: ZOOM_INSET, animation: { duration: 0 } })
 
-	// A trigger only fires once the player has STEPPED OFF the marker since arriving — so
-	// spawning on a portal (after diving out) or on the entrance doesn't immediately re-fire.
+	// A trigger only fires once the player has STEPPED OFF it since arriving — so
+	// emerging next to a slot (or arriving on a gate) doesn't immediately re-fire.
 	let triggerArmed = false
 
-	function diveIn(portal: PortalInfo): void {
+	function diveIn(submap: SubmapInfo): void {
 		const from = manager.current()
-		const child = manager.getCachedChild(portalKey(portal.cell)) ?? buildChildInside(from, portal)
+		const child = manager.getCachedChild(submapKey(submap.cell)) ?? buildChildInSlot(from, submap)
 		manager.pushChild(child)
-		const dest = centre(child.layout.spawnRect)
+		// Arrive at the gate FACING the tunnel you came through: the player touched the
+		// slot on some side; that side's gate is the pairing. Fallback (shouldn't happen
+		// — a tunnel implies a door implies a gate): the first gate.
+		const player = getPlayerAABB(editor)
+		const side = approachSide(player.x + player.w / 2, player.y + player.h / 2, submap.slotRect)
+		const gate = child.layout.gates.find((g) => g.edge === side) ?? child.layout.gates[0]
+		const dest = gate ? centre(gate.rect) : centre(submap.slotRect)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(child.roomSize))
 		editor.bringToFront([PLAYER_SHAPE_ID])
 		editor.zoomToBounds(mapBounds(child), {
@@ -164,17 +191,27 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		triggerArmed = false
 	}
 
-	function diveOut(via: PageRect): void {
+	function diveOut(gate: GateInfo): void {
+		const child = manager.current()
 		const parentLevel = manager.popToParent()
-		if (!parentLevel) return
-		// Emerge at the CENTRE of the orange portal you stepped on. Page space is shared
-		// between depths (the child physically sits inside the portal room), so that point
-		// is already the right spot in the parent — on the side you left through, inside
-		// the portal room (the child fills 82% of it, so even an edge portal's centre plus
-		// the parent-size player stays within the room's walkable rect). The camera zooms
-		// out around you; you just get bigger where you stand.
-		const dest = centre(via)
-		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(parentLevel.roomSize))
+		if (!parentLevel || !child.parentSlotRect) return
+		// Emerge just OUTSIDE the slot in this gate's tunnel: offset from the slot edge
+		// along the gate's axis by half the parent-size player plus a small margin,
+		// centred on the tunnel's centreline (the cell centreline). The tunnel mouth
+		// (~82px) comfortably fits the parent player (~29px).
+		const slot = child.parentSlotRect
+		const size = playerSizeFor(parentLevel.roomSize)
+		const margin = size / 2 + 6
+		const c = centre(slot)
+		const dest =
+			gate.edge === 'W'
+				? { x: slot.x - margin, y: c.y }
+				: gate.edge === 'E'
+					? { x: slot.x + slot.w + margin, y: c.y }
+					: gate.edge === 'N'
+						? { x: c.x, y: slot.y - margin }
+						: { x: c.x, y: slot.y + slot.h + margin }
+		setPlayerRect(editor, dest.x, dest.y, size)
 		editor.bringToFront([PLAYER_SHAPE_ID])
 		editor.zoomToBounds(mapBounds(parentLevel), { inset: ZOOM_INSET, animation: { duration: ZOOM_DURATION_MS } })
 		triggerArmed = false
@@ -196,18 +233,17 @@ export function registerGame(editor: Editor, keys: KeyState): () => void {
 		}
 
 		const player = getPlayerAABB(editor)
-		if (level.layout.exitRect) {
-			// In a child: walk onto EITHER orange portal (entrance or exit) to pop back out.
-			const outRects = [level.layout.spawnRect, level.layout.exitRect]
-			const onPortal = outRects.find((r) => aabbOverlaps(player, r))
+		if (level.layout.gates.length > 0) {
+			// In a child: walk onto ANY orange gate to dive back out toward its tunnel.
+			const gate = level.layout.gates.find((g) => aabbOverlaps(player, g.rect))
 			if (!triggerArmed) {
-				if (!onPortal) triggerArmed = true
+				if (!gate) triggerArmed = true
 				return
 			}
-			if (onPortal) diveOut(onPortal)
+			if (gate) diveOut(gate)
 		} else {
-			// In the parent: walk into any portal room to dive into its child map.
-			const hit = level.layout.portals.find((p) => aabbOverlaps(player, p.rect))
+			// In the parent: reaching the end of a tunnel overlaps a submap's slot → dive.
+			const hit = level.layout.submaps.find((s) => aabbOverlaps(player, s.slotRect))
 			if (!triggerArmed) {
 				if (!hit) triggerArmed = true
 				return
