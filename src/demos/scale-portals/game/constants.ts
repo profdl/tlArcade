@@ -22,9 +22,18 @@ export const PARENT_REMOVE_PROB = 0
 /** Nested maps: a little ragged, so each reads as its own denser little world. */
 export const CHILD_REMOVE_PROB = 0.2
 
-/** Parent room size + the gap a doorway bridges (child scales both down together). */
-export const PARENT_ROOM = 240
-export const GAP = 80
+/**
+ * Parent room size + the gap a doorway bridges (child scales both down together).
+ * The root world's page-space extent is linear in BOTH, and the zoom at which the
+ * whole map fits the viewport is inversely proportional to that extent — so scaling
+ * these two together (keeping their 3:1 ratio) resizes the world WITHOUT touching any
+ * nesting invariant (CHILD_SCALE, player size, and speed are all ratios of room size).
+ * These values frame the root at ~5% (18.75x larger than the original 240/80, which
+ * fit at ~93%) — 5% is tldraw v5's native minimum zoom (zoomSteps[0]), so no camera
+ * override is needed; zoomToBounds lands right at the floor.
+ */
+export const PARENT_ROOM = 4500
+export const GAP = 1500
 
 /**
  * Fixed seeds for TESTS (deterministic assertions). The game itself generates a NEW
@@ -47,10 +56,19 @@ export const CHILD_FILL = 0.82
 export const SLOT = PARENT_ROOM * CHILD_FILL
 /**
  * How far a tunnel pokes INTO a slot (page px). The dive trigger is a strict AABB
- * overlap with the slot, so the player must be able to advance a few px onto it
- * while still standing in the walkable tunnel.
+ * overlap with the slot, so the player must be able to advance onto it while still
+ * standing in the walkable tunnel.
+ *
+ * CRITICAL: this MUST exceed the player's per-tick movement step, or diving breaks.
+ * Movement is all-or-nothing per axis per tick (see collision.ts resolveMove): a step
+ * only applies if the WHOLE player box stays in the walkable union, so the player halts
+ * in ~step-sized jumps at the tunnel's dead end. If the poke (the overlap zone's depth)
+ * is smaller than one step, every jump that reaches the end overshoots the zone and is
+ * rejected — the player never overlaps the slot, so it never dives in. The step is
+ * roomSize * PLAYER_SPEED_ROOMS_PER_SEC / 60 ≈ 0.0375 * roomSize, so we keep the poke a
+ * fixed 0.05 of the room (the original 12/240 ratio) — scale-invariant, ~33% over the step.
  */
-export const SLOT_POKE = 12
+export const SLOT_POKE = PARENT_ROOM * 0.05
 /**
  * Scale applied to BOTH child roomSize and child gap. Derived so the child map's
  * full extent equals the SLOT — i.e. it exactly fills a submap cell's slot.
