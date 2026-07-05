@@ -118,8 +118,10 @@ export const PLAYER_FRACTION = 0.12
 /** Speed as room-widths per second — pacing (time to cross a room) is depth-invariant. */
 export const PLAYER_SPEED_ROOMS_PER_SEC = 1.5
 
-/** Camera dive-in/out animation. */
-export const ZOOM_DURATION_MS = 350
+/** Camera dive-in/out animation. A dive spans a large zoom ratio (~18.75× per depth), eased
+ *  geometrically (see gameLoop) — a slightly longer beat reads as a graceful scale rather
+ *  than a snap. */
+export const ZOOM_DURATION_MS = 500
 /** Camera inset (page px) framing the ROOT map. Deeper maps inset by CHILD_SCALE^depth
  *  so the on-screen margin looks the same at every scale. */
 export const ZOOM_INSET = 40

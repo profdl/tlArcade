@@ -51,28 +51,28 @@ import type { KeyState } from './keys.ts'
 import { createPlayer, getPlayerAABB, PLAYER_SHAPE_ID, setPlayerPosition, setPlayerRect } from './player.ts'
 
 /**
- * Frame a level at the depth's fit-zoom, CENTRED on a page point (the player) rather
- * than on the map. zoomToBounds fits a box the size of the level's map — so the zoom is
- * identical at every depth (each level's extent is CHILD_SCALE^depth the root's, and the
- * camera compensates) — but the box is centred on (cx, cy), so that point lands at the
- * viewport centre. This is what makes the dive land already-following the player, so the
- * per-tick follow continues seamlessly. Inset scales by CHILD_SCALE^depth for a constant
- * on-screen margin.
+ * The camera zoom (z) that fits a level's map into the viewport — the same math
+ * `zoomToBounds` uses: min of the width/height ratios, with `inset` screen-px padding.
+ * The player is kept centred SEPARATELY (see the tick's follow), so we only need the zoom,
+ * not a full frame. Inset scales by CHILD_SCALE^depth for a constant on-screen margin.
  */
-function frameLevel(
-	editor: Editor,
-	level: LevelState<TLShapeId>,
-	cx: number,
-	cy: number,
-	durationMs: number
-): void {
+function fitZoomFor(editor: Editor, level: LevelState<TLShapeId>): number {
+	const { w, h } = level.layout.extent
+	const vsb = editor.getViewportScreenBounds()
+	const inset = ZOOM_INSET * CHILD_SCALE ** level.depth
+	return Math.min((vsb.w - inset * 2) / w, (vsb.h - inset * 2) / h)
+}
+
+/**
+ * Frame a level at its fit-zoom, CENTRED on a page point (the player) — used only for the
+ * initial mount (duration 0). A dive does NOT use this: it eases zoom while the per-tick
+ * follow keeps the player pinned, so nothing pans out from under the player (see onTick).
+ */
+function frameLevel(editor: Editor, level: LevelState<TLShapeId>, cx: number, cy: number, durationMs: number): void {
 	const { w, h } = level.layout.extent
 	editor.zoomToBounds(
 		{ x: cx - w / 2, y: cy - h / 2, w, h },
-		{
-			inset: ZOOM_INSET * CHILD_SCALE ** level.depth,
-			animation: { duration: durationMs },
-		}
+		{ inset: ZOOM_INSET * CHILD_SCALE ** level.depth, animation: { duration: durationMs } }
 	)
 }
 
@@ -236,11 +236,29 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 	// emerging next to a slot (or arriving on a gate) doesn't immediately re-fire.
 	let triggerArmed = false
 
-	// The camera follows the player each tick — but a dive kicks off a zoom ANIMATION
-	// (frameLevel with a duration), and force-centring mid-animation would cut it short.
-	// So a dive holds off the follow for the animation's duration; once it settles (the
-	// dive already framed the player), the per-tick follow resumes seamlessly.
-	let followHoldMs = 0
+	// The camera follows the player each tick. A dive changes ZOOM ONLY — we ease z from the
+	// current level's fit-zoom to the new level's over ZOOM_DURATION_MS, while the follow keeps
+	// centring on the LIVE player every frame. That's what stops the jump: the player is pinned
+	// on screen throughout, so nothing pans out from under it; only the world scales. (The old
+	// code animated a pan to the destination and held the follow off — the player then drifted
+	// during the animation and the camera SNAPPED to it when the hold ended.)
+	//
+	// The zoom is interpolated GEOMETRICALLY (lerp in log-space), not linearly: a dive spans a
+	// huge zoom ratio (~18.75× between depths), and linear-in-z spends nearly all its visual
+	// travel in the last few frames — the scale seems to hang, then lurch. Easing the LOG of z
+	// makes each frame multiply the scale by a constant factor, so the zoom reads as smooth,
+	// constant-speed motion. The ease-in-out shapes the log path for soft start and stop.
+	let zoomLogFrom = 0
+	let zoomLogTo = 0
+	let zoomElapsedMs = 0
+	let zoomDurationMs = 0
+	const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2)
+	function startZoomTo(target: number): void {
+		zoomLogFrom = Math.log(editor.getCamera().z)
+		zoomLogTo = Math.log(target)
+		zoomElapsedMs = 0
+		zoomDurationMs = ZOOM_DURATION_MS
+	}
 
 	// Dive IN through an 'in' doorway: descend into its submap, LANDING on the child's
 	// matching 'out' doorway (same tunnel direction) — its centre sits in the gate room,
@@ -257,11 +275,10 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		manager.pushChild(child)
 		const outPortal = child.layout.portals.find((p) => p.kind === 'out' && p.dir === portal.dir)
 		const gate = child.layout.gates.find((g) => g.edge === portal.dir)
-		const dest = outPortal ? centre(outPortal.hit) : gate ? centre(gate.rect) : centre(submap.slotRect)
+		const dest = outPortal ? centre(outPortal.land) : gate ? centre(gate.rect) : centre(submap.slotRect)
 		setPlayerRect(editor, dest.x, dest.y, playerSizeFor(child.roomSize))
 		editor.bringToFront([PLAYER_SHAPE_ID])
-		frameLevel(editor, child, dest.x, dest.y, ZOOM_DURATION_MS)
-		followHoldMs = ZOOM_DURATION_MS
+		startZoomTo(fitZoomFor(editor, child))
 		triggerArmed = false
 	}
 
@@ -280,7 +297,7 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		)
 		let dest: { x: number; y: number }
 		if (inPortal) {
-			dest = centre(inPortal.hit)
+			dest = centre(inPortal.land)
 		} else {
 			const margin = size / 2 + 6
 			const c = centre(slot)
@@ -295,8 +312,7 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		}
 		setPlayerRect(editor, dest.x, dest.y, size)
 		editor.bringToFront([PLAYER_SHAPE_ID])
-		frameLevel(editor, parentLevel, dest.x, dest.y, ZOOM_DURATION_MS)
-		followHoldMs = ZOOM_DURATION_MS
+		startZoomTo(fitZoomFor(editor, parentLevel))
 		triggerArmed = false
 	}
 
@@ -316,11 +332,20 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		}
 
 		const player = getPlayerAABB(editor)
+		const playerCentre = { x: player.x + player.w / 2, y: player.y + player.h / 2 }
 
-		// Camera follows the player, keeping this depth's zoom (centerOnPoint leaves zoom
-		// untouched). Held off while a dive's zoom animation plays, then resumes.
-		if (followHoldMs > 0) followHoldMs -= elapsedMs
-		else editor.centerOnPoint({ x: player.x + player.w / 2, y: player.y + player.h / 2 })
+		// Camera follows the player EVERY frame — this is what keeps the player pinned on
+		// screen across a dive (the dive only changes zoom, never pans out from under it).
+		// While a dive's zoom transition runs, ease z toward the target first, then re-centre
+		// on the live player at that z (centerOnPoint recomputes x/y for the current zoom).
+		// Both writes are immediate so they don't queue their own animations.
+		if (zoomElapsedMs < zoomDurationMs) {
+			zoomElapsedMs = Math.min(zoomElapsedMs + elapsedMs, zoomDurationMs)
+			const t = easeInOutCubic(zoomElapsedMs / zoomDurationMs)
+			const z = Math.exp(zoomLogFrom + (zoomLogTo - zoomLogFrom) * t)
+			editor.setCamera({ ...editor.getCamera(), z }, { immediate: true })
+		}
+		editor.centerOnPoint(playerCentre, { immediate: true })
 
 		const portal = portalAt(level.layout, player)
 		// A trigger only fires once you've STEPPED OFF every doorway since arriving — so

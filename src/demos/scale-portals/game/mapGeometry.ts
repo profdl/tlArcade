@@ -76,31 +76,39 @@ export const DOOR_MOUTH = 0.34
  * The visual leaf is free to be a shallow floorplan door; only the hit rect owes the
  * REACH − CROSS > PLAYER_FRACTION clearance.
  *
- * TWO SIZES, by which side the doorway sits on:
- *   • OUT (a guest gate room, inside a submap) — you land here on a dive-IN and must walk
- *     clear to exit; the roomy wide-mouth door, with visual == hit (it already reads well).
- *   • IN (a host hallway, straddling a slot edge) — a marker in the parent tunnel (also the
- *     dive-OUT landing spot). Its VISUAL leaf is a thin door barely poking into the hallway;
- *     its HIT rect reaches deeper to keep the landing walkable.
+ * OUT (a guest gate room, inside a submap): the roomy wide-mouth door. You land here on a
+ * dive-IN and must walk clear to exit, so its one rect is drawn AND triggers AND lands.
+ *
+ * IN (a host hallway, straddling a slot edge): a marker in the parent tunnel that dives you
+ * deeper (and is where you land on a dive-OUT). Its three roles pull in different directions,
+ * so they are THREE separate rects (see PortalInfo rect/hit/land):
+ *   • VISUAL leaf — a thin door inset within the wall (drawn only).
+ *   • TRIGGER (hit) — shallow, hugging the leaf, so the dive fires AT the door, not out in
+ *     the hallway. Free of the landing bound; it never places the player.
+ *   • LAND — reaches deep enough that a dive-OUT drops the whole player clear of the wall:
+ *     its centre sits (REACH − CROSS)/2 inside, which must exceed a player half-width, i.e.
+ *     REACH − CROSS > PLAYER_FRACTION (0.12).
  * (Kept as bare fractions, not imported from constants.ts, so this module stays
  * constants-free and unit-testable.)
  */
 // Door MOUTHS are INSET from the tunnel walls (< DOOR_MOUTH = 0.34), leaving a jamb on
 // either side so the leaf reads as an opening WITHIN the wall, not a wall-wide band.
-// OUT doorway — visual and hit are the same roomy door.
+// OUT doorway — one rect: drawn, triggers, and lands.
 export const PORTAL_OUT_MOUTH = 0.3
 export const PORTAL_OUT_REACH = 0.16
 export const PORTAL_OUT_CROSS = 0.02
-// IN doorway HIT rect — deep enough to land on (REACH − CROSS > PLAYER_FRACTION), and kept
-// wide (near the tunnel width) so the dive trigger is easy to walk onto.
-export const PORTAL_IN_HIT_MOUTH = 0.3
-export const PORTAL_IN_REACH = 0.145
-export const PORTAL_IN_CROSS = 0.02
-// IN doorway VISUAL leaf — a thin floorplan door inset within the wall, drawn only. Its
-// REACH/CROSS need NOT clear the landing bound; it's never a landing target.
+// IN doorway VISUAL leaf — a thin floorplan door inset within the wall, drawn only.
 export const PORTAL_IN_VIS_MOUTH = 0.14
 export const PORTAL_IN_VIS_REACH = 0.05
 export const PORTAL_IN_VIS_CROSS = 0.04
+// IN doorway TRIGGER rect — shallow, hugging the leaf so the dive fires at the door. Kept
+// wide (near the tunnel width) so it's easy to walk onto. No landing bound to satisfy.
+export const PORTAL_IN_HIT_MOUTH = 0.3
+export const PORTAL_IN_HIT_REACH = 0.06
+export const PORTAL_IN_HIT_CROSS = 0.04
+// IN doorway LAND rect — reaches deep enough for a safe dive-OUT drop (REACH − CROSS > 0.12).
+export const PORTAL_IN_LAND_REACH = 0.145
+export const PORTAL_IN_LAND_CROSS = 0.02
 
 export const ROOM_PROPS = { geo: 'rectangle', color: 'blue', fill: 'fill' } as const
 export const CHILD_ROOM_PROPS = { geo: 'rectangle', color: 'light-green', fill: 'fill' } as const
@@ -164,10 +172,14 @@ export type PortalInfo = {
 	dir: Dir
 	/** The DRAWN orange leaf on the boundary — a thin floorplan door (visual only). */
 	rect: PageRect
-	/** The dive TRIGGER + LANDING rect (never drawn). Its CENTRE is the walkable point a dive
-	 *  drops the arriving player onto, so it reaches deep enough to clear the boundary. For
-	 *  OUT doorways this equals `rect`; for IN doorways it reaches farther than the thin leaf. */
+	/** The dive TRIGGER rect (never drawn): the dive fires while the player overlaps it. Kept
+	 *  hugging the drawn leaf so the dive fires AT the door, not out in the hallway. */
 	hit: PageRect
+	/** The dive LANDING rect (never drawn): its CENTRE is the walkable point a dive drops the
+	 *  arriving player onto, so it reaches deep enough that the whole player clears the
+	 *  boundary. For OUT doorways all three coincide; for IN doorways `land` reaches farther
+	 *  into the hallway than the shallow trigger. */
+	land: PageRect
 	submap?: SubmapInfo
 }
 
@@ -495,23 +507,32 @@ export function buildMapLayout<Id>(
 		if (edge === 'N') return { x: cx - mouth / 2, y: (outward ? box.y - reach : box.y - cross), w: mouth, h: thick }
 		return { x: cx - mouth / 2, y: (outward ? box.y + box.h - cross : box.y + box.h - reach), w: mouth, h: thick }
 	}
-	// OUT (guest gate room): visual == hit — one roomy wide-mouth door you land on and exit.
+	// OUT (guest gate room): one roomy wide-mouth door — drawn, triggers, and lands.
 	const outRect = (box: PageRect, edge: Dir) =>
 		doorway(box, edge, false, roomSize * PORTAL_OUT_REACH, roomSize * PORTAL_OUT_CROSS, roomSize * PORTAL_OUT_MOUTH)
-	// IN (host hallway): a THIN visual leaf on the wall, but a DEEPER hit rect (dive trigger +
-	// dive-out landing) so the arriving player still lands on walkable hallway floor.
+	// IN (host hallway): three rects — a thin visual leaf, a shallow trigger hugging it, and a
+	// deeper landing rect so a dive-OUT drops the player clear of the wall onto hallway floor.
 	const inVisual = (box: PageRect, edge: Dir) =>
 		doorway(box, edge, true, roomSize * PORTAL_IN_VIS_REACH, roomSize * PORTAL_IN_VIS_CROSS, roomSize * PORTAL_IN_VIS_MOUTH)
 	const inHit = (box: PageRect, edge: Dir) =>
-		doorway(box, edge, true, roomSize * PORTAL_IN_REACH, roomSize * PORTAL_IN_CROSS, roomSize * PORTAL_IN_HIT_MOUTH)
+		doorway(box, edge, true, roomSize * PORTAL_IN_HIT_REACH, roomSize * PORTAL_IN_HIT_CROSS, roomSize * PORTAL_IN_HIT_MOUTH)
+	const inLand = (box: PageRect, edge: Dir) =>
+		doorway(box, edge, true, roomSize * PORTAL_IN_LAND_REACH, roomSize * PORTAL_IN_LAND_CROSS, roomSize * PORTAL_IN_HIT_MOUTH)
 	const portals: PortalInfo[] = []
 	for (const submap of submaps) {
 		for (const dir of submap.doorDirs)
-			portals.push({ kind: 'in', dir, rect: inVisual(submap.slotRect, dir), hit: inHit(submap.slotRect, dir), submap })
+			portals.push({
+				kind: 'in',
+				dir,
+				rect: inVisual(submap.slotRect, dir),
+				hit: inHit(submap.slotRect, dir),
+				land: inLand(submap.slotRect, dir),
+				submap,
+			})
 	}
 	for (const gate of gates) {
 		const r = outRect(cellRect(gate.cell), gate.edge)
-		portals.push({ kind: 'out', dir: gate.edge, rect: r, hit: r })
+		portals.push({ kind: 'out', dir: gate.edge, rect: r, hit: r, land: r })
 	}
 	for (const p of portals) rects.push({ id: newId(), kind: 'portal', x: p.rect.x, y: p.rect.y, w: p.rect.w, h: p.rect.h, props: PORTAL_PROPS })
 

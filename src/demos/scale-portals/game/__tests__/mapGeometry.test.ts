@@ -10,8 +10,8 @@ import {
 	colorForDepth,
 	roomPropsForDepth,
 	CHILD_ROOM_PROPS,
-	PORTAL_IN_REACH,
-	PORTAL_IN_CROSS,
+	PORTAL_IN_LAND_REACH,
+	PORTAL_IN_LAND_CROSS,
 	PORTAL_OUT_REACH,
 	PORTAL_OUT_CROSS,
 	type PageRect,
@@ -286,6 +286,17 @@ describe('portal-doorways (dive triggers on the boundary, not the whole slot/gat
 		}
 	})
 
+	it('every IN doorway TRIGGER hugs its drawn leaf and is shallower than its LAND rect', () => {
+		const layout = parent()
+		const depth = (r: PageRect, dir: Dir) => (dir === 'W' || dir === 'E' ? r.w : r.h)
+		for (const p of layout.portals.filter((p) => p.kind === 'in')) {
+			// The dive fires AT the door: the trigger must overlap the drawn leaf.
+			expect(overlaps(p.hit, p.rect)).toBe(true)
+			// And the trigger sits closer to the door than the landing drop point reaches.
+			expect(depth(p.hit, p.dir)).toBeLessThan(depth(p.land, p.dir))
+		}
+	})
+
 	it('every OUT doorway straddles the gate edge but keeps its CENTRE inside the gate room (walkable landing)', () => {
 		const layout = child(['W', 'E', 'N', 'S'], CHILD_SEED, 0)
 		const inside = (px: number, py: number, r: PageRect) =>
@@ -297,7 +308,7 @@ describe('portal-doorways (dive triggers on the boundary, not the whole slot/gat
 		const half = (CHILD_ROOM * PLAYER_FRACTION) / 2
 		for (const p of layout.portals.filter((p) => p.kind === 'out')) {
 			const gate = layout.gates.find((g) => g.edge === p.dir)!
-			const c = { x: p.hit.x + p.hit.w / 2, y: p.hit.y + p.hit.h / 2 }
+			const c = { x: p.land.x + p.land.w / 2, y: p.land.y + p.land.h / 2 }
 			expect(inside(c.x, c.y, gate.rect)).toBe(true) // centre is walkable gate floor
 			expect(overlaps(p.rect, gate.rect)).toBe(true) // and the doorway meets the gate
 			// Distance from the centre INWARD past the straddled boundary edge (the wall on side
@@ -318,8 +329,8 @@ describe('portal-doorways (dive triggers on the boundary, not the whole slot/gat
 	// must keep the landed player clear of the boundary: the centre sits (REACH − CROSS)/2
 	// inside, and that must exceed a player half-width — i.e. REACH − CROSS > PLAYER_FRACTION.
 	// Guards the IN set directly (its landing floor is a hallway tunnel, not one gate rect).
-	it('both doorway size sets satisfy the walkable-landing clearance bound', () => {
-		expect(PORTAL_IN_REACH - PORTAL_IN_CROSS).toBeGreaterThan(PLAYER_FRACTION)
+	it('both doorway LAND rects satisfy the walkable-landing clearance bound', () => {
+		expect(PORTAL_IN_LAND_REACH - PORTAL_IN_LAND_CROSS).toBeGreaterThan(PLAYER_FRACTION)
 		expect(PORTAL_OUT_REACH - PORTAL_OUT_CROSS).toBeGreaterThan(PLAYER_FRACTION)
 	})
 })
