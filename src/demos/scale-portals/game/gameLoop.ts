@@ -38,17 +38,36 @@ import {
 	PLAYER_FRACTION,
 	PLAYER_SPEED_ROOMS_PER_SEC,
 	roomAtDepth,
+	SHAPE_BUDGET,
 	SLOT,
 	SLOT_POKE,
 	ZOOM_DURATION_MS,
 	ZOOM_INSET,
 } from './constants.ts'
 import { aabbOverlaps, resolveMove, type AABB } from './collision.ts'
-import { buildMapLayout, childSeedFor, roomPropsForDepth, type MapLayout, type PageRect, type PortalInfo, type SubmapInfo } from './mapGeometry.ts'
+import { buildMapLayout, childSeedFor, roomPropsForDepth, type CellRole, type GridCell, type MapLayout, type PageRect, type PortalInfo, type SubmapInfo } from './mapGeometry.ts'
 import { validateWorldTree, type WorldNode } from './validateWorld.ts'
 import { LevelManager, submapKey, walkableRects, type LevelState } from './levelManager.ts'
 import type { KeyState } from './keys.ts'
 import { createPlayer, getPlayerAABB, PLAYER_SHAPE_ID, setPlayerPosition, setPlayerRect } from './player.ts'
+import { PATTERNS, type PatternName } from './patterns.ts'
+
+/**
+ * Which map pattern the world uses — the fractal seam (see patterns.ts). The SAME pattern
+ * runs at every scale, so a self-similar rule (e.g. sierpinski) repeats its motif as you dive.
+ * Defaults to `grid`, the original seeded coin-flip world. The camera/dive/gate machinery is
+ * pattern-agnostic; only WHERE submaps land changes.
+ */
+export type WorldConfig = { pattern: PatternName }
+export const DEFAULT_CONFIG: WorldConfig = { pattern: 'grid' }
+
+/** A running game exposes a disposer plus a live handle to regenerate the world in place. */
+export type GameHandle = {
+	dispose: () => void
+	/** Tear down the current world and rebuild it under `config` (same editor, same player). */
+	regenerate: (config: WorldConfig) => void
+	getConfig: () => WorldConfig
+}
 
 /**
  * The camera zoom (z) that fits a level's map into the viewport — the same math
@@ -124,63 +143,40 @@ function writeLevelRects(editor: Editor, layout: MapLayout<TLShapeId>, toBack: b
 	)
 }
 
-export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: number }): () => void {
-	const manager = new LevelManager<TLShapeId>()
+export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: number; config?: WorldConfig }): GameHandle {
 	const playerSizeFor = (roomSize: number) => roomSize * PLAYER_FRACTION
 	const speedFor = (roomSize: number) => PLAYER_SPEED_ROOMS_PER_SEC * roomSize // px/sec
 
-	// Start from a clean slate: React StrictMode double-invokes onMount in dev, and
-	// navigating away/back re-mounts — either way we must not stack a second copy of the
-	// map. The map rects use fresh ids each run, so clear everything first (the player's
-	// fixed id is recreated below regardless).
-	editor.run(
-		() => editor.deleteShapes(editor.getCurrentPageShapes().map((s) => s.id)),
-		{ history: 'ignore', ignoreShapeLock: true }
-	)
+	// ── Per-WORLD state (reassigned on every (re)build). The tick and its dive closures read
+	//    these live, so regenerating swaps the whole world under a running game loop without
+	//    re-registering the tick. `roleForAt` is the active pattern (patterns.ts), applied at
+	//    the SAME rule to every scale so a self-similar pattern reads as a fractal. ──────────
+	let manager = new LevelManager<TLShapeId>()
+	let worldSeed = opts?.seed ?? randomWorldSeed()
+	let config: WorldConfig = opts?.config ?? DEFAULT_CONFIG
+	// Running rect count for the current eager build — the SHAPE_BUDGET backstop (see constants).
+	let shapesBuilt = 0
+	let budgetHit = false
+	// A pattern factory is `(w,h,depth,seed) => roleFor`; we build the roleFor per map inside
+	// buildChildInSlot / buildWorld (each map gets its own seed + depth), reading `config.pattern`.
+	const roleForOf = (w: number, h: number, depth: number, seed: number): ((c: GridCell) => CellRole) =>
+		PATTERNS[config.pattern](w, h, depth, seed)
 
-	// ── Build + write the PARENT world at the page origin (sent to back). ────────
-	// A NEW world every start: the seed defaults to random. Pass opts.seed (e.g. from
-	// a ?seed= URL param) to reproduce a specific world — it fully determines the
-	// parent AND every child (childSeedFor derives from it).
-	const worldSeed = opts?.seed ?? randomWorldSeed()
-	 
-	console.info(`[scale-portals] world seed: ${worldSeed} (reproduce with ?seed=${worldSeed})`)
-	const parentLayout = buildMapLayout(() => createShapeId(), PARENT_W, PARENT_H, worldSeed, 0, 0, PARENT_ROOM, GAP, {
-		removeProb: PARENT_REMOVE_PROB,
-		hasSlots: true,
-		slotSize: SLOT,
-		slotPoke: SLOT_POKE,
-		roomProps: roomPropsForDepth(0, MAX_DEPTH), // depth 0 → blue
-	})
-	const parent: LevelState<TLShapeId> = {
-		depth: 0,
-		layout: parentLayout,
-		roomSize: PARENT_ROOM,
-		gap: GAP,
-		originX: 0,
-		originY: 0,
-		parentDepth: null,
-	}
-	manager.pushRoot(parent)
-	writeLevelRects(editor, parentLayout, true)
-
-	// Build + write EVERY submap's child map eagerly and RECURSIVELY, filling its slot,
-	// so every tiny map (at every depth) sits there visibly before you enter. Each child
-	// is cached by its slot's page position, so diving in reuses its shapes. A child at
-	// depth d < MAX_DEPTH is itself a HOST (has its own slots) and we recurse into it; at
-	// depth === MAX_DEPTH it's a LEAF (all rooms + gates, no slots). Room/gap compound
-	// CHILD_SCALE per depth (roomAtDepth/gapAtDepth). Gates: one per host-tunnel direction.
-	const worldTree: WorldNode<TLShapeId>[] = []
+	// Recursively build EVERY submap's child map, filling its slot, so every tiny map (at every
+	// depth) sits there visibly before you enter. Each child is cached by its slot's page
+	// position, so diving in reuses its shapes. A child at depth d < MAX_DEPTH is a HOST (own
+	// slots) and we recurse; at depth === MAX_DEPTH it's a LEAF (rooms + gates, no slots).
 	function buildChildInSlot(parentLevel: LevelState<TLShapeId>, submap: SubmapInfo): WorldNode<TLShapeId> {
 		const depth = parentLevel.depth + 1
 		const isHost = depth < MAX_DEPTH
 		const roomSize = roomAtDepth(depth)
 		const gap = gapAtDepth(depth)
+		const childSeed = childSeedFor(worldSeed, submap.cell, depth)
 		const layout = buildMapLayout(
 			() => createShapeId(),
 			CHILD_W,
 			CHILD_H,
-			childSeedFor(worldSeed, submap.cell, depth),
+			childSeed,
 			submap.slotRect.x,
 			submap.slotRect.y,
 			roomSize,
@@ -192,7 +188,16 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 				// One colour per zoom level; the deepest (leaf) map is light-red.
 				roomProps: roomPropsForDepth(depth, MAX_DEPTH),
 				// A host child offers its own slots (scaled to its own room), so nesting continues.
-				...(isHost ? { slotSize: roomSize * CHILD_FILL, slotPoke: SLOT_POKE * CHILD_SCALE ** depth } : {}),
+				// The active pattern picks its submap cells (same rule at every scale → fractal).
+				...(isHost
+					? {
+							slotSize: roomSize * CHILD_FILL,
+							slotPoke: SLOT_POKE * CHILD_SCALE ** depth,
+							roleFor: roleForOf(CHILD_W, CHILD_H, depth, childSeed),
+							// Force ≥1 submap so an intermediate scale always nests deeper (no dead end).
+							ensureSubmap: true,
+						}
+					: {}),
 			}
 		)
 		const level: LevelState<TLShapeId> = {
@@ -207,34 +212,103 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 		}
 		manager.cacheChild(submapKey(submap.slotRect), level)
 		writeLevelRects(editor, layout, false)
-		// Recurse: build this host child's own children (its grandchildren of the root).
-		const children = isHost ? layout.submaps.map((s) => buildChildInSlot(level, s)) : []
+		shapesBuilt += layout.rects.length
+		// Recurse into this host child's own submaps — UNLESS the eager build has blown its shape
+		// budget, in which case stop descending (this map still renders; its grandchildren are
+		// skipped). A dive into a skipped branch lazily builds on demand (diveIn's cache-miss path).
+		let children: WorldNode<TLShapeId>[] = []
+		if (isHost) {
+			if (shapesBuilt >= SHAPE_BUDGET) {
+				if (!budgetHit) {
+					budgetHit = true
+					console.warn(
+						`[scale-portals] shape budget ${SHAPE_BUDGET} reached (pattern ${config.pattern}, seed ${worldSeed}); ` +
+							`deeper maps build on demand when you dive in.`
+					)
+				}
+			} else {
+				children = layout.submaps.map((s) => buildChildInSlot(level, s))
+			}
+		}
 		const node: WorldNode<TLShapeId> = { submap, layout, children }
 		return node
 	}
-	for (const submap of parentLayout.submaps) worldTree.push(buildChildInSlot(parent, submap))
-
-	// With random seeds, the gate↔tunnel connection invariants must hold for ANY world at
-	// EVERY depth — assert them loudly in dev (also swept across hundreds of seeds in tests).
-	if (import.meta.env.DEV) {
-		const violations = validateWorldTree(parentLayout, worldTree, { w: CHILD_W, h: CHILD_H })
-		for (const v of violations) {
-
-			console.error(`[scale-portals] INVARIANT VIOLATED (seed ${worldSeed}): ${v}`)
-		}
-	}
-
-	// Player spawns at the parent's spawn-room centre, sized to the parent room.
-	const spawn = centre(parentLayout.spawnRect)
-	createPlayer(editor, spawn.x, spawn.y, playerSizeFor(PARENT_ROOM))
-
-	// Frame the root world immediately (no animation on first mount), centred on the
-	// player's spawn. Depth 0, so the inset scale is 1 — the widest-out framing.
-	frameLevel(editor, parent, spawn.x, spawn.y, 0)
 
 	// A trigger only fires once the player has STEPPED OFF it since arriving — so
 	// emerging next to a slot (or arriving on a gate) doesn't immediately re-fire.
 	let triggerArmed = false
+
+	/**
+	 * Tear down whatever is on the page and build a fresh world under `nextConfig`, reusing the
+	 * same editor + player. Called once at register (the initial world) and again whenever the
+	 * user picks a new pattern in the UI. The seed is preserved across a pattern change, so the
+	 * SAME seed under a different pattern is directly comparable; pass a fresh seed to reroll.
+	 */
+	function buildWorld(nextConfig: WorldConfig, nextSeed?: number): void {
+		config = nextConfig
+		if (nextSeed !== undefined) worldSeed = nextSeed
+		manager = new LevelManager<TLShapeId>()
+		triggerArmed = false
+		shapesBuilt = 0
+		budgetHit = false
+
+		// Clean slate: StrictMode double-invokes onMount in dev, route switches re-mount, and a
+		// regenerate replaces the world — none may stack a second map. Map rects mint fresh ids
+		// each build; the player's fixed id is recreated below regardless.
+		editor.run(
+			() => editor.deleteShapes(editor.getCurrentPageShapes().map((s) => s.id)),
+			{ history: 'ignore', ignoreShapeLock: true }
+		)
+
+		console.info(`[scale-portals] world seed: ${worldSeed}, pattern: ${config.pattern} (reproduce with ?seed=${worldSeed})`)
+		// ── Build + write the PARENT (root) world at the page origin (sent to back). ──
+		const parentLayout = buildMapLayout(() => createShapeId(), PARENT_W, PARENT_H, worldSeed, 0, 0, PARENT_ROOM, GAP, {
+			removeProb: PARENT_REMOVE_PROB,
+			hasSlots: true,
+			slotSize: SLOT,
+			slotPoke: SLOT_POKE,
+			roomProps: roomPropsForDepth(0, MAX_DEPTH), // depth 0 → blue
+			roleFor: roleForOf(PARENT_W, PARENT_H, 0, worldSeed),
+			// A custom pattern can come up all-rooms; force ≥1 submap so the root is never dive-less.
+			ensureSubmap: true,
+		})
+		const parent: LevelState<TLShapeId> = {
+			depth: 0,
+			layout: parentLayout,
+			roomSize: PARENT_ROOM,
+			gap: GAP,
+			originX: 0,
+			originY: 0,
+			parentDepth: null,
+		}
+		manager.pushRoot(parent)
+		writeLevelRects(editor, parentLayout, true)
+		shapesBuilt += parentLayout.rects.length
+
+		const worldTree: WorldNode<TLShapeId>[] = []
+		for (const submap of parentLayout.submaps) worldTree.push(buildChildInSlot(parent, submap))
+
+		// With random seeds the gate↔tunnel invariants must hold for ANY world at EVERY depth —
+		// assert loudly in dev (also swept across hundreds of seeds in tests). Patterns change
+		// WHERE submaps land, not the gate/portal contract, so this guards every pattern too.
+		// Skipped when the shape budget truncated the tree: a truncated branch legitimately has a
+		// submap with no built child (invariant #1 would false-alarm on that), and the truncated
+		// world is a degraded fallback we don't claim the full contract over.
+		if (import.meta.env.DEV && !budgetHit) {
+			const violations = validateWorldTree(parentLayout, worldTree, { w: CHILD_W, h: CHILD_H })
+			for (const v of violations) {
+				console.error(`[scale-portals] INVARIANT VIOLATED (seed ${worldSeed}, pattern ${config.pattern}): ${v}`)
+			}
+		}
+
+		// Player spawns at the parent's spawn-room centre, sized to the parent room.
+		const spawn = centre(parentLayout.spawnRect)
+		createPlayer(editor, spawn.x, spawn.y, playerSizeFor(PARENT_ROOM))
+		// Frame the root world immediately (no animation), centred on spawn. Depth 0 → inset 1.
+		frameLevel(editor, parent, spawn.x, spawn.y, 0)
+	}
+
+	buildWorld(config)
 
 	// The camera follows the player each tick. A dive changes ZOOM ONLY — we ease z from the
 	// current level's fit-zoom to the new level's over ZOOM_DURATION_MS, while the follow keeps
@@ -360,5 +434,10 @@ export function registerGame(editor: Editor, keys: KeyState, opts?: { seed?: num
 	}
 
 	editor.on('tick', onTick)
-	return () => editor.off('tick', onTick)
+	return {
+		dispose: () => editor.off('tick', onTick),
+		// Rebuild in place under a new pattern, keeping the current seed so it's comparable.
+		regenerate: (next: WorldConfig) => buildWorld(next),
+		getConfig: () => config,
+	}
 }

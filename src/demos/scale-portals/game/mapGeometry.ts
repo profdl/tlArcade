@@ -314,6 +314,13 @@ export type BuildMapLayoutOptions = {
 	 * role function (the seeded coin flip). Ignored if `roleFor` is supplied. Default 0.5.
 	 */
 	submapProb?: number
+	/**
+	 * Host only: force at least one submap if the chosen roles yield none, so no scale is a
+	 * dive-less dead end. The DEFAULT coin flip (submapProb > 0) already self-guarantees this;
+	 * set it when supplying a custom `roleFor` (patterns.ts) that could come up all-rooms. Leave
+	 * false to allow an intentional all-rooms map. Default false.
+	 */
+	ensureSubmap?: boolean
 	/** Host only: slot side length (the square a child map fills), page px. */
 	slotSize?: number
 	/** Host only: how far a tunnel pokes INTO a slot (so the dive trigger can fire). */
@@ -410,7 +417,22 @@ export function buildMapLayout<Id>(
 		submapCells.add(cellKey(promoted.cell))
 	}
 	const defaultRoleFor = (c: GridCell): CellRole => (submapCells.has(cellKey(c)) ? 'submap' : 'room')
-	const roleFor = opts.hasSlots ? (opts.roleFor ?? defaultRoleFor) : () => 'room' as CellRole
+	const chosenRoleFor = opts.hasSlots ? (opts.roleFor ?? defaultRoleFor) : () => 'room' as CellRole
+
+	// GUARANTEE ≥1 SUBMAP on a host map — but only when the caller ASKS for it (ensureSubmap), so
+	// the intentional all-rooms opt-outs (submapProb 0, or a roleFor that returns all 'room') still
+	// produce zero. When a custom pattern (patterns.ts) is in play the game requests this, so a
+	// sparse/unlucky pattern that marks every eligible cell 'room' can't leave a scale a dive-less
+	// dead end. The DEFAULT coin flip (submapProb > 0) already self-guarantees above, so this is a
+	// no-op there; it exists to extend that same promise to custom role functions. Promotion picks
+	// the single eligible cell that flipped closest to submap (the same deterministic tie-break the
+	// default path uses), so one seed still reproduces the world. Untouched when roles already ≥1.
+	let forcedSubmap: string | undefined
+	if (opts.hasSlots && opts.ensureSubmap && eligible.length > 0) {
+		const anySubmap = eligible.some((e) => chosenRoleFor(e.cell) === 'submap')
+		if (!anySubmap) forcedSubmap = cellKey(eligible.reduce((a, b) => (b.roll < a.roll ? b : a)).cell)
+	}
+	const roleFor = (c: GridCell): CellRole => (forcedSubmap !== undefined && cellKey(c) === forcedSubmap ? 'submap' : chosenRoleFor(c))
 	const roleAt = (x: number, y: number): CellRole =>
 		isCell(spawnCell, x, y) || gateAt(x, y) ? 'room' : roleFor({ x, y })
 

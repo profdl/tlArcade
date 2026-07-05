@@ -118,6 +118,17 @@ export const PLAYER_FRACTION = 0.12
 /** Speed as room-widths per second — pacing (time to cross a room) is depth-invariant. */
 export const PLAYER_SPEED_ROOMS_PER_SEC = 1.5
 
+/**
+ * SHAPE BUDGET — a safety valve on the eager whole-tree build. Every nested map is created up
+ * front (gameLoop's buildChildInSlot), so a dense/branchy pattern can mint thousands of geo
+ * shapes and choke tldraw. Patterns taper their own recursion (see sierpinskiPattern), but this
+ * is the pattern-agnostic backstop: once a build has emitted this many rects, buildChildInSlot
+ * stops descending into further submaps (already-built maps still render; only deeper grandchildren
+ * are skipped) and logs once. Sized above every shipped pattern's worst case (~1700) with headroom,
+ * so it only bites a genuinely runaway new pattern — a warning, not a silent truncation.
+ */
+export const SHAPE_BUDGET = 2600
+
 /** Camera dive-in/out animation. A dive spans a large zoom ratio (~18.75× per depth), eased
  *  geometrically (see gameLoop) — a slightly longer beat reads as a graceful scale rather
  *  than a snap. */

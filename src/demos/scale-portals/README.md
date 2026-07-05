@@ -45,8 +45,24 @@ inequality — bump `ZOOM_CEILING` to nest deeper still.
   can independently be a room or a submap, probability `submapProb`, default
   50%), so different world patterns are one function swap (or one probability
   tweak). The flip is seeded from the map's own seed, so one world seed still
-  reproduces every role; a HOST map is guaranteed ≥1 submap (if every flip came
-  up room, the cell closest to submap is promoted) so no scale is a dead end.
+  reproduces every role; a HOST map is guaranteed ≥1 submap (when
+  `ensureSubmap` is set, if every cell came up room the one closest to submap is
+  promoted) so no scale is a dead end.
+- **Map PATTERNS make the complexity fractal** (`game/patterns.ts`, picker in
+  `game/WorldControls.tsx`). The role function is the seam, so it's the natural
+  place to add structure: the picker (top-left overlay) swaps in a named pattern
+  and rebuilds the world in place (gameLoop's `regenerate`). `Grid`/`Sparse`/
+  `Dense` are the seeded coin flip at different densities (`Grid` is the original
+  simplest map); `Sierpiński` is a self-similar carpet, `Clustered` grows organic
+  blobs, `Rings` alternates concentric shells. Because the SAME rule runs at every
+  scale, a self-similar pattern reads as a true fractal — dive into a Sierpiński
+  submap and the carpet motif repeats, smaller. **Bounding the shape count:** a
+  self-similar rule branches geometrically (every submap builds a full child map),
+  so `sierpinskiPattern` TAPERS to all-rooms past `stopDepth` (the deepest,
+  barely-visible scale goes rooms-only), keeping the eager whole-tree build in
+  line with `Grid` (~1400 vs ~4000 shapes). `SHAPE_BUDGET` (`constants.ts`) is the
+  pattern-agnostic backstop: once a build blows it, deeper maps stop building
+  eagerly and lazy-build on dive-in (logged, not silent).
   Doors are built **port-to-port**: a room's port pokes slightly into
   the room; a submap's port pokes slightly INTO the slot — which is exactly
   what lets the player's dive trigger fire at the end of a tunnel.
