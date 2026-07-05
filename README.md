@@ -11,6 +11,7 @@ running out of one app. `/` lists them; each one lazy-loads at its own route.
 | Busytown | `/demos/busytown` | An ambient ECS town sim — characters, jobs, whims | [`simtown-busytown`](../../tree/simtown-busytown)\* |
 | Face Mask | `/demos/face-mask` | Pin native tldraw shapes to webcam-tracked face landmarks | [`simtown-face-mask`](../../tree/simtown-face-mask)\* |
 | Toolkit | `/demos/toolkit/*` | Multiplayer tabletop toolkit — synced tokens/dice/cards/creatures, server-authoritative referee | [`toolkit-master`](../../tree/toolkit-master)\* |
+| Scale Rooms | `/demos/scale-rooms` | A telescope of square rooms nested 16 scales deep — smaller rooms overlap larger ones (no hallways); step onto a room's doorway and the camera dives in | — |
 
 \* Local-only branch (not pushed to `origin`) — kept for history/reference.
 
