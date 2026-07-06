@@ -4,10 +4,10 @@
  * tldraw is an editor, not a game loop, so this class *is* the game loop. On
  * start() it snapshots authored state, collects the level from the NATIVE shapes
  * on the page (role read from a shape's color — see roles.ts → roleForColor),
- * and drives the single player shape with a fixed-timestep sim (gravity +
- * WASD/arrow movement + geometry-accurate collision). On stop() it restores, so
- * Play/Stop is non-destructive and never touches the undo stack (all canvas
- * writes go through `editor.run(..., { history: 'ignore' })`).
+ * and drives the player with a fixed-timestep sim (gravity + WASD/arrow movement
+ * + geometry-accurate collision). On stop() it restores, so Play/Stop is
+ * non-destructive and never touches the undo stack (all canvas writes go through
+ * `editor.run(..., { history: 'ignore' })`).
  *
  * Collision matches each shape's REAL perimeter, not its bounding box (see
  * game/collision.ts): a triangle collides as a triangle, a hand-drawn stroke as
@@ -17,9 +17,13 @@
  * separate; move Y, separate) so the platformer keeps crisp control and a
  * reliable `grounded` flag for jumping.
  *
- * The player can be a geo shape (blue, from the tray) OR a blue shape drawn with
- * the pencil — so it's sized/positioned from its page bounds, not props.w/h
- * (which draw shapes don't have).
+ * The player can be a single geo shape (blue, from the tray), a blue shape drawn
+ * with the pencil, OR a GROUP of shapes marked via the tray's "Set as Player"
+ * (draw a stick figure, select the strokes, click it — see game/player.ts). It's
+ * sized/positioned from its page bounds, not props.w/h (draw shapes and groups
+ * don't have them); a group's parts are merged into one rigid outline for
+ * collision, and each part LEAF is repositioned every frame (not the group
+ * container, whose transform is derived from its children) to keep it rigid.
  *
  * MVP scope / known limits (see CLAUDE.md):
  *  - Only the player moves. The level is collected ONCE at start.
@@ -28,14 +32,8 @@
  */
 import type { Editor, TLDrawShape, TLGeoShape, TLShapeId, TLShapePartial } from 'tldraw'
 import { roleForColor, type Role } from './roles'
-import {
-  buildBody,
-  outlineSamples,
-  penetration,
-  pointInPolygon,
-  type Body,
-  type Pt,
-} from './collision'
+import { collectPlayerBody, isPlayerMarked, type PlayerPart } from './player'
+import { buildBody, penetration, pointInPolygon, type Body, type Pt } from './collision'
 
 export const PHYSICS = {
   GRAVITY: 2600, // px/s²
@@ -83,18 +81,20 @@ export class GameRuntime {
   private playing = false // a play session is active (until stop() restores)
   private finished = false // the game ended (won); sim ticking stopped, session still active
 
-  private playerId!: TLShapeId
-  private playerType = 'geo' // the player may be a geo shape or a drawn (pencil) shape
   private px = 0 // player bounds top-left (page space) — what the sim moves
   private py = 0
   // Player outline sample points, relative to the bounds top-left. Adding (px,py)
   // gives their live page position each step, so an oddly-shaped player collides
   // by its real perimeter without re-reading geometry mid-sim.
   private playerSamples: Pt[] = []
-  // The player's record x/y differs from its bounds top-left for a draw shape
-  // (its points don't start at the origin); this offset bridges the two.
-  private offX = 0
-  private offY = 0
+  // The shapes actually driven each frame: every writable LEAF of the player (one
+  // shape for a lone player, all the parts for a group — the group container
+  // itself is derived from its children, so we move the children, not it). Each
+  // leaf remembers where its record origin sat relative to the player's bounds
+  // top-left AT START, in PAGE space, plus the page→local conversion for its
+  // parent — so each frame we place it at (px,py)+its offset and write it back in
+  // its own coordinate space (a grouped child stores x/y in group-local space).
+  private parts: PlayerPart[] = []
   private vx = 0
   private vy = 0
   private grounded = false
@@ -123,12 +123,16 @@ export class GameRuntime {
   }
 
   /**
-   * A shape's role, from its color. Both geo shapes and shapes drawn with the
-   * pencil (`draw`) map their color to a role — so you can draw any element, not
-   * just the player. A color that isn't a role color stays solid terrain, so a
-   * level can still be sketched (e.g. in black). Lines are always terrain.
+   * A shape's role. The player is identified by a marker — `meta.role ===
+   * 'player'`, set via the tray's "Set as Player" (a group, or a lone shape) —
+   * which WINS over color, so a stick figure can be any colour. Failing that, a
+   * geo/draw shape's COLOR maps to a role (blue = player, so single-blue-shape
+   * levels still work; grey/yellow/red/green = wall/token/hazard/goal). A color
+   * that isn't a role color stays solid terrain (sketch a level in black); lines
+   * are always terrain.
    */
-  private roleOf(shape: { type: string }): Role | null {
+  private roleOf(shape: { type: string; meta?: Record<string, unknown> }): Role | null {
+    if (isPlayerMarked(shape)) return 'player'
     if (shape.type === 'geo') return roleForColor((shape as TLGeoShape).props.color)
     if (shape.type === 'draw') return roleForColor((shape as TLDrawShape).props.color)
     return null
@@ -139,14 +143,27 @@ export class GameRuntime {
     const editor = this.editor
     const shapes = editor.getCurrentPageShapes()
 
-    const player = shapes.find((s) => this.roleOf(s) === 'player')
-    const playerBounds = player && editor.getShapePageBounds(player.id)
-    const samples = player && outlineSamples(editor, player.id)
+    // Find the player. A MARKED shape (meta.role === 'player', the group the tray
+    // creates) wins unconditionally — its blue children must NOT each be mistaken
+    // for a player via the color fallback. Only if nothing is marked do we fall
+    // back to a lone blue shape (legacy single-shape levels).
+    const player =
+      shapes.find((s) => isPlayerMarked(s)) ??
+      shapes.find((s) => this.roleOf(s) === 'player')
+    // The player may be a group (a drawn stick figure) — collect its bounds and
+    // the merged outline of all its parts as one rigid body.
+    const playerBody = player && collectPlayerBody(editor, player.id)
 
-    if (!player || !playerBounds || !samples) {
+    if (!player || !playerBody) {
       this.onState({ status: 'no-player', collected: 0, total: 0, deaths: 0 })
       return false
     }
+    const playerBounds = playerBody.bounds
+    const samples = playerBody.samples
+
+    // The player's parts (a group's descendants) are NOT level geometry — skip
+    // the whole subtree so a stick-figure limb isn't collected as terrain.
+    const playerIds = editor.getShapeAndDescendantIds([player.id])
 
     // Collect the level once, and snapshot anything we might mutate. Every solid
     // and trigger becomes a real-outline body (polygon for closed shapes, a thin
@@ -156,7 +173,7 @@ export class GameRuntime {
     this.triggers = []
     for (const s of shapes) {
       if (!LEVEL_TYPES.has(s.type)) continue
-      if (s.id === player.id) continue
+      if (playerIds.has(s.id)) continue
       const body = buildBody(editor, s.id)
       if (!body) continue
       const role = this.roleOf(s)
@@ -169,19 +186,13 @@ export class GameRuntime {
       }
     }
 
-    this.playerId = player.id
-    this.playerType = player.type
+    this.parts = playerBody.parts
     this.px = playerBounds.minX
     this.py = playerBounds.minY
     // Store the player's outline samples relative to its bounds top-left, so
     // adding (px,py) each step yields their live page position.
     this.playerSamples = samples.map((p) => ({ x: p.x - playerBounds.minX, y: p.y - playerBounds.minY }))
-    // A draw shape's record origin isn't its bounds' top-left; remember the gap
-    // so we can convert the sim's bounds position back to a record x/y to write.
-    this.offX = player.x - playerBounds.minX
-    this.offY = player.y - playerBounds.minY
     this.spawn = { x: this.px, y: this.py }
-    this.snapshot.set(player.id, { x: player.x, y: player.y, opacity: player.opacity })
     this.vx = 0
     this.vy = 0
     this.grounded = false
@@ -219,6 +230,7 @@ export class GameRuntime {
     const editor = this.editor
     editor.run(
       () => {
+        // Restore triggers (opacity/position) …
         for (const [id, snap] of this.snapshot) {
           const s = editor.getShape(id)
           if (!s) continue
@@ -228,6 +240,17 @@ export class GameRuntime {
             x: snap.x,
             y: snap.y,
             opacity: snap.opacity,
+          } as TLShapePartial)
+        }
+        // … and the player's parts (each leaf, in its own coordinate space).
+        for (const part of this.parts) {
+          if (!editor.getShape(part.id)) continue
+          editor.updateShape({
+            id: part.id,
+            type: part.type,
+            x: part.snap.x,
+            y: part.snap.y,
+            opacity: part.snap.opacity,
           } as TLShapePartial)
         }
       },
@@ -345,16 +368,26 @@ export class GameRuntime {
   }
 
   private writePlayer() {
-    // The sim tracks the bounds top-left (px/py); convert back to the shape's
-    // record origin via the offset captured at start (0 for a geo player).
+    // The sim tracks the player bounds top-left (px/py). Each leaf part sits at a
+    // fixed page offset from it (captured at start), so its target page origin is
+    // (px,py)+offset. Write that back in the leaf's OWN space via toLocal — for a
+    // top-level shape toLocal is identity, so it's just the page point; for a
+    // grouped child it maps into group-local coordinates. Moving every leaf (not
+    // the derived group container) is what keeps the whole figure rigid.
     this.editor.run(
       () => {
-        this.editor.updateShape({
-          id: this.playerId,
-          type: this.playerType,
-          x: this.px + this.offX,
-          y: this.py + this.offY,
-        } as TLShapePartial)
+        for (const part of this.parts) {
+          const local = part.toLocal.applyToPoint({
+            x: this.px + part.offX,
+            y: this.py + part.offY,
+          })
+          this.editor.updateShape({
+            id: part.id,
+            type: part.type,
+            x: local.x,
+            y: local.y,
+          } as TLShapePartial)
+        }
       },
       { history: 'ignore', ignoreShapeLock: true },
     )

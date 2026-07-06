@@ -14,6 +14,7 @@ import { Box, Vec, useAtom, useEditor, useQuickReactor, useValue } from 'tldraw'
 import { ROLE_LIST, ROLES, shapeForRole, type Role } from '../game/roles'
 import { RoleIcon } from './icons'
 import { playingAtom } from '../game/state'
+import { markAsPlayer } from '../game/player'
 
 type DragState =
   | { name: 'idle' }
@@ -106,6 +107,11 @@ export function Tray() {
   )
 
   const state = useValue('trayDrag', () => dragState.get(), [dragState])
+  // Enable "Set as Player" when anything is selected — the button groups the
+  // selection (if >1) and marks it as the player (see game/player.ts).
+  const hasSelection = useValue('hasSelection', () => editor.getSelectedShapeIds().length > 0, [
+    editor,
+  ])
   if (playing) return null
 
   return (
@@ -124,6 +130,16 @@ export function Tray() {
             <span className="eng-tray-label">{ROLES[role].label}</span>
           </div>
         ))}
+        <button
+          type="button"
+          className="eng-tray-player"
+          disabled={!hasSelection}
+          title="Select shapes (e.g. a drawn figure), then make them the player"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => markAsPlayer(editor, editor.getSelectedShapeIds())}
+        >
+          Set as Player
+        </button>
       </div>
       <div className="eng-drag-ghost" ref={rDragImage}>
         {state.name === 'dragging' ? <RoleIcon role={state.role} size={44} /> : null}

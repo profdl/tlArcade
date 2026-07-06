@@ -13,7 +13,8 @@ hit **Play** to test-drive a platformer.
 
 There is **no custom shape**. Every element is a plain native tldraw shape, and
 its ROLE is read from its **color** at play time (the same color→behavior idea
-the Line Rider demos use):
+the Line Rider demos use) — *except* the player, which can also be marked
+explicitly (see **The player** below), and that marker wins over color:
 
 | color | role | behavior |
 | --- | --- | --- |
@@ -33,6 +34,28 @@ Since a `draw` shape has no `props.w/h`, the player is sized and positioned from
 its **page bounds** (`getShapePageBounds`), not props — with an offset captured
 at start to convert the sim's bounds position back to the shape's record x/y (see
 `engine.ts` → `start`/`writePlayer`). This works for a geo player too (offset 0).
+
+## The player (single shape or a group)
+
+The player is identified by a **marker**, `meta.role === 'player'`, which **wins
+over color** — so a stick figure can be any colour(s). It's set by the tray's
+**"Set as Player"** button (`render/Tray.tsx` → `game/player.ts` → `markAsPlayer`):
+select shapes, click it; if >1 it `groupShapes` them first, then stamps the marker
+on the group. There is always exactly **one** player — marking clears the previous
+marker. Marking is an authoring action (undoable); it does NOT go through
+`history: 'ignore'`.
+
+At `start()`, `collectPlayerBody` (`game/player.ts`) reads the player's page bounds
+(the union of a group's children) and **merges every leaf part's outline** into one
+page-space sample set — so a multi-part figure collides by its real combined
+perimeter. The sim treats those samples exactly like a single shape's (it never
+cared how many shapes produced them, see below), and `writePlayer` moves the group
+record's `x/y` each frame; the parts ride along via tldraw's parenting (grouping
+preserves page positions). The player's whole descendant subtree is **excluded**
+from the level scan so a limb isn't collected as terrain.
+
+Legacy fallback: an unmarked single **blue** shape still plays as the player (color
+→ role), so old levels keep working.
 
 Everything about a role lives in [game/roles.ts](game/roles.ts): its tray
 appearance, the geo shape the tray drops (`shapeForRole`), its color, default
@@ -95,8 +118,13 @@ literals.
   (enemy, ball, spawner; see the repo brainstorm).
 - **Collision is AABB.** A rotated wall collides as its upright bounding box.
   Keep walls thicker than one sim step (a few px) to avoid tunneling at speed.
-- **The player is driven by `shape.x/shape.y`** (top-level, unrotated). Don't
-  parent or rotate the player and expect the sim to track it.
+- **The player is driven by `shape.x/shape.y`** of the player record — the group
+  (or lone shape), top-level and unrotated. Moving the group carries its parts;
+  but don't rotate the player record, or re-parent it under something else, and
+  expect the sim to track it.
+- **A group player is a rigid body.** Parts are merged into one outline at
+  `start()` and never move relative to each other during play — no articulated
+  limbs/walk cycles yet.
 - **`persistenceKey="tlArcade-engine-native"`** — unique per demo (the shell's
   CLAUDE.md explains why this must never be shared). Levels persist in
   localStorage.
