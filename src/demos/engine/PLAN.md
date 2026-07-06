@@ -562,12 +562,18 @@ that's the demo's native shape; character look & animation via §3.
   mover, inherit its velocity on jump) — subtle but expected. *Needed for
   momentum-physics games; niche but a hard "no" without it.*
 
-- **M7 — Audio (`game/audio/`).** No game ships silent. **SFX on events (jump,
+- **M7 — Audio (`game/audio.ts`).** No game ships silent. **SFX on events (jump,
   land, collect, hurt, die) and music per level/state** are table-stakes. The repo
   already has `tone`/`@tonejs/piano` deps — the hooks exist. Data: an event→sound
   map + per-level track. Also an **AI surface** (prompt → which sounds/mood), and a
-  natural fit for procedural/synth SFX so no asset pipeline is needed. *Cheap,
-  high-impact; currently entirely absent.*
+  natural fit for procedural/synth SFX so no asset pipeline is needed.
+  **STATUS: event SFX SHIPPED** — `game/audio.ts` (piano-voiced `AudioEngine`,
+  reusing the line-rider audio infra) fires a struck note per game event
+  (jump/land/collect/stomp/spring/checkpoint/death/win); the runtime calls it, the
+  sim stays silent, and it's a no-op until the Play gesture resumes it (so all
+  tests stay behavior-identical). Pure mapping in `game/audioMap.ts` (unit-tested).
+  *Still to do (later): per-level MUSIC tracks and the AI "prompt → sound/mood"
+  surface — the "not-silent" v1 requirement is met by the event SFX.*
 
 - **M8 — UI / HUD & juice (`game/hud/`, effects).** Games need an **on-screen HUD**
   (health, score, timer, collected count — the demo shows a bare counter) and
@@ -588,6 +594,256 @@ majority of pro/indie platformers**; the remaining hard cases are (a) deeply
 interconnected Metroidvanias (M3, planned-but-large) and (b) genre *hybrids* that
 stop being platformers (rhythm-first, card-battler, full RPG) — out of scope by
 definition.
+
+---
+
+## 4.6 Recreation-fidelity gap analysis (what a *faithful* template needs)
+
+§4.5 asks "can we build *any* platformer's mechanics?" This section asks a sharper
+question the template set (§5.5) forces: **to recreate a specific iconic level
+*faithfully* — its real design DNA, not an approximation — which primitives are
+actually missing?** The distinction matters because our current 9-role vocabulary
+(`player`/`wall`/`token`/`hazard`/`goal`/`enemy`/`spring`/`checkpoint`/`oneway`)
+can *evoke* many classics but can't reproduce the mechanic the design leans on
+(Mario's `?`-blocks, a Sonic loop, a Mega Man disappearing-block gauntlet).
+
+**Method.** For a spread of target games we listed the beats a knowledgeable
+player would call "the point of that level," then asked what each beat needs
+beyond today's vocabulary. Every gap below is expressed as an *addition to an
+existing G/M system* (§4/§4.5), not a new architecture — the N-entity model
+(§1.3) is built to absorb these as new `Motion`/`Effect` kinds or `meta`-carried
+data. **A recreation always rebuilds the level's mechanics and geometry from our
+blocks; it never lifts a game's copyrighted art or its exact map data.**
+
+### The missing elements, by target game
+
+| Target | Beats that need a new primitive | Missing element → where it lands |
+|---|---|---|
+| **Mario 1-1 / 1-2** | bonk a `?`-block for a coin/power-up; a pipe that warps to a bonus room; a Piranha Plant rising on a timer; falling in a pit = death (not just a gap); a stomped Koopa becomes a kickable shell | **Hittable block** (bonk-from-below → eject/break) → *G3 role*; **warp pipe** (paired teleport) → G3b (`effect: teleport` exists); **oscillating enemy** (vertical timer) → G2 `motion: sine`; **kill-plane / bottomless pit** → *G3a* (small, high-value); **shell** (stomp → projectile) → G2b; **power-up + player size states** → *M2* items + a resize of the collision body |
+| **Sonic — Green Hill** | preserve momentum across curved terrain; roll into an S-tunnel; a loop; a diagonal spring; keep-your-rings damage model; a shooting Buzz Bomber | **Momentum on curved surfaces / loops** → *M6* (the hard one — see the line-rider reuse below); **angled spring** (launch along a vector, not just up) → small extension of G3a `bounce`; **ring/health model** (hit scatters, ≥1 survives) → M2 + G2c vitality; **flying shooter** → G2 `motion: sine` + G2b projectiles |
+| **Mega Man** | shoot enemies (run-and-gun); disappearing/appearing blocks on a phase clock; moving/falling platforms; multi-hit enemies | **Player projectile (fire button) + enemy HP** → *G1/G2c* (the genre-definer); **blink platform** (toggle solid on a global clock) → *G3c* `syncCycle`; **moving/crumbling platform** → *G3b* `motion: mover` + a crumble effect; **enemy HP** → G2c vitality |
+| **Super Meat Boy** | wall-cling + wall-jump; sawblades on a track; near-instant no-life-loss respawn; crumbling salt | **Wall-slide + wall-jump** → *G1b* (already planned; *reuses the existing `touchingWall`/`wallNx` machinery* the slope-jump proves); **hazard on a path** (moving sawblade) → *G3b* `motion: mover` + `effect: kill`; **instant-restart rule** → a cheap *M1* `SessionRules` toggle; **crumble** → shares Mega Man's crumble |
+| **Celeste — Forsaken City** | 8-dir air dash + a dash-refill crystal; wall-climb with stamina; "traffic-light" zip blocks; disappearing platforms | **Dash + dash-refill pickup** → *G1b* + M2 (the genre-definer); **climb/stamina** → *G1c*; **path/zip mover** → *G3b*; **blink/disappear platform** → shares Mega Man's blink |
+| **Castlevania** | whip melee with an arc; stair-locked movement; knockback-into-a-pit on hit; sub-weapon projectiles | **Melee attack + hitbox** → *G2c* (new player attack); **stairs** (diagonal-lock movement mode) → *G1* movement variant; **knockback on hit** → *G2c* vitality `knockback` (already in the schema); **sub-weapon** → G2b projectiles |
+| **Spelunky (stretch)** | a level read top-to-bottom; drop through ledges | **Vertical camera framing** → *M5* (`perScreen`/vertical follow — small); procedural generation is out of scope (a template is authored, not generated) |
+
+### The high-leverage additions (one primitive unlocks several games)
+
+Ranked by reach-per-effort — build these first because each makes *multiple*
+templates faithful rather than approximate:
+
+| Add | Effort | Lands in | Makes faithful |
+|---|---|---|---|
+| **Kill-plane / bottomless pit** | small | G3a | Mario, Sonic, Meat Boy, Spelunky — and closes an existing honesty gap (today a "pit" is just a walk-off gap, not death) |
+| **`mover` motion (moving platforms + moving hazards)** | medium | G3b | Mega Man, Celeste, Meat Boy — one motion kind, wide reach |
+| **Hittable block (bonk → eject/break)** | medium | G3 role | Mario `?`/brick, Sonic monitors |
+| **`blink`/`crumble` platform** | medium | G3c/G3b | Mega Man, Celeste, Meat Boy |
+| **Angled spring (launch vector)** | small | G3a | Sonic, Celeste — a tiny generalization of today's straight-up `bounce` |
+| **Player projectile + enemy HP** | big | G1 + G2c | Mega Man, Contra, Sonic shooters |
+| **Dash (+ refill)** | big | G1b (+M2) | Celeste — and modernizes feel broadly |
+| **Wall-slide / wall-jump** | medium | G1b | Meat Boy, Celeste (partly built already via `touchingWall`) |
+| **Power-up + size/HP states** | big | M2 | Mario's core loop |
+| **Momentum / slopes / loops** | very big | M6 | Sonic (see below) |
+
+**Tiering.** *Tier 0* — kill-plane (do first, near-free, high honesty payoff).
+*Tier 1* — `mover` + hittable-block + `blink`/`crumble` + angled spring: one
+refactor pass through the entity step loop that turns **Mega Man, most of Mario
+1-1/1-2, and a credible Meat Boy** from approximations into faithful recreations,
+all as new `Motion`/`Effect` kinds in the existing model. *Tier 2* — the
+genre-defining player abilities (dash, shooting, whip, power-ups), each its own
+project and each *the* identity of its game. *Tier 3 (probably skip)* — Sonic
+loops/momentum: the fidelity cost is large and it fights our per-axis AABB
+resolver.
+
+### The Sonic gap — reuse the line-rider sled sim (don't rebuild momentum)
+
+Sonic is the one target our per-axis collision model (`entities/step.ts` →
+`resolveAxis`, `deepestShift`) structurally can't do: it resolves X and Y
+independently against axis-aligned outlines, so velocity does **not** follow a
+curved surface tangent — no momentum preservation on ramps, no loops.
+
+We already own a sim that does exactly this, in a sibling demo:
+[line-rider-side/game/physics.ts](../line-rider-side/game/physics.ts) is a
+**framework-free Verlet point-mass sim that rides arbitrary drawn slopes**. Two
+pieces port directly to the Sonic gap:
+
+- **`sideThrust` "sideways gravity"** (physics.ts §Side-rider mode) — a constant
+  +x force applied to the runner points *only while grounded*, which the
+  positional solver redirects **up whatever slope the body is pressed into**, "so
+  it CLIMBS any drawn slope (no surface-tangent guessing)" and launches off ramps
+  as a pure projectile. That is Sonic's run-up-a-curve-and-fly behavior, already
+  written and unit-tested (`physics.test.ts`).
+- **The color→`LineKind` behavior split** (line-rider-classic/side:
+  `accelerate` / `bounce` / `ice` / `oneway` segments) is the *same idea* as our
+  color→role model — an `accelerate` line is a Sonic speed booster, a `bounce`
+  line is a spring/ramp, `ice` is a slippery surface. The reuse is conceptual as
+  well as mechanical.
+
+The catch (state honestly): line-rider's sim is **Verlet + swept segment
+collision**, a different integration and collision model from the engine's
+per-axis AABB resolver. It is **not** a drop-in for the platformer player — the
+jump/coyote/buffer/variable-cut feel pipeline (physics.ts) lives on the AABB
+path. So the realistic plan for a faithful Sonic template is **M6 = introduce a
+`momentum` motion kind whose stepper is the line-rider Verlet sled** (or a
+distilled single-body version of it), selected per-entity like any other
+`Motion`, rather than trying to bend the AABB resolver into curves. That keeps
+the shared demo code genuinely shared and avoids reinventing a slope sim we've
+already shipped and tested next door. **M6 stays v3 / target-driven** — build it
+only when a Sonic-class template is actually greenlit; the reuse note exists so
+that when it is, we start from the sled sim, not a blank file.
+
+### Consequence for the tiers and templates
+
+- **v1 gains one cheap must-have: the kill-plane (Tier 0).** Fold it into `G3a`
+  (static props) — it's the difference between "a gap you can walk into" and "a
+  pit you die in," which every Mario/Sonic/Meat-Boy level assumes. Small enough to
+  ride along with the existing v1 prop work.
+- **Tier 1 primitives become the backbone of new v2 templates** (§5.5): a
+  **Mario-1-2-like** (hittable blocks + warp pipe + oscillating Piranha) and a
+  **Mega-Man-like** (blink platforms + movers + shooting) are the natural exit
+  tests for the G3b/G3c mover/blink work and the G2b/G1 projectile work.
+- **Sonic and full Celeste stay v3 / target-driven** — they need Tier 2 abilities
+  (or M6 momentum) to be faithful rather than evocative, so they earn their
+  template only when their tier is built (the §5.5 rule: no template for an unbuilt
+  system).
+
+---
+
+## 4.7 THE NEXT STEP — Tier 0 + Tier 1 recreation primitives (excl. Sonic)
+
+**Decision:** the immediate next build slice is **the Tier 0 + Tier 1 elements
+from §4.6, minus Sonic/M6 momentum.** They are the highest reach-per-effort work
+in the plan — a single pass through the entity model that turns the biggest set of
+templates from *evocations* into *faithful recreations* (Mario 1-1/1-2, Mega Man,
+a credible Meat Boy). Every element below is a new `Motion`/`Effect`/role or a
+small runtime hook in files that already exist and are unit-tested; **none needs
+new architecture** — the N-entity model (§1.3) was built to absorb exactly this.
+
+**Deliberately excluded from this slice:** Sonic momentum/loops (M6 — needs the
+line-rider sled-sim port, §4.6, kept v3); the Tier-2 genre-definer *abilities*
+(dash, shooting, whip, power-ups) — those are their own projects. This slice is
+only the props/movers/entity-behavior primitives that slot into the existing sim.
+
+### Grounding in the current code (verified)
+
+The seams are already there — this is why the slice is cheap:
+
+- **Motion dispatch** — [entities/step.ts](game/entities/step.ts) → `stepEntity`
+  switches on `motion` (`platformer` | `patrol` | else). New movers are new
+  branches; gravity + `resolveAxis` already run for *every* motion, so a mover
+  reuses the integrate+resolve path for free.
+- **Static solids vs. movers** — [engine.ts](game/engine.ts) `start()` captures
+  `this.solids` once and appends `enemyIds` as stepped entities. A moving platform
+  is the **first solid that is also an entity**: it must be re-read per frame (the
+  documented "movers are the exception to solids-captured-once" rule, §Known
+  limits). This is the one genuinely new wiring pattern in the slice.
+- **Triggers/effects** — `checkTriggers` is an inline per-role loop over
+  `this.triggers`; a new trigger effect (or kill-plane) is a new branch, and the
+  pure decision goes in [entities/props.ts](game/entities/props.ts) next to
+  `springLaunchVy`/`oneWayBlocks` (all editor-free, unit-tested).
+- **Role registry** — [roles.ts](game/roles.ts) `ROLES` + `Motion`/`Collision`/
+  `Effect` unions + `COLOR_TO_ROLE`. A new role is a new entry with a **unique
+  color** (or, past the color budget, a `meta.role` per §1.3 — decide per element).
+
+### The elements, sequenced (each ships independently, tests-first)
+
+**✅ SHIPPED (all of T1a–T1f).** The table below is now a faithful spec of what was
+built. Implementation notes/deltas from the original plan:
+- **Config lives on `meta`** via `PlacementMeta` ([level.ts](game/level.ts)),
+  stamped onto the shape by `loadLevel` and read back by the `start()` scan
+  (`metaOf`) — one uniform channel for path/sine/blink/channel/contains/launchAngle.
+- **New role colors:** `block` light-red, `portal` light-violet; `platform` is grey
+  + dashed and identified by a `meta.role` marker (color budget exhausted), excluded
+  from `COLOR_TO_ROLE` so grey still resolves to `wall`
+  (each unique, per the color-is-behavior rule).
+- **T1b** fires from a dedicated per-frame `checkBlocks()` (rising player's head at
+  the block's underside) rather than inside `resolveAxis` — cleaner and keeps the
+  resolver pure; it ejects a real token shape and breaks the block.
+- **T1d/T1e** are position-driven `sine`/`mover` branches in `stepEntity` (no
+  gravity/collision — they ride a track), fed the deterministic `simTime` clock.
+- **T1e limit made explicit:** no velocity inheritance (M6) — a horizontal mover
+  supports but doesn't carry a standing player; vertical elevators work. Pinned in
+  `mover.integration.test.ts`.
+- **Tests:** pure decisions in `props.test.ts`/`step.test.ts`, plus
+  `mover.integration.test.ts` and `templates/tier1.test.ts`. Full gate green (535
+  tests). Sonic/M6 momentum remains excluded (v3), as scoped.
+
+Ordered cheapest-first so each lands green before the next starts. Every item
+follows the repo's discipline: **pure decision in a `*.ts` + colocated `*.test.ts`
+first, then the one wiring hook in `engine.ts`, then a role/tray entry, then a
+CLAUDE.md line** (the `engine-data-converter` recipe, minus the AI step — these
+are runtime primitives, not converters).
+
+| # | Element | New in `roles.ts` | Pure logic (+ test) | `engine.ts` hook | Notes / gotchas |
+|---|---|---|---|---|---|
+| **T0 ✅ SHIPPED** | **Kill-plane / bottomless pit** | — (a level property, not a role) — a `deathY` threshold; default = 4 tiles below the deepest solid at `start()` (below spawn if no solids) | `props.ts` → `belowKillPlane(topY, deathY)` (fires once the body's TOP clears the plane) | `checkKillPlane()` in `frame()` after `writeEntities`: player past `deathY` → `respawn()` (game over if out of lives); enemy past it → `defeated` | DONE. Cheapest, highest honesty payoff. No new shape. Behavior-preserving: a normal 2-tile gap jump clears the pit (proven in `killplane.integration.test.ts`). *Author-overridable `deathY` via `SessionRules` still TODO — a later nicety.* |
+| **T1a** | **Angled spring** (launch along a vector) | extend `spring`: optional `meta.launchAngle` (deg); default 0 = straight up (today's behavior) | `props.ts` → generalize `springLaunchVy` → `springLaunchV(impulse, angleDeg)` returning `{vx,vy}` | `checkTriggers` spring branch assigns both `vx`/`vy` | Tiny generalization; **byte-identical when angle=0** (behavior-preserving). Unblocks diagonal launches. |
+| **T1b** | **Hittable block** (bonk-from-below → eject token / break) | new role `block` (unique color; e.g. `brown`), `collision: 'solid'`, `effect: 'spawn'`, `meta.contains?: 'token' \| null` | `props.ts` → `isHeadBonk(prevTop, curTop, blockBottom, movingUp)` (mirror of `oneWayBlocks`) | after Y-resolve: if a ceiling-bonk contact is a `block`, fire once — eject a token above / mark broken (opacity 0) | Reuses the ceiling-bonk detection already in `resolveAxis` (`shift>0 && vy<0`). Snapshot for non-destructive restore, like tokens. |
+| **T1c** | **Warp pipe / portal** (paired teleport) | new role `portal`, `collision: 'trigger'`, `effect: 'teleport'`, `meta.channel: number` (links a pair) | `props.ts` → `portalExit(channel, portals)` picks the partner | `checkTriggers` teleport branch: move `player.kin` to partner, debounce so you don't instantly re-enter | `effect: 'teleport'` is already named in the §1.3 union. Debounce = ignore the destination portal until the player leaves it. |
+| **T1d** | **Oscillating enemy** (`motion: 'sine'`) — Piranha-plant rise/fall | enemy variant: `meta.motion: 'sine'` + `meta.sine: {amplitude, frequency, axis}` | `step.ts` → new `motion === 'sine'` branch: position = base + sin(t)·amp along axis; **no gravity/collision** (it's on a track) | `start()` builds it like a patrol enemy but with `motion: 'sine'`; `checkEnemies` stomp/kill already generic over any non-player entity with a vertical overlap | Needs a sim clock `t` threaded into `stepEntity` (add `simTime` param). Stomp still works (it's an AABB+vy test, motion-agnostic). |
+| **T1e** | **Moving platform** (`motion: 'mover'`) — the first solid-that-moves | new role `platform`, `collision: 'solid'`, `motion: 'mover'`, `meta.path: {ax,ay,bx,by, speed}` (ping-pong A↔B) | `step.ts` → `motion === 'mover'` branch: lerp along the path by `simTime`; pure | **the new wiring pattern:** re-read mover outlines into `this.solids` each frame *before* stepping the player, so the player collides with them live. Player carried by a platform = its samples move under him; **velocity-inheritance on jump is M6, out of this slice** (note the limit). |
+| **T1f** | **Blink / crumble platform** | `platform` variants: `effect: 'blink'` (`meta.blink: {onMs, offMs, phase}`) and `effect: 'crumble'` (`meta.crumbleMs`) | `props.ts` → `blinkSolidAt(simTime, cfg)` (bool) and `crumbleTriggered(standStartMs, now, cfg)` | in the per-frame solids rebuild: include a blink body only when `blinkSolidAt` is true; a crumble body drops out `crumbleMs` after the player first stands on it | Both are "is this solid present this frame?" filters on the mover-rebuild from T1e — so T1e unlocks them. Global sim clock again. |
+
+### The one cross-cutting change (do it in T1d, reuse after)
+
+**Thread a monotonic sim clock into the pure stepper.** `sine`/`mover`/`blink`/
+`crumble` all need "time since start." Add a `simTime: number` param to
+`stepEntity` (and to the props helpers that need it) — the runtime already
+accumulates fixed substeps, so it just passes `substepCount * FIXED_DT`. This keeps
+the sim **deterministic** (a function of substep count, never `Date.now()`), which
+the fixed-timestep loop already guarantees. Land it as part of T1d and every later
+time-based element reuses it. `Math.random()`/wall-clock stay out of the sim.
+
+### Non-negotiable invariants for this slice (from `engine-runtime-conventions`)
+
+- **Behavior-preserving by construction.** A level with none of the new roles must
+  play **byte-for-byte** as today — verify with the existing `step.test.ts` /
+  `enemy.integration.test.ts` green before and after, plus the "no new role → same
+  path" check (angle=0 spring, no movers, no kill-plane below the level).
+- **Pure decisions in `props.ts`/`step.ts` + colocated tests; runtime owns only
+  editor glue.** No new inline literals — tunables (bounce angle default, blink
+  timing bounds) go in `PhysicsTunables`/`PHYSICS_DEFAULTS` or the role's `meta`.
+- **All canvas writes stay inside `editor.run(fn, { history: 'ignore',
+  ignoreShapeLock: true })`.** Movers/blink write shape positions/opacity every
+  frame — same batch as `writeEntities`. **Never `isReadonly`** (blocks the sim's
+  own writes).
+- **Play/Stop stays non-destructive.** Every new mutable shape (moved platform,
+  bonked block, crumbled platform, teleported player) is snapshotted at `start()`
+  and restored in `stop()` — extend the existing `snapshot` map / part-restore.
+- **Movers re-read per frame is the deliberate exception** to "solids captured
+  once" — document it where T1e lands; it's the only place that rule bends.
+
+### Exit tests for this slice (the §5.5 gate) — ✅ SHIPPED
+
+The slice is "done" when it can author two templates as **frozen data** (no new
+engine code beyond the primitives above). Both shipped in `templates/index.ts`,
+guarded by `templates.test.ts` (structure) + `templates/tier1.test.ts` (each really
+uses its intended primitives). They are **original layouts built from our own block
+primitives that capture a genre's design patterns — NOT copies of any specific
+game's level map, art, or data**:
+
+1. **Underground** — an enclosed corridor (floor + ceiling), hittable ?-blocks you
+   bonk for coins (T1b), a warp pipe to a coin alcove and back (T1c), an oscillating
+   plant hazard rising from a gap (T1d), over **real kill-plane pits** (T0). Proves
+   the trigger/effect + oscillator + death-plane primitives compose.
+2. **Factory** — a moving platform ferrying over a pit (T1e), a blink-pad gauntlet
+   + a crumble pad (T1f), an angled spring (T1a), a patrol enemy, and a checkpoint
+   before the raised "core" goal. Proves the mover/blink solid-rebuild path.
+   *(Shooting stays Tier 2 — this tests the platforming half; the run-and-gun half
+   waits on the G1/G2c projectile work.)*
+
+A template that won't compose means a primitive is missing or wrong — fix the
+primitive, don't special-case the template (§5.5).
+
+### After this slice
+
+The **level-design skill** (`engine-level-design`, discussed separately) is the
+natural companion deliverable: it encodes the buildable envelope (player 1×2, ~2-
+tile jump reach, grid math, the now-expanded role vocabulary and each role's
+can/can't) plus a validation checklist. Author it once these primitives exist so
+it documents the *real* vocabulary, not a soon-stale subset. Tier-2 abilities
+(dash/shooting/whip/power-ups) and Sonic/M6 momentum remain the subsequent,
+separately-scoped steps.
 
 ---
 
@@ -735,8 +991,11 @@ regression fixture (load it, auto-play the intro, assert win-reachable).
 |---|---|---|---|
 | **Auto-runner / Flappy** | tuned feel (`G5`) with a constant forward `vx` (a `G5` tunable, *not* the v2 `autoScroll` camera) tracked by the v1 follow camera (`M5`-follow) + one hazard (`G3a`) + score/flow (`M1`) — almost no other machinery | **v1** | The *cheapest* real game — proves the AI spine (level-gen → feel → flow → audio) with minimal parts. A v1 warm-up template that stays inside v1's camera scope (forced-scroll is v2). |
 | **Mario 1-1-like** | run/jump feel (`G1`) + patrol/stomp enemy (`G2a`) + pipes/blocks/coins (`G3a`) + flag goal + follow camera (`M5`-follow) + flow/HUD (`M1`/`M8`) | **v1** | **The flagship exit test.** The canonical platformer; if v1 can't build it, v1 isn't a platformer engine. It's why `G2a`+`M5`-follow are v1. |
-| **Celeste-like** | tight feel + **dash + wall-jump** (`G1b`) + spike hazards (`G3`) + single-screen rooms + checkpoints (`G3a`) | **v2** | Exercises the first "real ability" pack — the natural flagship for v2's genre-widening claim. |
+| **Mario-1-2-like** | hittable `?`/brick blocks (Tier 1, §4.6) + warp pipe (`teleport`, `G3b`) + oscillating Piranha (`motion: sine`, `G2`) + **kill-plane pits** (Tier 0, §4.6) | **v2** | The natural exit test for the Tier-1 recreation primitives (§4.6) — proves hittable blocks + a mover-class enemy + real bottomless pits compose into a faithful underground level, not an approximation. |
+| **Mega-Man-like** | **blink platforms** (`G3c` `syncCycle`) + moving/crumbling platforms (`motion: mover`, `G3b`) + **player projectile + enemy HP** (`G1`/`G2c`) + checkpoint gauntlet (`G3a`) | **v2** | Exercises the run-and-gun ability pack + the mover/blink props together — the fidelity gap §4.6 flags for Mega Man, turned into its integration gate. |
+| **Celeste-like** | tight feel + **dash + wall-jump** (`G1b`) + dash-refill (`M2`) + spike hazards (`G3`) + single-screen rooms + checkpoints (`G3a`) | **v2** | Exercises the first "real ability" pack — the natural flagship for v2's genre-widening claim. |
 | **VVVVVV-like** | **gravity-flip** (`G5-mut`) instead of jump + spike hazards (`G3a`) + per-screen camera (`M5`) | **v3** | Proves the disruptive-mutator system: a global gravity-sign flag turns the *same* runtime into a different genre with no new physics. |
+| **Sonic-Green-Hill-like** | **momentum on slopes/loops** (`M6`, built on the reused line-rider Verlet sled sim — §4.6) + angled springs + speed boosters (`accelerate`) + ring model (`M2`/`G2c`) | **v3** | The one target our per-axis AABB resolver can't do (§4.6); its exit test is what greenlights porting the sibling `line-rider-side` sled sim into an `M6` `momentum` motion kind. |
 
 **Ordering within a tier:** build the template *last* in its tier, as the
 integration gate — it consumes finished primitives and surfaces any that don't
@@ -751,10 +1010,13 @@ AI spine, and the shipped artifact is real user-authored data, not a hand-coded
 level format that bypasses the runtime.
 
 **Not in the first set (and why):** a Metroid-room template waits on `M3`
-(persistent world, v3 stretch); a Sonic-loop template waits on `M6` (momentum,
-v3); a Cuphead-boss template waits on `M4` (boss DSL, v3). Each becomes that
-system's own exit test when its tier is built — the pattern generalizes, we just
-don't pre-build templates for unbuilt systems.
+(persistent world, v3 stretch); the **Sonic-Green-Hill-like** waits on `M6`
+(momentum — built on the reused line-rider sled sim, §4.6); a Cuphead-boss
+template waits on `M4` (boss DSL, v3). Each becomes that system's own exit test
+when its tier is built — the pattern generalizes, we just don't pre-build
+templates for unbuilt systems. **The Tier-0 kill-plane (§4.6) is the one exception
+pulled forward into v1** (it rides along with `G3a` static props), because every
+existing v1 template already assumes a pit is deadly.
 
 ---
 

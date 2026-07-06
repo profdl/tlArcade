@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest'
 import type { Body, Pt } from '../collision'
 import { makeTunables, SIM } from '../physics'
 import { makeKinematic, type EntityInput, type MotionParams, type Motion } from './types'
-import { stepEntity, deepestShift, touches, stompCheck, verticalBounds } from './step'
+import {
+  stepEntity,
+  deepestShift,
+  touches,
+  stompCheck,
+  verticalBounds,
+  sinePosition,
+  moverPosition,
+} from './step'
 
 // Characterization tests for the pure entity sim (S3). These PIN the behavior the
 // N-entity refactor must preserve — extracted verbatim from GameRuntime.step. They
@@ -277,5 +285,62 @@ describe('stompCheck / verticalBounds', () => {
     const samples = boxSamples(30, 24)
     const kin = makeKinematic(0, 100)
     expect(verticalBounds(kin, samples)).toEqual({ top: 100, bottom: 124 })
+  })
+})
+
+describe('sinePosition (T1d — oscillating mover)', () => {
+  const base = { x: 100, y: 200 }
+
+  it('returns null without a sine config or base', () => {
+    expect(sinePosition({}, 0)).toBeNull()
+    expect(sinePosition({ sine: { amplitude: 10, frequency: 1, axis: 'y' } }, 0)).toBeNull()
+  })
+
+  it('oscillates on the Y axis around the base (default phase)', () => {
+    const params: MotionParams = { sine: { amplitude: 60, frequency: 0.5, axis: 'y' }, sineBase: base }
+    // t=0 → sin(0)=0 → at base.
+    expect(sinePosition(params, 0)).toEqual({ x: 100, y: 200 })
+    // Quarter period (freq 0.5 → period 2s → quarter 0.5s) → sin(π/2)=1 → +amplitude.
+    const q = sinePosition(params, 0.5)!
+    expect(q.x).toBe(100)
+    expect(q.y).toBeCloseTo(260)
+    // Three-quarters → sin(3π/2)=-1 → -amplitude.
+    expect(sinePosition(params, 1.5)!.y).toBeCloseTo(140)
+  })
+
+  it('oscillates on the X axis when axis is x', () => {
+    const params: MotionParams = { sine: { amplitude: 30, frequency: 0.5, axis: 'x' }, sineBase: base }
+    const q = sinePosition(params, 0.5)!
+    expect(q.y).toBe(200)
+    expect(q.x).toBeCloseTo(130)
+  })
+})
+
+describe('moverPosition (T1e — ping-pong platform)', () => {
+  const path = { ax: 0, ay: 0, bx: 100, by: 0, speed: 100 } // 100px leg at 100px/s → 1s per leg
+
+  it('returns null without a path', () => {
+    expect(moverPosition(undefined, 0)).toBeNull()
+  })
+
+  it('sits at A when speed is 0 or endpoints coincide', () => {
+    expect(moverPosition({ ...path, speed: 0 }, 5)).toEqual({ x: 0, y: 0 })
+    expect(moverPosition({ ax: 7, ay: 8, bx: 7, by: 8, speed: 100 }, 5)).toEqual({ x: 7, y: 8 })
+  })
+
+  it('ping-pongs A→B→A as a triangle wave', () => {
+    expect(moverPosition(path, 0)).toEqual({ x: 0, y: 0 }) // at A
+    expect(moverPosition(path, 0.5)!.x).toBeCloseTo(50) // halfway to B
+    expect(moverPosition(path, 1)!.x).toBeCloseTo(100) // at B
+    expect(moverPosition(path, 1.5)!.x).toBeCloseTo(50) // heading back
+    expect(moverPosition(path, 2)!.x).toBeCloseTo(0) // back at A (period 2s)
+    expect(moverPosition(path, 2.5)!.x).toBeCloseTo(50) // repeats
+  })
+
+  it('moves along a diagonal path', () => {
+    const diag = { ax: 0, ay: 0, bx: 100, by: 100, speed: 141.42 } // ~1s per leg
+    const mid = moverPosition(diag, 0.5)!
+    expect(mid.x).toBeCloseTo(50, 0)
+    expect(mid.y).toBeCloseTo(50, 0)
   })
 })

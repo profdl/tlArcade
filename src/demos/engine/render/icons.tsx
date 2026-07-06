@@ -19,6 +19,8 @@ const HEX: Record<string, string> = {
   orange: '#e16919',
   'light-blue': '#4dabf7',
   'light-green': '#40c057',
+  'light-red': '#ff8787',
+  'light-violet': '#e599f7',
 }
 
 function rgba(hex: string, a: number): string {
@@ -106,6 +108,51 @@ export function RoleIcon({ role, size = 24 }: { role: Role; size?: number }) {
           {...paint}
           strokeDasharray="3 2.5"
         />
+      )
+      break
+    case 'platform':
+      // A moving platform: a grey slab with a DASHED outline + a small ↔ hint, so it
+      // reads as "a wall-like surface that MOVES", matching its dashed canvas look.
+      shape = (
+        <g>
+          <rect x={2} y={9.5} width={20} height={6} rx={1.5} {...paint} strokeDasharray="3 2" />
+          <path
+            d="M6 12.5 L3.5 12.5 M3.5 12.5 L5 11 M3.5 12.5 L5 14 M18 12.5 L20.5 12.5 M20.5 12.5 L19 11 M20.5 12.5 L19 14"
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.3}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
+      )
+      break
+    case 'block':
+      // A hittable ?-block: a solid square with a "?" — bonk it from below.
+      shape = (
+        <g>
+          <rect x={4} y={4} width={16} height={16} rx={2.5} {...paint} />
+          <text
+            x={12}
+            y={16.5}
+            textAnchor="middle"
+            fontSize={12}
+            fontWeight={700}
+            fill={stroke}
+            fontFamily="system-ui, sans-serif"
+          >
+            ?
+          </text>
+        </g>
+      )
+      break
+    case 'portal':
+      // A warp portal: a doorway ellipse with an inner swirl ring.
+      shape = (
+        <g>
+          <ellipse cx={12} cy={12} rx={7} ry={9} {...paint} />
+          <ellipse cx={12} cy={12} rx={3.5} ry={5} fill="none" stroke={stroke} strokeWidth={1.4} />
+        </g>
       )
       break
   }

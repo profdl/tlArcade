@@ -79,10 +79,66 @@ export function makeKinematic(x: number, y: number): EntityKinematic {
   }
 }
 
-/** Per-motion tuning params carried on an entity (patrol so far; more later). */
+/**
+ * A straight-line ping-pong path for a `mover` (T1e): the entity travels from A to
+ * B and back forever, at `speed` px/s. Coordinates are the body bounds TOP-LEFT in
+ * page space (same frame as `kin.x/kin.y`), so a mover is placed by its A endpoint.
+ */
+export interface MoverPath {
+  ax: number
+  ay: number
+  bx: number
+  by: number
+  /** Travel speed along the path, px/s. */
+  speed: number
+}
+
+/**
+ * A sine oscillation for a `sine` mover (T1d, e.g. a Piranha rising from a pipe):
+ * position = base + sin(2π·frequency·t + phase)·amplitude along `axis`. `base` is
+ * the entity's start bounds top-left (captured at start()).
+ */
+export interface SineParams {
+  amplitude: number
+  /** Cycles per second. */
+  frequency: number
+  /** 'y' (rise/fall, the default) or 'x' (side to side). */
+  axis: 'x' | 'y'
+  /** Phase offset in radians (stagger multiple oscillators). */
+  phase?: number
+}
+
+/**
+ * A blink platform's on/off phase clock (T1f): solid for `onMs`, gone for `offMs`,
+ * repeating; `phaseMs` staggers it so a row of blinkers alternates.
+ */
+export interface BlinkParams {
+  onMs: number
+  offMs: number
+  phaseMs?: number
+}
+
+/** Per-motion tuning params carried on an entity (patrol / sine / mover). */
 export interface MotionParams {
   /** Patrol walk speed, px/s. */
   patrolSpeed?: number
+  /**
+   * The monotonic sim time (s) at the CURRENT substep, set by the runtime each step
+   * before calling stepEntity. Deterministic (a function of substep count, never
+   * wall-clock), so sine/mover motion stays reproducible. Absent (undefined) ⇒ 0,
+   * so existing callers/tests that don't set it are unchanged.
+   */
+  simTime?: number
+  /** `sine` motion config (T1d). */
+  sine?: SineParams
+  /** The base bounds top-left a `sine` oscillates around (captured at start()). */
+  sineBase?: { x: number; y: number }
+  /** `mover` path (T1e). */
+  path?: MoverPath
+  /** `blink` platform config (T1f): present/absent on a phase clock. */
+  blink?: BlinkParams
+  /** `crumble` platform config (T1f): drops out this many ms after first stood on. */
+  crumbleMs?: number
 }
 
 /** Default patrol speed (px/s) for an enemy with no explicit param. */
@@ -119,6 +175,12 @@ export interface Entity {
    * hidden. NOT persisted — stop() restores the shape from its part snapshot.
    */
   defeated?: boolean
+  /**
+   * Crumble platform (T1f) runtime state: the sim time (ms) the player FIRST stood
+   * on it, or null until then. Once set, `crumbleGone` drops it out after
+   * `params.crumbleMs`. NOT persisted; cleared on start().
+   */
+  crumbleStandMs?: number | null
 }
 
 /** Per-substep input for the platformer entity (edges consumed once, see stepEntity). */

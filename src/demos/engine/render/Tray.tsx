@@ -11,7 +11,7 @@
  */
 import { useMemo, useRef } from 'react'
 import { Box, Vec, useAtom, useEditor, useQuickReactor, useValue } from 'tldraw'
-import { ROLE_LIST, ROLES, shapeForRole, type Role } from '../game/roles'
+import { ROLE_CATEGORIES, ROLES, shapeForRole, type Role } from '../game/roles'
 import { createBuilderPlayer } from '../game/builder'
 import { RoleIcon } from './icons'
 import { playingAtom } from '../game/state'
@@ -117,17 +117,24 @@ export function Tray() {
   return (
     <>
       <div className="eng-tray">
-        {ROLE_LIST.map((role) => (
-          <div
-            key={role}
-            className="eng-tray-item"
-            data-role={role}
-            title={`Drag to add a ${ROLES[role].label}`}
-            onPointerDown={handlePointerDown}
-            onPointerUp={handlePointerUp}
-          >
-            <RoleIcon role={role} />
-            <span className="eng-tray-label">{ROLES[role].label}</span>
+        {ROLE_CATEGORIES.map((cat) => (
+          <div key={cat.label} className="eng-tray-group">
+            <div className="eng-tray-group-label">{cat.label}</div>
+            <div className="eng-tray-group-items">
+              {cat.roles.map((role) => (
+                <div
+                  key={role}
+                  className="eng-tray-item"
+                  data-role={role}
+                  title={`Drag to add a ${ROLES[role].label}`}
+                  onPointerDown={handlePointerDown}
+                  onPointerUp={handlePointerUp}
+                >
+                  <RoleIcon role={role} />
+                  <span className="eng-tray-label">{ROLES[role].label}</span>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>

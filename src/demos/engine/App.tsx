@@ -98,6 +98,7 @@ export default function App() {
     }
     return () => {
       runtimeRef.current?.stop()
+      runtimeRef.current?.disposeAudio()
       runtimeRef.current = null
       setEditor(null)
       playingAtom.set(false)
@@ -164,6 +165,9 @@ export default function App() {
       return
     }
     setNoPlayer(false)
+    // Resume audio here: this click is the user gesture Tone requires to start its
+    // AudioContext (and to kick off the async sample load on first play).
+    rt.resumeAudio()
     if (!rt.start()) {
       setNoPlayer(true)
       return

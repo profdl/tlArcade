@@ -23,14 +23,23 @@ export type Role =
   | 'spring'
   | 'checkpoint'
   | 'oneway'
+  // --- Tier 1 recreation primitives (PLAN §4.7) ---
+  | 'block' // hittable ?-block: bonk from below → ejects a token / breaks (T1b)
+  | 'portal' // paired warp: teleports the player to its channel partner (T1c)
+  | 'platform' // moving / blink / crumble platform (T1e/T1f)
 
 /**
  * How an entity moves during play.
  * - `static` — never moves (walls, tokens, hazards, goal).
  * - `platformer` — the player: input + jump/gravity feel pipeline.
  * - `patrol` — a mover that walks back and forth, turning at ledges/walls (enemy).
+ * - `sine` — oscillates on a fixed track (no gravity/collision), driven by the sim
+ *   clock. A Piranha-plant rise/fall (T1d).
+ * - `mover` — travels a straight A↔B path (ping-pong) on the sim clock; the first
+ *   SOLID that moves, so its outline is re-read into the solids set each frame
+ *   (T1e). Blink/crumble platforms are movers whose presence is gated (T1f).
  */
-export type Motion = 'static' | 'platformer' | 'patrol'
+export type Motion = 'static' | 'platformer' | 'patrol' | 'sine' | 'mover'
 /**
  * How it interacts.
  * - `solid` — blocks from every side.
@@ -50,7 +59,19 @@ export type Collision = 'solid' | 'trigger' | 'oneWay'
  * - `checkpoint` — the first time the player overlaps it, the respawn point
  *   moves here (see `entities/props.ts` → `shouldActivateCheckpoint`).
  */
-export type Effect = 'none' | 'collect' | 'kill' | 'win' | 'stomp' | 'bounce' | 'checkpoint'
+export type Effect =
+  | 'none'
+  | 'collect'
+  | 'kill'
+  | 'win'
+  | 'stomp'
+  | 'bounce'
+  | 'checkpoint'
+  // --- Tier 1 (PLAN §4.7) ---
+  | 'spawn' // hittable block: bonk from below ejects a token / breaks (T1b)
+  | 'teleport' // portal: move the player to its channel partner (T1c)
+  | 'blink' // platform: solid on/off on a phase clock (T1f)
+  | 'crumble' // platform: drops out a beat after the player stands on it (T1f)
 
 /**
  * The grid unit. Levels are built on a square tile grid like a classic
@@ -184,6 +205,50 @@ export const ROLES: Record<Role, RoleDef> = {
     collision: 'oneWay',
     effect: 'none',
   },
+  // --- Tier 1 recreation primitives (PLAN §4.7) ---
+  block: {
+    label: 'Block',
+    emoji: '❓',
+    geo: 'rectangle',
+    color: 'light-red',
+    // A solid 1×1 block you bonk from BELOW to eject a token (or just break). Solid
+    // from every side like a wall; the head-bonk fires its `spawn` effect (T1b).
+    size: { w: tiles(1), h: tiles(1) }, // 60 × 60
+    motion: 'static',
+    collision: 'solid',
+    effect: 'spawn',
+  },
+  portal: {
+    label: 'Portal',
+    emoji: '🌀',
+    geo: 'rectangle',
+    color: 'light-violet',
+    // A warp pipe/door: overlap it and teleport to its channel partner (T1c). A
+    // trigger (never blocks). Pairs are linked by meta.channel; the runtime picks
+    // the OTHER portal with the same channel.
+    size: { w: tiles(1), h: tiles(2) }, // 60 × 120 — a doorway, player-height
+    motion: 'static',
+    collision: 'trigger',
+    effect: 'teleport',
+  },
+  platform: {
+    label: 'Platform',
+    emoji: '🟫',
+    geo: 'rectangle',
+    // GREY, like a wall — but rendered with a DASHED outline (see shapeForRole) so
+    // it reads as "a moving/interactive surface, distinct from a solid wall". Grey
+    // is the wall's color, so a platform is disambiguated by a `meta.role:
+    // 'platform'` MARKER (which wins over color in engine.ts → roleOf), NOT by a
+    // unique color — this is why shapeForRole stamps that marker.
+    color: 'grey',
+    // A moving platform (T1e): a SOLID that travels an A↔B path (meta.path), so its
+    // outline is re-read into the solids set each frame. Blink/crumble variants
+    // (T1f) set effect 'blink'/'crumble' + their meta to gate when it's present.
+    size: { w: tiles(2), h: tiles(0.5) }, // 120 × 30 — two tiles wide, half tall
+    motion: 'mover',
+    collision: 'solid',
+    effect: 'none',
+  },
 }
 
 /** Tray order. */
@@ -197,11 +262,38 @@ export const ROLE_LIST: Role[] = [
   'spring',
   'checkpoint',
   'oneway',
+  'block',
+  'portal',
+  'platform',
 ]
 
-/** color → role. Built from ROLES; relies on each role's color being unique. */
+/**
+ * Tray categories — the roles grouped by kind so the tray reads as a few labeled
+ * sections instead of a 12-tall wall of icons (PLAN §7.5: "do not grow a flat wall
+ * of icons — group it"). Order here is the tray's section order.
+ */
+export interface RoleCategory {
+  label: string
+  roles: Role[]
+}
+
+export const ROLE_CATEGORIES: RoleCategory[] = [
+  { label: 'Start', roles: ['player', 'goal'] },
+  { label: 'Terrain', roles: ['wall', 'oneway', 'platform'] },
+  { label: 'Hazards', roles: ['hazard', 'enemy'] },
+  { label: 'Items', roles: ['token', 'block'] },
+  { label: 'Props', roles: ['spring', 'checkpoint', 'portal'] },
+]
+
+/**
+ * color → role. Built from ROLES; relies on each role's color being unique — with
+ * ONE exception: `platform` reuses grey (the wall's color) and is identified ONLY by
+ * a `meta.role` marker (see engine.ts → roleOf), never by color. It is EXCLUDED here
+ * so grey still resolves to `wall` — otherwise a plain grey wall (or any saved grey
+ * terrain) would be misread as a moving platform.
+ */
 const COLOR_TO_ROLE = new Map<TLDefaultColorStyle, Role>(
-  ROLE_LIST.map((role) => [ROLES[role].color, role]),
+  ROLE_LIST.filter((role) => role !== 'platform').map((role) => [ROLES[role].color, role]),
 )
 
 /**
@@ -216,9 +308,16 @@ export function roleForColor(color: TLDefaultColorStyle): Role | null {
  * The native geo shape the tray drops for a role — a coloured, unlabelled geo
  * shape. Solids get a solid fill; triggers a translucent (`semi`) fill so
  * "blocks me" vs "fires on touch" reads at a glance. Caller sets x / y.
+ *
+ * The `platform` role is special: it is GREY like a wall (the color budget is
+ * exhausted), rendered with a DASHED outline so it reads as "a moving surface,
+ * distinct from a solid wall", and stamped with a `meta.role: 'platform'` MARKER so
+ * the runtime tells it apart from a grey wall (roleOf checks the marker before
+ * color). Returns a `meta` for that marker; the caller spreads it onto createShape.
  */
 export function shapeForRole(role: Role) {
   const d = ROLES[role]
+  const isPlatform = role === 'platform'
   return {
     type: 'geo' as const,
     props: {
@@ -227,7 +326,10 @@ export function shapeForRole(role: Role) {
       h: d.size.h,
       color: d.color,
       fill: (d.collision === 'solid' ? 'solid' : 'semi') as 'solid' | 'semi',
-      dash: 'solid' as const,
+      // A dashed outline marks a platform as a distinct-from-wall surface.
+      dash: (isPlatform ? 'dashed' : 'solid') as 'solid' | 'dashed',
     },
+    // Grey would otherwise read as a wall — the marker makes it a platform.
+    ...(isPlatform ? { meta: { role: 'platform' } } : {}),
   }
 }

@@ -25,6 +25,7 @@ import {
   type EntityInput,
   type Motion,
   type MotionParams,
+  type MoverPath,
 } from './types'
 
 /** How far ahead (px) a patroller probes for a ledge before turning. */
@@ -52,6 +53,31 @@ export function stepEntity(
   t: PhysicsTunables,
 ): void {
   const isPlatformer = motion === 'platformer'
+
+  // --- sine / mover: position-driven tracks (no gravity, no collision) ----------
+  // These entities ride a fixed path off the sim clock — they don't fall or resolve
+  // against solids (they ARE the moving geometry). Compute the new position and
+  // return early, before the gravity/integrate/resolve path every other motion uses.
+  if (motion === 'sine') {
+    const p = sinePosition(params, params.simTime ?? 0)
+    if (p) {
+      kin.vx = (p.x - kin.x) / dt // report velocity so a stomp/overlap reads motion
+      kin.vy = (p.y - kin.y) / dt
+      kin.x = p.x
+      kin.y = p.y
+    }
+    return
+  }
+  if (motion === 'mover') {
+    const p = moverPosition(params.path, params.simTime ?? 0)
+    if (p) {
+      kin.vx = (p.x - kin.x) / dt
+      kin.vy = (p.y - kin.y) / dt
+      kin.x = p.x
+      kin.y = p.y
+    }
+    return
+  }
 
   if (isPlatformer) {
     // --- horizontal: accelerate toward the target, or rub off with friction ---
@@ -142,6 +168,39 @@ function groundAhead(kin: EntityKinematic, samples: Pt[], solids: Body[], dir: n
   // Grounded-ahead iff a downward move would be pushed UP out of a floor-ish
   // surface (shift < 0 with a floor normal) — i.e. there's ground under the step.
   return shift < 0 && -ny >= SIM.GROUND_NY
+}
+
+/**
+ * Sine oscillator position (T1d): the entity's bounds top-left at sim time `t`,
+ * = base + sin(2π·frequency·t + phase)·amplitude along the configured axis. Pure;
+ * returns null if there's no sine config or captured base. Unit-tested.
+ */
+export function sinePosition(params: MotionParams, t: number): { x: number; y: number } | null {
+  const s = params.sine
+  const base = params.sineBase
+  if (!s || !base) return null
+  const off = Math.sin(2 * Math.PI * s.frequency * t + (s.phase ?? 0)) * s.amplitude
+  return s.axis === 'x' ? { x: base.x + off, y: base.y } : { x: base.x, y: base.y + off }
+}
+
+/**
+ * Ping-pong mover position (T1e): the bounds top-left at sim time `t` as the mover
+ * travels A→B→A→… at `path.speed` px/s. A triangle wave over the round trip, so the
+ * platform eases through each endpoint and reverses (no teleport/snap). Pure;
+ * returns null if there's no path or the endpoints coincide. Unit-tested.
+ */
+export function moverPosition(path: MoverPath | undefined, t: number): { x: number; y: number } | null {
+  if (!path) return null
+  const dx = path.bx - path.ax
+  const dy = path.by - path.ay
+  const legLen = Math.hypot(dx, dy)
+  if (legLen < 1e-6 || path.speed <= 0) return { x: path.ax, y: path.ay }
+  const legTime = legLen / path.speed // seconds A→B (one leg)
+  const period = legTime * 2 // full round trip A→B→A
+  const phase = ((t % period) + period) % period // 0..period
+  // Triangle wave 0..1..0: fraction along A→B, ramping up then back down.
+  const frac = phase <= legTime ? phase / legTime : 2 - phase / legTime
+  return { x: path.ax + dx * frac, y: path.ay + dy * frac }
 }
 
 /**

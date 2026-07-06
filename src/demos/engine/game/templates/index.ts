@@ -97,13 +97,128 @@ const autoRunner: Template = {
   },
 }
 
+// ── Underground — the Tier-1 exit test (PLAN §4.7) ─────────────────────────
+// An ORIGINAL underground layout built from our blocks, capturing the design DNA
+// of the classic 2D-platformer "underground" beat — NOT a copy of any specific
+// level's map/art. It exercises the new Tier-1 primitives together: an enclosed
+// corridor (floor + ceiling), hittable ?-blocks you bonk for coins (T1b), a warp
+// pipe to a coin alcove and back (T1c), an oscillating hazard-plant rising from a
+// gap (T1d), and REAL bottomless-pit deaths (T0).
+const underground: Template = {
+  name: 'Underground',
+  blurb: 'Drop underground: bonk blocks for coins, warp through a pipe, dodge a rising plant, hop the pits.',
+  // 60px tile grid; ground top at y=T(8). A ceiling wall row makes it read as a
+  // tunnel (the level.ts / autoLevel "theme through layout" language).
+  level: [
+    // Player at the far left on the entry floor.
+    { role: 'player', x: T(1), y: T(6) },
+    // ── Enclosed corridor: a ceiling row across the top, floor below ──────────
+    { role: 'wall', x: T(0), y: T(0), w: T(30), h: T(1) }, // ceiling
+    // Ground floor in runs split by two pits (bottomless — T0 kill-plane).
+    { role: 'wall', x: T(0), y: T(8), w: T(8), h: T(2) }, // entry run
+    { role: 'wall', x: T(10), y: T(8), w: T(9), h: T(2) }, // middle run (pit x8→x10)
+    { role: 'wall', x: T(21), y: T(8), w: T(9), h: T(2) }, // finish run (pit x19→x21)
+
+    // ── A row of hittable ?-blocks to bonk from below (T1b) ───────────────────
+    // At head height over the entry run — jump up into them to eject coins.
+    { role: 'block', x: T(3), y: T(4), meta: { contains: 'token' } },
+    { role: 'block', x: T(4), y: T(4), meta: { contains: 'token' } },
+    { role: 'block', x: T(5), y: T(4), meta: { contains: null } }, // just breaks
+
+    // ── A warp pipe (T1c): channel 1 by the first pit → a coin alcove up top ──
+    { role: 'portal', x: T(7), y: T(6), meta: { channel: 1 } }, // enter here
+    { role: 'portal', x: T(11), y: T(2), meta: { channel: 1 } }, // arrive up on a ledge
+    { role: 'oneway', x: T(10.5), y: T(4), w: T(3), h: T(0.25) }, // the alcove ledge
+    { role: 'token', x: T(11.25), y: T(2.5) }, // coin reward in the alcove
+    { role: 'token', x: T(12.25), y: T(2.5) },
+
+    // ── An oscillating plant hazard rising from a gap in the middle run (T1d) ─
+    // A violet enemy on a vertical sine — rises and falls like a pipe-plant. Stomp
+    // it from above at the top of a jump, or time your run past while it's down.
+    {
+      role: 'enemy',
+      x: T(15),
+      y: T(6),
+      meta: { sine: { amplitude: T(1.5), frequency: 0.4, axis: 'y' } },
+    },
+    // A coin to grab as you clear the plant.
+    { role: 'token', x: T(16.5), y: T(6) },
+
+    // ── The finish: a checkpoint then the goal on the last run ────────────────
+    { role: 'checkpoint', x: T(22), y: T(6.5) },
+    { role: 'goal', x: T(28), y: T(6) },
+  ],
+  rules: {
+    lives: 3,
+    tokenScore: 100,
+    stompScore: 200,
+    timeBonusPerSec: 0,
+  },
+}
+
+// ── Factory — the Tier-1 exit test (PLAN §4.7) ─────────────────────────────
+// An ORIGINAL "run-and-jump factory" layout, capturing the DNA of a Mega-Man-style
+// platforming stage (the platforming HALF — shooting is Tier 2). Exercises the
+// mover/blink primitives together: a moving-platform crossing over a bottomless pit
+// (T1e), a blink-platform gauntlet that appears and vanishes on a clock (T1f), an
+// angled spring launching up-and-across (T1a), a patrol enemy, and a checkpoint
+// before the climax. NOT a copy of any specific level.
+const factory: Template = {
+  name: 'Factory',
+  blurb: 'Cross the moving platform, time the blinking blocks, spring the gap, reach the core.',
+  level: [
+    { role: 'player', x: T(1), y: T(6) },
+    // ── Start ledge, then a wide bottomless pit crossed by a moving platform ──
+    { role: 'wall', x: T(0), y: T(8), w: T(5), h: T(2) }, // start ledge (ends x5)
+    { role: 'wall', x: T(13), y: T(8), w: T(6), h: T(2) }, // far ledge (pit x5→x13)
+    // A moving platform ferrying across the pit, left↔right (T1e). Ride it over.
+    {
+      role: 'platform',
+      x: T(6),
+      y: T(7),
+      meta: { path: { ax: T(6), ay: T(7), bx: T(11), by: T(7), speed: 90 } },
+    },
+    { role: 'token', x: T(9), y: T(5.5) }, // a coin mid-crossing (grab in passing)
+
+    // ── A blink-platform gauntlet (T1f): three pads phasing on/off over a pit ──
+    // Alternating phases so you cross as each appears. The floor under them is a pit.
+    { role: 'platform', x: T(19), y: T(6), w: T(1.5), h: T(0.5), meta: { blink: { onMs: 1400, offMs: 900, phaseMs: 0 } } },
+    { role: 'platform', x: T(21.5), y: T(6), w: T(1.5), h: T(0.5), meta: { blink: { onMs: 1400, offMs: 900, phaseMs: 1150 } } },
+    { role: 'platform', x: T(24), y: T(6), w: T(1.5), h: T(0.5), meta: { blink: { onMs: 1400, offMs: 900, phaseMs: 0 } } },
+    // A crumble pad just past the gauntlet — stand and go, it drops out (T1f).
+    { role: 'platform', x: T(26.5), y: T(6), w: T(1.5), h: T(0.5), meta: { crumbleMs: 700 } },
+    { role: 'checkpoint', x: T(21), y: T(4.5) }, // mid-gauntlet checkpoint (on a pad)
+
+    // ── Landing ledge past the gauntlet, a patrol enemy, then an angled spring ─
+    { role: 'wall', x: T(28), y: T(8), w: T(6), h: T(2) },
+    { role: 'enemy', x: T(30), y: T(7) }, // a patroller on the ledge
+    // An angled spring (T1a) launching up-and-right onto the raised core platform.
+    { role: 'spring', x: T(33), y: T(7.75), meta: { launchAngle: 30 } },
+    { role: 'wall', x: T(35), y: T(4), w: T(5), h: T(6) }, // raised core platform (top row 4)
+    { role: 'token', x: T(36), y: T(2.5) },
+    { role: 'token', x: T(37), y: T(2.5) },
+    // The goal (the "core") on the raised platform.
+    { role: 'goal', x: T(38), y: T(2) },
+  ],
+  rules: {
+    lives: 5,
+    tokenScore: 150,
+    stompScore: 200,
+    timeBonusPerSec: 0,
+  },
+}
+
 /** name → template. Feeds the "New from template" menu. */
 export const TEMPLATES: Record<string, Template> = {
   mario: marioLike,
   runner: autoRunner,
+  underground,
+  factory,
 }
 
 export const TEMPLATE_LIST: { key: string; template: Template }[] = [
   { key: 'mario', template: marioLike },
   { key: 'runner', template: autoRunner },
+  { key: 'underground', template: underground },
+  { key: 'factory', template: factory },
 ]

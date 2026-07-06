@@ -21,33 +21,66 @@ import type { Editor } from 'tldraw'
 import { generate, type GenerateOptions } from './client'
 import { LevelLayoutSchema, type LevelLayout } from './schemas'
 import { perceive, toImageInput } from './perceive'
-import { shapeForRole, ROLES, ROLE_LIST } from '../roles'
+import { shapeForRole, ROLES, ROLE_LIST, TILE } from '../roles'
 
 /** How generated placements land on the canvas. */
 export type LevelMode = 'replace' | 'extend'
+
+/** The ground row's top (tile row 8 → y=480), matching game/level.ts. Generated
+ *  floors sit here so an AI level reads like a hand-built / template one. */
+const GROUND_ROW = 8
+
+/** Round a page value to the nearest whole tile so generated shapes land ON the
+ *  grid — the same 60px grid every hand-authored level (level.ts, templates) uses.
+ *  Exported for the unit test; the apply path is editor-bound and not unit-tested. */
+export function snapToTile(v: number): number {
+  return Math.round(v / TILE) * TILE
+}
 
 const SYSTEM =
   'You design 2D side-scrolling platformer levels as JSON. You output ONLY a JSON ' +
   'object matching the schema described in the user message — no prose, no markdown ' +
   'fences. Coordinates are in page pixels; +x is right, +y is DOWN (screen space). ' +
+  'The world is a 60px SQUARE TILE GRID: every x, y, w and h you emit MUST be a ' +
+  'whole multiple of 60 (a few roles are half-tile, 30 — but never off-grid). ' +
   'Design levels that are actually winnable: the player can run and jump between ' +
-  'platforms, every token is reachable, and the goal sits past the challenges.'
+  'platforms, every token is reachable, and the goal sits past the challenges. ' +
+  'Then USE those same tiles to evoke the requested THEME — the only building ' +
+  'blocks are the roles below, so express mood through LAYOUT: e.g. a cave/dungeon ' +
+  'is an ENCLOSED corridor (a wall floor AND a wall ceiling row above it, walls ' +
+  'closing the sides), a tower climbs vertically, an open field is wide and flat. ' +
+  'A grey "wall" is both platform and structure — build ceilings and walls from it.'
 
 /** A description of the role vocabulary + platformer metrics, so the model places
  *  shapes that compose into a playable level (jump reach, ground height, etc). */
 function levelBrief(): string {
   const roles = ROLE_LIST.map((r) => {
     const d = ROLES[r]
-    return `  - "${r}" (${d.label}): default size ${d.size.w}x${d.size.h}. ${roleHint(r)}`
+    const tw = d.size.w / TILE
+    const th = d.size.h / TILE
+    return `  - "${r}" (${d.label}): default ${tw}x${th} tiles (${d.size.w}x${d.size.h}px). ${roleHint(r)}`
   }).join('\n')
+  const g = GROUND_ROW * TILE
   return (
     `Roles you can place:\n${roles}\n\n` +
-    `Platformer metrics to respect:\n` +
-    `  - The player is ~40x48 px and can jump ~150 px high and clear ~220 px gaps.\n` +
-    `  - Put walls (platforms/ground) so the player can always reach the next one.\n` +
-    `  - There must be exactly ONE player. Every token must be reachable. The goal\n` +
-    `    is the win — place it past the level, on solid ground.\n` +
-    `  - A typical screen is ~900 wide x ~500 tall; multi-screen levels extend +x.`
+    `THE TILE GRID (this is the most important rule):\n` +
+    `  - 1 tile = ${TILE}px. EVERY x, y, w, h you emit must be a whole multiple of\n` +
+    `    ${TILE} (a couple of roles are half-tile, ${TILE / 2}). Off-grid values look broken.\n` +
+    `  - Think in tile ROWS and COLUMNS, then multiply by ${TILE}. The ground row's\n` +
+    `    top is row 8 (y=${g}); build your main floor there as ONE wide wall.\n` +
+    `  - A wall is 1x1 by default — STRETCH it via w/h into floors, ceilings and\n` +
+    `    columns. A 12-tile floor is ONE wall (w=${12 * TILE}), never 12 stacked squares.\n\n` +
+    `PLATFORMER REACH (grid units, from the shipped physics):\n` +
+    `  - The player is 1 tile wide x 2 tiles tall. One jump clears a ~2-tile-wide\n` +
+    `    GAP and a ~2-tile RISE. So make gaps ~2 tiles, and step platforms up ~2\n` +
+    `    tiles at a time, each landing platform at least 2 tiles wide.\n` +
+    `  - A shape that STANDS on a surface whose top is row R goes at y = (R-2)*${TILE}\n` +
+    `    if it's 2 tiles tall (player, goal), or y = (R-h)*${TILE} in general.\n` +
+    `  - Exactly ONE player, on solid ground near the left. Every token reachable\n` +
+    `    within a jump arc. The goal is the win — past the challenges, on solid ground.\n\n` +
+    `THEME: build the requested mood from these tiles via LAYOUT — enclose a cave/\n` +
+    `  dungeon with a ceiling wall row and side walls; go vertical for a tower; stay\n` +
+    `  wide and open for a field. A screen is ~15 tiles wide x ~8 tall; extend +x.`
   )
 }
 
@@ -130,14 +163,17 @@ export function applyLevelLayout(editor: Editor, layout: LevelLayout, mode: Leve
     }
     for (const p of layout.placements) {
       const base = shapeForRole(p.role)
+      // Snap to the 60px grid so an AI level lands as clean as a hand-built one,
+      // even if the model emitted off-grid numbers. Sizes snap too, floored to one
+      // tile so a stretched wall never collapses below a usable size.
       editor.createShape({
         ...base,
-        x: p.x,
-        y: p.y,
+        x: snapToTile(p.x),
+        y: snapToTile(p.y),
         props: {
           ...base.props,
-          ...(p.w != null ? { w: p.w } : {}),
-          ...(p.h != null ? { h: p.h } : {}),
+          ...(p.w != null ? { w: Math.max(TILE, snapToTile(p.w)) } : {}),
+          ...(p.h != null ? { h: Math.max(TILE, snapToTile(p.h)) } : {}),
         },
       })
       created++

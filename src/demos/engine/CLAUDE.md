@@ -194,6 +194,80 @@ Three more color-coded roles, all pure decisions in
   pass and accepts only floor-normal (landing) contacts on Y — so you jump up
   through it and land on top. Unit-tested in `step.test.ts`.
 
+## Kill-plane / bottomless pit (T0)
+
+A **death line below the level** so falling through a gap in the floor is a death,
+not a fall forever — the difference between "a gap you can walk into" and "a pit
+you die in" that every classic platformer assumes. Not a role/shape: it's a
+page-space Y (`GameRuntime.deathY`) computed at `start()` as
+`KILL_PLANE_MARGIN` (4 tiles) below the **deepest solid's `bounds.maxY`** (or below
+the player's spawn if the level has no solids at all). The pure decision is
+`belowKillPlane(topY, deathY)` in [entities/props.ts](game/entities/props.ts) — it
+fires only once the entity's outline **top** clears the plane (the whole body has
+fallen past it), so a body still straddling the line hasn't fallen yet.
+
+Checked each frame in `checkKillPlane()` (after `writeEntities`, before the enemy/
+trigger checks). The **player** falling off costs a life and respawns via the
+existing `respawn()` — identical to a hazard (a `'death'` sound, game over if out
+of lives). An **enemy** that walks off a ledge into a pit is just marked
+`defeated` so it stops stepping (no fall-forever, no shape flung off-page); `stop()`
+still restores it from its part snapshot, so Play/Stop stays non-destructive.
+Behavior-preserving: a normal 2-tile gap jump clears the pit without a false death
+(proven in `entities/killplane.integration.test.ts`, which drives the real
+`stepEntity` through a walk-off fall, a stay-on-ground run, and a gap jump).
+
+## Tier-1 recreation primitives (T1a–T1f, PLAN §4.7)
+
+Six primitives that turn the biggest set of template beats from *evocations* into
+faithful recreations. Each follows the repo discipline: a **pure decision in
+`props.ts`/`step.ts` + colocated test**, then the wiring in `engine.ts`. All new
+per-element config rides on the shape's **`meta`** (see `PlacementMeta` in
+[level.ts](game/level.ts)): a template `Placement` carries `meta`, `loadLevel`
+stamps it onto the created shape, and the runtime's `start()` scan reads it back
+via `metaOf`. New colors: `block` light-red, `portal` light-violet. **`platform` is
+the exception to "unique color per role":** it is GREY (like a wall — the color
+budget is exhausted) rendered DASHED, and identified by a `meta.role: 'platform'`
+MARKER that `roleOf` checks before color (PLAN §1.3's "meta.role is the primary
+mechanism for roles the color budget can't fit"). `COLOR_TO_ROLE` excludes it so
+grey still resolves to `wall` — otherwise a plain grey wall would read as a platform.
+
+**The shared sim clock.** `sine`/`mover`/`blink`/`crumble` all need "time since
+start", so the runtime carries `GameRuntime.simTime` — advanced by `FIXED_DT` each
+substep, **deterministic** (a function of substep count, never wall-clock) — and
+sets it on each mover entity's `params.simTime` before `stepEntity`. Reset to 0 at
+`start()`.
+
+**The one new wiring pattern — movers re-read per frame.** A `mover` (T1e) is the
+first **solid that moves**, so `step()` steps the movers FIRST, then rebuilds the
+solids the player resolves against = static `solids` + each present mover's live
+outline (`solidsWithMovers` → `moverBody`), THEN steps the player. This is the
+deliberate exception to "solids captured once at start". *Limit:* there's **no
+velocity inheritance** — a player standing on a horizontally moving platform isn't
+dragged sideways (that's M6); vertical support (elevators) works because collision
+resolution pushes the player up. Documented + pinned in `mover.integration.test.ts`.
+
+- **T1a angled spring** — the `spring` role gains `meta.launchAngle` (deg from
+  straight-up, + tilts right). `springLaunchV(impulse, angle)` returns a `{vx,vy}`
+  vector; **angle 0 is byte-identical** to the old straight-up launch.
+- **T1b hittable block** (`block`, ❓ light-red) — a **solid** you bonk from BELOW.
+  `checkBlocks()` fires once when a rising player's head reaches its underside:
+  `ejectTokenAbove` spawns a coin (if `meta.contains === 'token'`) and the block
+  breaks (hidden + dropped from `solids`). Snapshotted for non-destructive restore.
+- **T1c warp pipe** (`portal`, 🌀 light-violet) — a teleport trigger. Pairs link by
+  `meta.channel`; `teleportThroughPortal` centers the player on the partner and
+  starts `PORTAL_COOLDOWN_FRAMES` debounce so arrival doesn't instantly re-warp.
+- **T1d oscillating enemy** (`enemy` + `meta.sine`) — a `motion: 'sine'` mover
+  (Piranha-plant rise/fall). `sinePosition` = base + sin along an axis; no
+  gravity/collision (it's on a track). Stomp/kill still work — they're AABB+vy
+  tests, motion-agnostic.
+- **T1e moving platform** (`platform`, 🟫 grey + dashed, marker-identified) — a `motion: 'mover'` solid on a
+  ping-pong `meta.path`. `moverPosition` is a triangle wave A↔B. See the rebuild
+  pattern above.
+- **T1f blink / crumble platform** — `platform` variants gated by `platformPresent`
+  in the solids rebuild: `meta.blink` toggles solid on a phase clock
+  (`blinkSolidAt`); `meta.crumbleMs` drops it out after the player first stands on
+  it (`checkCrumble` arms `entity.crumbleStandMs`; `crumbleGone` decides).
+
 ## Game session & framing (M1 lean, M5, M8)
 
 - **Session** (M1, lean) — [session/session.ts](game/session/session.ts): a PURE
@@ -212,14 +286,53 @@ Three more color-coded roles, all pure decisions in
   overlay (top-center) reading `gameStateAtom` (which `emit()` sets alongside the
   App callback). Shows lives / tokens / score / timer.
 
+## Audio (M7) — event sounds
+
+[game/audio.ts](game/audio.ts) — a framework-free `AudioEngine` voiced with the
+Salamander Grand piano (`@tonejs/piano` on Tone.js). It **reuses the line-rider
+demo's audio infrastructure** (`line-rider-side/game/audio.ts`): lazy Piano build
++ CDN sample stream, a no-op fallback when Web Audio is unavailable, the
+fade-not-cut mute ramp, and the "all tunables in one `AUDIO` object" discipline.
+What differs is the **sound model**: line-rider sonifies *continuous surface
+contact* (impact + ride); a platformer is driven by *discrete game events*, so
+each event (`jump / land / collect / stomp / spring / checkpoint / death / win`)
+maps to a struck note (win adds a two-note motif), with an optional 0..1 intensity
+scaling velocity (a bigger fall lands harder; the coin ping brightens as you near
+a full collection).
+
+- **The runtime calls it; the sim stays silent.** `GameRuntime` holds an
+  `AudioEngine` and fires `play(sound, intensity?)` at each existing event site
+  (`checkTriggers` collect/spring/checkpoint/hazard/goal, `checkEnemies`
+  stomp/kill). **Jump and land** happen inside the *pure* `stepEntity`, which can't
+  make sound — so the runtime detects them by diffing the player's kinematic state
+  across the substep (jump = left the ground rising; land = became grounded, with
+  the descending speed captured BEFORE the step since the resolver zeroes `vy` on
+  the landing substep).
+- **Silent until a user gesture.** Tone gates its `AudioContext` behind a gesture,
+  so App calls `runtime.resumeAudio()` on the **Play click** (and `disposeAudio()`
+  on unmount). Before `resume()` the engine is a no-op, so **every test and flow
+  that never resumes is behavior-identical** — audio adds no coupling to the sim.
+- **The pure mapping is split into [game/audioMap.ts](game/audioMap.ts)** (`AUDIO`
+  tunables, `SOUNDS` recipes, `midiToNote`, `soundVelocity`) with **no Tone
+  import**, so it's unit-tested (`audio.test.ts`) under Vitest — Tone's ESM build
+  doesn't resolve in Vitest's Node env (same class of incompatibility as the
+  Cloudflare Vite plugin, see the shell CLAUDE.md). `audio.ts` imports the mapping
+  and adds only the Piano/Tone I/O.
+
 ## Templates (v1 exit test, §5.5)
 
 [templates/index.ts](game/templates/index.ts) — **frozen data** (level `Placement[]`
 + `SessionRules`), no new engine code: a template is AI-shaped data with no AI in the
-loop. Ships **Mario-1-1-like** and **Runner** (v1's exit tests), loaded from the
-**📦 Template dropdown in the custom top panel** (App.tsx's `handleLoadTemplate`
-lays the level down + applies the rules). Each template is its own regression fixture
-(`templates.test.ts`: one player, a goal, valid roles).
+loop. Ships four: **Mario-1-1-like** + **Runner** (v1's exit tests) and the Tier-1
+exit tests **Underground** (bonk-blocks + warp pipe + a rising plant over real pits)
+and **Factory** (a moving platform over a pit + a blink-pad gauntlet + a crumble pad
++ an angled spring). All are **original layouts built from our own block primitives**
+that capture a genre's design *patterns* — NOT copies of any specific game's level
+map, art, or data. Loaded from the **📦 Template dropdown in the custom top panel**
+(App.tsx's `handleLoadTemplate` lays the level down + applies the rules). Each is a
+regression fixture: `templates.test.ts` checks structure (one player, a goal, valid
+roles); `tier1.test.ts` checks the Underground/Factory templates actually use their
+intended Tier-1 primitives with working meta configs.
 
 ## The sim
 
@@ -362,6 +475,16 @@ never a button per converter (PLAN §7.5). Add a converter by adding a target he
   edits and the runtime already plays. Two modes: **replace** (clear + generate
   fresh) and **extend** (`perceive()` the current drawing, add only NEW
   placements). The role prompt is built from the `ROLES` registry.
+  - **The brief is grid-aware.** `levelBrief()` teaches the 60px `TILE` grid (think
+    in tile rows/cols; ground floor row 8; a wide floor is ONE stretched wall, not
+    stacked squares), states reach in tile units (~2-tile gap/rise), and — since the
+    only building blocks are the 7 roles — tells the model to express THEME through
+    **layout** (a dungeon = an enclosed corridor: floor + a ceiling wall row + side
+    walls). This is the level.ts / template design language handed to the AI.
+  - **`applyLevelLayout` snaps to the grid** (`snapToTile`, sizes floored to one
+    tile) as a safety net, so even off-grid model output lands as clean as a
+    hand-built level. The pure snap is unit-tested (`autoLevel.test.ts`); the apply
+    path itself is editor-bound and not unit-tested.
 
 Both proven end-to-end against the live API. Set the key first:
 `wrangler secret put ANTHROPIC_API_KEY` (a local `.env` `ANTHROPIC_API_KEY` works
