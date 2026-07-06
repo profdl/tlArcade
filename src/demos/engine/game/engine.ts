@@ -369,6 +369,13 @@ export class GameRuntime {
 
     this.acc += dt
     while (this.acc >= SIM.FIXED_DT) {
+      // Remember each entity's position BEFORE this substep so the render can
+      // interpolate between the last two substeps (see below). Captured every
+      // substep, so after the loop `renderPrev` holds the second-to-last position.
+      for (const e of this.entities) {
+        e.kin.prevX = e.kin.x
+        e.kin.prevY = e.kin.y
+      }
       this.step(SIM.FIXED_DT)
       this.acc -= SIM.FIXED_DT
     }
@@ -376,8 +383,15 @@ export class GameRuntime {
     // Advance the session clock (drives the HUD timer + any countdown loss).
     tickTime(this.session, dt * 1000)
 
-    this.writeEntities()
-    this.updateCamera() // M5: follow the player during play
+    // Fixed-timestep render interpolation: the sim steps at 120Hz but the display
+    // refreshes at ~60/144Hz, leaving a fractional `acc` remainder each frame.
+    // Rendering the raw substep position makes the player advance a variable number
+    // of substeps per frame → non-uniform on-screen spacing (residual stutter). So
+    // render the player at the interpolated position between its last two substeps,
+    // by the leftover fraction. alpha ∈ [0,1).
+    const alpha = this.acc / SIM.FIXED_DT
+
+    this.writeEntities(alpha)
     this.checkEnemies() // stomp/kill against the player, before static triggers
     if (this.checkTriggers()) return // won → loop already stopped
     // A countdown timeout or an out-of-lives death ends the game (game over).
@@ -389,12 +403,22 @@ export class GameRuntime {
     this.raf = requestAnimationFrame(this.frame)
   }
 
-  /** M5 follow camera: keep the player in a deadzone with velocity look-ahead. */
-  private updateCamera() {
+  /**
+   * M5 follow camera: keep the player in a deadzone with velocity look-ahead.
+   * `render` is the player's INTERPOLATED bounds top-left this frame (from
+   * writeEntities), so the camera tracks the same smoothed position the player is
+   * drawn at. Called inside writeEntities' editor.run so the scroll + move commit
+   * together.
+   */
+  private updateCamera(render: { x: number; y: number }) {
     const player = this.player
     if (!player) return
-    const box = aabbOf(player.kin, player.samples)
-    const center = { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 }
+    // Player half-extents from its outline, to turn the bounds top-left into a center.
+    const local = aabbOf({ x: 0, y: 0 }, player.samples)
+    const center = {
+      x: render.x + (local.minX + local.maxX) / 2,
+      y: render.y + (local.minY + local.maxY) / 2,
+    }
     const vb = this.editor.getViewportScreenBounds()
     const prev = this.editor.getCamera()
     const next = computeCamera(
@@ -445,21 +469,28 @@ export class GameRuntime {
     }
   }
 
-  private writeEntities() {
-    // The sim tracks each entity's bounds top-left (kin.x/kin.y). Each leaf part
-    // sits at a fixed page offset from it (captured at start), so its target page
-    // origin is (kin.x,kin.y)+offset. Write that back in the leaf's OWN space via
-    // toLocal — identity for a top-level shape, group-local for a grouped child.
-    // Moving every leaf (not the derived group container) keeps the figure rigid.
+  /**
+   * Write every entity's leaves to the canvas AND move the follow camera, in ONE
+   * editor.run batch so the world scroll and the player move commit in the same
+   * paint (separate batches can render a frame out of sync at speed).
+   *
+   * `alpha` (0..1) is the fixed-timestep interpolation fraction: each leaf renders
+   * at lerp(prev, cur, alpha) between the last two substeps, so the ~60Hz display
+   * shows smooth motion over the 120Hz sim. The camera follows the same
+   * interpolated player position, keeping the two perfectly in step.
+   */
+  private writeEntities(alpha: number) {
     this.editor.run(
       () => {
+        let playerRender: { x: number; y: number } | null = null
         for (const entity of this.entities) {
           if (entity.defeated) continue // hidden; leave it where it fell
+          // Interpolated bounds top-left for this frame.
+          const rx = entity.kin.prevX + (entity.kin.x - entity.kin.prevX) * alpha
+          const ry = entity.kin.prevY + (entity.kin.y - entity.kin.prevY) * alpha
+          if (entity.motion === 'platformer') playerRender = { x: rx, y: ry }
           for (const part of entity.parts) {
-            const local = part.toLocal.applyToPoint({
-              x: entity.kin.x + part.offX,
-              y: entity.kin.y + part.offY,
-            })
+            const local = part.toLocal.applyToPoint({ x: rx + part.offX, y: ry + part.offY })
             this.editor.updateShape({
               id: part.id,
               type: part.type,
@@ -468,6 +499,8 @@ export class GameRuntime {
             } as TLShapePartial)
           }
         }
+        // Follow the interpolated player, in the same batch as its move.
+        if (playerRender) this.updateCamera(playerRender)
       },
       { history: 'ignore', ignoreShapeLock: true },
     )
@@ -580,6 +613,10 @@ export class GameRuntime {
     if (!respawn) return true // out of lives → game over (caller ends the game)
     player.kin.x = this.spawn.x
     player.kin.y = this.spawn.y
+    // Snap the interpolation anchor too, or the render would lerp across the whole
+    // level from where the player died to the spawn for one frame (a smear).
+    player.kin.prevX = this.spawn.x
+    player.kin.prevY = this.spawn.y
     player.kin.vx = 0
     player.kin.vy = 0
     player.kin.grounded = false

@@ -37,6 +37,13 @@ export interface EntityKinematic {
   /** Body bounds top-left, page space — what the sim integrates (matches today's px/py). */
   x: number
   y: number
+  /**
+   * The position one substep ago, for fixed-timestep render interpolation (the
+   * runtime captures it each substep and renders at lerp(prev, cur, alpha) so the
+   * ~60Hz display shows smooth motion over the 120Hz sim). Sim math never reads it.
+   */
+  prevX: number
+  prevY: number
   vx: number
   vy: number
   grounded: boolean
@@ -58,6 +65,8 @@ export function makeKinematic(x: number, y: number): EntityKinematic {
   return {
     x,
     y,
+    prevX: x,
+    prevY: y,
     vx: 0,
     vy: 0,
     grounded: false,
