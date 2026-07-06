@@ -38,12 +38,17 @@ at start to convert the sim's bounds position back to the shape's record x/y (se
 ## The player (single shape or a group)
 
 The player is identified by a **marker**, `meta.role === 'player'`, which **wins
-over color** — so a stick figure can be any colour(s). It's set by the tray's
-**"Set as Player"** button (`render/Tray.tsx` → `game/player.ts` → `markAsPlayer`):
-select shapes, click it; if >1 it `groupShapes` them first, then stamps the marker
-on the group. There is always exactly **one** player — marking clears the previous
-marker. Marking is an authoring action (undoable); it does NOT go through
-`history: 'ignore'`.
+over color** — so a stick figure can be any colour(s). It's set from a **contextual
+toolbar** that floats above the current selection: select shapes, click **"Set as
+Player"** (`render/PlayerToolbar.tsx` → `game/player.ts` → `markAsPlayer`). If >1
+it `groupShapes` them first, then stamps the marker on the group. There is always
+exactly **one** player — marking clears the previous marker. Marking is an
+authoring action (undoable); it does NOT go through `history: 'ignore'`.
+
+The toolbar is a `TldrawUiContextualToolbar` (tldraw's official "Contextual
+toolbar" example pattern), mounted with the drag `Tray` under a single
+`InFrontOfTheCanvas` wrapper in `App.tsx`; it hides during play and when nothing
+is selected.
 
 At `start()`, `collectPlayerBody` (`game/player.ts`) reads the player's page bounds
 (the union of a group's children) and **merges every leaf part's outline** into one

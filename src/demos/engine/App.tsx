@@ -14,13 +14,26 @@ import { useCallback, useRef, useState } from 'react'
 import { Tldraw, type TLComponents, type Editor } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Tray } from './render/Tray'
+import { PlayerToolbar } from './render/PlayerToolbar'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
 import { playingAtom } from './game/state'
 import './App.css'
 
+// InFrontOfTheCanvas takes a single component; render both the drag tray and the
+// "Set as Player" contextual toolbar. Module-level const → stable identity, so
+// the layer never remounts (see this file's header).
+function InFront() {
+  return (
+    <>
+      <Tray />
+      <PlayerToolbar />
+    </>
+  )
+}
+
 const components: TLComponents = {
-  InFrontOfTheCanvas: Tray,
+  InFrontOfTheCanvas: InFront,
 }
 
 const IDLE: GameState = { status: 'playing', collected: 0, total: 0, deaths: 0 }
