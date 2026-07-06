@@ -1,23 +1,27 @@
 /**
- * Engine — a drag-and-drop game builder on tldraw v5.
+ * Engine — a drag-and-drop game builder on tldraw v5 (native-first).
  *
- * Drop elements from the tray (player / wall / token / hazard / goal), arrange
- * them, then press Play to test-drive a platformer. Native geo/draw/line shapes
- * double as solid terrain, so you can literally draw your level.
+ * There is no custom shape: every element is a native tldraw geo shape whose
+ * color names its role (see game/roles.ts). Elements are added from the left
+ * drag-and-drop tray (render/Tray.tsx, mounted via components); press Play and a
+ * GameRuntime (game/engine.ts) reads the level off the canvas and runs a
+ * platformer sim. A default level loads on first visit; Reset rebuilds it.
  *
- * The shell here is thin: it mounts <Tldraw> with the one custom shape
- * (EntityShapeUtil), renders the tray + HUD outside the canvas, and owns a
- * GameRuntime (game/engine.ts) that runs the sim during Play.
+ * The `components` object is a module-level const (stable identity) so the tray
+ * never remounts; the tray reads play state from game/state.ts → playingAtom.
  */
 import { useCallback, useRef, useState } from 'react'
-import { Tldraw, createShapeId, type Editor } from 'tldraw'
+import { Tldraw, type TLComponents, type Editor } from 'tldraw'
 import 'tldraw/tldraw.css'
-import { EntityShapeUtil } from './render/EntityShapeUtil'
+import { Tray } from './render/Tray'
 import { GameRuntime, type GameState } from './game/engine'
-import { ROLES, ROLE_LIST, type Role } from './game/roles'
+import { loadLevel } from './game/level'
+import { playingAtom } from './game/state'
 import './App.css'
 
-const shapeUtils = [EntityShapeUtil]
+const components: TLComponents = {
+  InFrontOfTheCanvas: Tray,
+}
 
 const IDLE: GameState = { status: 'playing', collected: 0, total: 0, deaths: 0 }
 
@@ -32,49 +36,48 @@ export default function App() {
     editorRef.current = editor
     editor.user.updateUserPreferences({ colorScheme: 'light' })
     runtimeRef.current = new GameRuntime(editor, setState)
+    // First visit (empty canvas) starts on the default level. An existing (saved)
+    // canvas is left as the player left it — Reset is how you get back here.
+    if (editor.getCurrentPageShapes().length === 0) {
+      loadLevel(editor, undefined, true)
+    }
     if (import.meta.env.DEV) {
       ;(window as unknown as { __editor?: Editor }).__editor = editor
     }
     return () => {
       runtimeRef.current?.stop()
       runtimeRef.current = null
+      playingAtom.set(false)
     }
   }, [])
 
-  // Drop a fresh element at the center of the current viewport.
-  const drop = useCallback((role: Role) => {
+  const handleReset = useCallback(() => {
     const editor = editorRef.current
-    if (!editor || playing) return
-    const def = ROLES[role]
-    const c = editor.getViewportPageBounds().center
-    const id = createShapeId()
-    editor.run(() => {
-      editor.createShape({
-        id,
-        type: 'gameEntity',
-        x: c.x - def.size.w / 2,
-        y: c.y - def.size.h / 2,
-        props: { w: def.size.w, h: def.size.h, role },
-      })
-      editor.select(id)
-    })
-  }, [playing])
+    if (!editor) return
+    runtimeRef.current?.stop()
+    playingAtom.set(false)
+    setPlaying(false)
+    setState(IDLE)
+    setNoPlayer(false)
+    loadLevel(editor)
+  }, [])
 
   const togglePlay = useCallback(() => {
     const rt = runtimeRef.current
     if (!rt) return
     if (rt.isPlaying) {
       rt.stop()
+      playingAtom.set(false)
       setPlaying(false)
       setState(IDLE)
       return
     }
     setNoPlayer(false)
-    const ok = rt.start()
-    if (!ok) {
+    if (!rt.start()) {
       setNoPlayer(true)
       return
     }
+    playingAtom.set(true)
     setPlaying(true)
   }, [])
 
@@ -82,9 +85,9 @@ export default function App() {
 
   return (
     <div className="eng-root">
-      <Tldraw persistenceKey="tlArcade-engine" shapeUtils={shapeUtils} onMount={handleMount} />
+      <Tldraw persistenceKey="tlArcade-engine-native" components={components} onMount={handleMount} />
 
-      <div className="eng-tray">
+      <div className="eng-topbar">
         <button
           className={playing ? 'eng-btn eng-stop' : 'eng-btn eng-play'}
           onClick={togglePlay}
@@ -92,34 +95,18 @@ export default function App() {
         >
           {playing ? '■ Stop' : '▶ Play'}
         </button>
-        <div className="eng-divider" />
-        {ROLE_LIST.map((role) => (
-          <button
-            key={role}
-            className="eng-btn eng-tool"
-            disabled={playing}
-            title={`Add ${ROLES[role].label}`}
-            onClick={() => drop(role)}
-          >
-            <span className="eng-emoji">{ROLES[role].emoji}</span>
-            {ROLES[role].label}
-          </button>
-        ))}
+        <button className="eng-btn eng-reset" onClick={handleReset} title="Reset to the default level">
+          ↺ Reset
+        </button>
         {playing && (
           <>
-            <div className="eng-divider" />
             <span className="eng-stat">
               {state.total > 0 ? `⭐ ${state.collected}/${state.total}` : 'No tokens'}
               {state.deaths > 0 ? ` · 💀 ${state.deaths}` : ''}
             </span>
+            <span className="eng-controls">← → move · ↑ jump</span>
           </>
         )}
-      </div>
-
-      <div className="eng-hint">
-        {playing
-          ? 'Move: ← → / A D · Jump: ↑ / W / Space'
-          : 'Drop a 🙂 Player, some 🧱 Walls, then Play. Or draw walls with the pencil.'}
       </div>
 
       {noPlayer && (

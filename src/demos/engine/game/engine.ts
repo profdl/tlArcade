@@ -1,22 +1,25 @@
 /**
- * Engine — the play-mode runtime.
+ * Engine — the play-mode runtime (native-first).
  *
  * tldraw is an editor, not a game loop, so this class *is* the game loop. On
- * start() it snapshots authored state, locks editing, and drives the single
- * player entity with a fixed-timestep sim (gravity + WASD/arrow movement + AABB
- * collision). On stop() it restores everything, so Play/Stop is non-destructive
- * and never touches the undo stack (all canvas writes go through
+ * start() it snapshots authored state, collects the level from the NATIVE shapes
+ * on the page (role read from a shape's color — see roles.ts → roleForColor),
+ * and drives the single player shape with a fixed-timestep sim (gravity +
+ * WASD/arrow movement + AABB collision). On stop() it restores, so Play/Stop is
+ * non-destructive and never touches the undo stack (all canvas writes go through
  * `editor.run(..., { history: 'ignore' })`).
  *
+ * The player can be a geo shape (blue, from the tray) OR a blue shape drawn with
+ * the pencil — so it's sized/positioned from its page bounds, not props.w/h
+ * (which draw shapes don't have).
+ *
  * MVP scope / known limits (see CLAUDE.md):
- *  - Only the player moves. Solids are collected ONCE at start (editing is
- *    locked during play), so there are no moving platforms yet.
+ *  - Only the player moves. The level is collected ONCE at start.
  *  - Collision is axis-aligned-bounding-box. A rotated wall collides as its
  *    upright AABB. Keep walls thicker than one sim step (~a few px) to be safe.
  */
-import type { Editor, TLShapeId, TLShapePartial } from 'tldraw'
-import { ROLES, isRole, type Role } from './roles'
-import type { GameEntityShape } from '../render/EntityShapeUtil'
+import type { Editor, TLDrawShape, TLGeoShape, TLShapeId, TLShapePartial } from 'tldraw'
+import { roleForColor, type Role } from './roles'
 
 export const PHYSICS = {
   GRAVITY: 2600, // px/s²
@@ -27,8 +30,9 @@ export const PHYSICS = {
   MAX_FRAME: 0.05, // clamp real dt so a stall can't spiral the sim
 } as const
 
-/** Native tldraw shape types that double as solid terrain (draw your level). */
-const SOLID_NATIVE_TYPES = new Set(['geo', 'draw', 'line'])
+/** Native tldraw shape types the engine reads: geo and draw carry a role via
+ *  color; lines are always solid terrain. */
+const LEVEL_TYPES = new Set(['geo', 'draw', 'line'])
 
 export interface GameState {
   status: 'playing' | 'won' | 'no-player'
@@ -46,6 +50,7 @@ interface Aabb {
 
 interface Trigger {
   id: TLShapeId
+  type: string // geo or draw — a trigger can be drawn too
   role: Extract<Role, 'token' | 'hazard' | 'goal'>
   box: Aabb
 }
@@ -61,10 +66,15 @@ export class GameRuntime {
   private finished = false // the game ended (won); sim ticking stopped, session still active
 
   private playerId!: TLShapeId
+  private playerType = 'geo' // the player may be a geo shape or a drawn (pencil) shape
   private w = 0
   private h = 0
-  private px = 0
+  private px = 0 // player bounds top-left (page space) — what the sim moves
   private py = 0
+  // The player's record x/y differs from its bounds top-left for a draw shape
+  // (its points don't start at the origin); this offset bridges the two.
+  private offX = 0
+  private offY = 0
   private vx = 0
   private vy = 0
   private grounded = false
@@ -92,55 +102,63 @@ export class GameRuntime {
     return this.playing
   }
 
+  /**
+   * A shape's role, from its color. Both geo shapes and shapes drawn with the
+   * pencil (`draw`) map their color to a role — so you can draw any element, not
+   * just the player. A color that isn't a role color stays solid terrain, so a
+   * level can still be sketched (e.g. in black). Lines are always terrain.
+   */
+  private roleOf(shape: { type: string }): Role | null {
+    if (shape.type === 'geo') return roleForColor((shape as TLGeoShape).props.color)
+    if (shape.type === 'draw') return roleForColor((shape as TLDrawShape).props.color)
+    return null
+  }
+
   /** Begin play. Returns false (and does nothing) if there's no player on the page. */
   start(): boolean {
     const editor = this.editor
     const shapes = editor.getCurrentPageShapes()
 
-    const player = shapes.find(
-      (s) => s.type === 'gameEntity' && (s as GameEntityShape).props.role === 'player',
-    ) as GameEntityShape | undefined
+    const player = shapes.find((s) => this.roleOf(s) === 'player')
+    const playerBounds = player && editor.getShapePageBounds(player.id)
 
-    if (!player) {
+    if (!player || !playerBounds) {
       this.onState({ status: 'no-player', collected: 0, total: 0, deaths: 0 })
       return false
     }
 
-    // Snapshot everything we might mutate (player position, token opacity).
+    // Collect the level once, and snapshot anything we might mutate.
     this.snapshot.clear()
-    for (const s of shapes) {
-      if (s.type === 'gameEntity') {
-        this.snapshot.set(s.id, { x: s.x, y: s.y, opacity: s.opacity })
-      }
-    }
-
-    // Collect solids and triggers once (editing is locked during play).
     this.solids = []
     this.triggers = []
     for (const s of shapes) {
+      if (!LEVEL_TYPES.has(s.type)) continue
+      if (s.id === player.id) continue
       const box = editor.getShapePageBounds(s.id)
       if (!box) continue
       const aabb: Aabb = { minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY }
-      if (s.type === 'gameEntity') {
-        if (s.id === player.id) continue
-        const role = (s as GameEntityShape).props.role
-        if (!isRole(role)) continue
-        const def = ROLES[role]
-        if (def.collision === 'solid') this.solids.push(aabb)
-        else if (role === 'token' || role === 'hazard' || role === 'goal') {
-          this.triggers.push({ id: s.id, role, box: aabb })
-        }
-      } else if (SOLID_NATIVE_TYPES.has(s.type)) {
+      const role = this.roleOf(s)
+      if (role === 'token' || role === 'hazard' || role === 'goal') {
+        this.triggers.push({ id: s.id, type: s.type, role, box: aabb })
+        this.snapshot.set(s.id, { x: s.x, y: s.y, opacity: s.opacity })
+      } else {
+        // wall, unlabelled geo, or draw / line → solid terrain
         this.solids.push(aabb)
       }
     }
 
     this.playerId = player.id
-    this.w = player.props.w
-    this.h = player.props.h
-    this.px = player.x
-    this.py = player.y
-    this.spawn = { x: player.x, y: player.y }
+    this.playerType = player.type
+    this.w = playerBounds.w
+    this.h = playerBounds.h
+    this.px = playerBounds.minX
+    this.py = playerBounds.minY
+    // A draw shape's record origin isn't its bounds' top-left; remember the gap
+    // so we can convert the sim's bounds position back to a record x/y to write.
+    this.offX = player.x - playerBounds.minX
+    this.offY = player.y - playerBounds.minY
+    this.spawn = { x: this.px, y: this.py }
+    this.snapshot.set(player.id, { x: player.x, y: player.y, opacity: player.opacity })
     this.vx = 0
     this.vy = 0
     this.grounded = false
@@ -181,8 +199,6 @@ export class GameRuntime {
         for (const [id, snap] of this.snapshot) {
           const s = editor.getShape(id)
           if (!s) continue
-          // `type` is a non-literal union here, so TS can't resolve the
-          // discriminated TLShapePartial — cast at the call site (root CLAUDE.md).
           editor.updateShape({
             id,
             type: s.type,
@@ -268,9 +284,16 @@ export class GameRuntime {
   }
 
   private writePlayer() {
+    // The sim tracks the bounds top-left (px/py); convert back to the shape's
+    // record origin via the offset captured at start (0 for a geo player).
     this.editor.run(
       () => {
-        this.editor.updateShape({ id: this.playerId, type: 'gameEntity', x: this.px, y: this.py })
+        this.editor.updateShape({
+          id: this.playerId,
+          type: this.playerType,
+          x: this.px + this.offX,
+          y: this.py + this.offY,
+        } as TLShapePartial)
       },
       { history: 'ignore', ignoreShapeLock: true },
     )
@@ -288,7 +311,7 @@ export class GameRuntime {
         if (!this.collected.has(t.id)) {
           this.collected.add(t.id)
           this.editor.run(
-            () => this.editor.updateShape({ id: t.id, type: 'gameEntity', opacity: 0 }),
+            () => this.editor.updateShape({ id: t.id, type: t.type, opacity: 0 } as TLShapePartial),
             { history: 'ignore', ignoreShapeLock: true },
           )
           this.emit('playing')

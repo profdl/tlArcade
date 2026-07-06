@@ -1,11 +1,77 @@
-/* Engine — HUD lives outside .tl-container, so tldraw's theme vars don't reach
-   it; these match the light theme by hand (see busytown/App.tsx for the same). */
+/* Engine — HUD/tray match tldraw's light theme by hand (they render outside the
+   themed .tl-container). See busytown/App.tsx for the same approach. */
 .eng-root {
   position: fixed;
   inset: 0;
 }
 
+/* --- Left drag-and-drop tray (mounted via components.InFrontOfTheCanvas) --- */
 .eng-tray {
+  /* The InFrontOfTheCanvas layer (.tl-canvas__in-front) is pointer-events:none
+     so canvas panning works through it — opt the tray back in. */
+  pointer-events: all;
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #fcfcfc;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.eng-tray-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 60px;
+  padding: 8px 4px;
+  border-radius: 9px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none; /* let pointer capture own the gesture, not the browser */
+}
+.eng-tray-item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.eng-tray-item:active {
+  cursor: grabbing;
+}
+.eng-tray-emoji {
+  font-size: 24px;
+  line-height: 1;
+}
+.eng-tray-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1d1d1d;
+}
+
+/* The emoji "ghost" that follows the cursor while dragging over the canvas. */
+.eng-drag-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 400;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  font-size: 40px;
+  pointer-events: none;
+}
+
+/* --- Top bar: Play/Stop + score --- */
+.eng-topbar {
   position: absolute;
   top: 12px;
   left: 50%;
@@ -13,7 +79,7 @@
   z-index: 300;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 5px;
   background: #fcfcfc;
   border: 1px solid rgba(0, 0, 0, 0.07);
@@ -22,19 +88,12 @@
   font-family: system-ui, -apple-system, sans-serif;
 }
 
-.eng-divider {
-  width: 1px;
-  align-self: stretch;
-  background: rgba(0, 0, 0, 0.08);
-  margin: 2px 2px;
-}
-
 .eng-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   height: 32px;
-  padding: 0 11px;
+  padding: 0 14px;
   border: none;
   border-radius: 7px;
   background: transparent;
@@ -47,14 +106,6 @@
 }
 .eng-btn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
-}
-.eng-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.eng-emoji {
-  font-size: 15px;
-  line-height: 1;
 }
 
 .eng-play {
@@ -72,6 +123,10 @@
   background: #c92a2a;
 }
 
+.eng-reset {
+  color: #5c5c66;
+}
+
 .eng-stat {
   padding: 0 8px;
   font-size: 13px;
@@ -80,19 +135,11 @@
   white-space: nowrap;
 }
 
-.eng-hint {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 300;
-  padding: 6px 12px;
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
-  border-radius: 8px;
+.eng-controls {
+  padding: 0 8px 0 0;
   font-size: 12px;
-  font-family: system-ui, -apple-system, sans-serif;
-  pointer-events: none;
+  color: #9c9aa3;
+  white-space: nowrap;
 }
 
 .eng-toast {
