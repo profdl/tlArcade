@@ -103,26 +103,60 @@ with it only because it animates an *overlay*, not a shape). Play isn't
 hard-locked; selection is just cleared, and because the sim rewrites the player's
 position every frame, a stray drag self-heals on the next tick.
 
-## The sim (MVP)
+## The sim
 
-Per fixed substep (`PHYSICS.FIXED_DT`): read input → set `vx` directly from
-left/right, accumulate gravity into `vy`, jump if grounded → move X and resolve,
-move Y and resolve. Collision is **per-axis AABB** against the solids collected
-at start. Triggers are tested each frame against the player box:
+Per fixed substep (`SIM.FIXED_DT`): read input + jump edges → accelerate `vx`
+toward the target speed (friction when idle), integrate `vy` under asymmetric
+gravity, resolve the jump (buffer + coyote + variable height) → move Y and
+resolve, move X and resolve, then tick the feel timers. Triggers are tested each
+frame against the player outline:
 - **token** → collect (opacity→0, counter++),
 - **hazard** → respawn at the player's authored spot (deaths++),
 - **goal** → win, but only once every token is collected.
 
-Tunables live in the `PHYSICS` object — add new ones there, not as inline
-literals.
+**Game feel lives in [game/physics.ts](game/physics.ts)** — the movement/jump/
+gravity math and every tunable. The pipeline is contemporary-platformer standard:
+
+- **Accel/friction, not instant velocity** — `vx` approaches `dir*moveSpeed`
+  (`stepVx`); ground and air use different rates so air control feels lighter.
+- **Coyote time** — a jump still fires for `coyoteTime` s after leaving a ledge.
+- **Jump buffering** — a jump pressed `jumpBuffer` s before landing fires on
+  touchdown. Both fold into one `bufferTimer>0 && coyoteTimer>0` check in `step`.
+- **Variable jump height** — releasing jump while rising cuts `vy *= jumpCut`
+  (tap = short hop). Needs key EDGES (`jumpPressed`/`jumpReleased`), not just the
+  held `keys` Set — see the key handlers (`e.repeat` filters OS auto-repeat).
+- **Asymmetric gravity** — heavier falling (`fallGravityMult`), floaty at the
+  apex (`apexGravityMult` within `apexThreshold` of vy=0) — `gravityMult`.
+- **Corner correction** — on a ceiling bonk the resolver probes ±`cornerCorrect`
+  px sideways (`tryCornerCorrect` via `deepestShift`) and slips the head past a
+  small overhang instead of killing the jump.
+
+Collision resolution is still **per-axis** against the real-outline solids
+collected at start (`resolveAxis` → `deepestShift`; `SIM.WALL_NX`/`GROUND_NY`
+decide wall-vs-slope-vs-floor). Non-feel constants (substep, ground/wall normal
+thresholds) are `SIM` in physics.ts; add new feel knobs to `PhysicsTunables` +
+`PHYSICS_DEFAULTS`, never as inline literals.
+
+### Live tuning
+
+`PHYSICS_DEFAULTS` is the shipped "tight & snappy" baseline. A **live debug
+panel** ([render/PhysicsPanel.tsx](render/PhysicsPanel.tsx)) shows during play and
+writes every knob to `tunablesAtom` (game/state.ts); the runtime reads that atom
+each substep, so edits are felt on the next jump. **Copy** dumps the current
+values as JSON to paste back into `PHYSICS_DEFAULTS`; **Reset** restores defaults.
+App re-seeds the atom to defaults on mount (it's module-global). The panel sits
+top-right, so the runtime hides tldraw's `StylePanel` during play (App.tsx) to
+avoid the overlap. Slider layout is data-driven from `TUNABLE_GROUPS`.
 
 ## Known limits / gotchas
 
 - **Only the player moves.** The level is gathered once at `start()`, so there
   are no moving platforms or AI movers yet — those are the next roles to add
   (enemy, ball, spawner; see the repo brainstorm).
-- **Collision is AABB.** A rotated wall collides as its upright bounding box.
-  Keep walls thicker than one sim step (a few px) to avoid tunneling at speed.
+- **Solids are captured once at start**, in page space — a rotated wall collides
+  by its real outline (see collision.ts) but a wall moved/rotated mid-play won't
+  update. Collision is not swept: keep walls thicker than one substep's travel to
+  avoid tunneling at high speed (no continuous collision detection yet).
 - **The player is driven by `shape.x/shape.y`** of the player record — the group
   (or lone shape), top-level and unrotated. Moving the group carries its parts;
   but don't rotate the player record, or re-parent it under something else, and

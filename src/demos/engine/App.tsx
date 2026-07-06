@@ -11,13 +11,15 @@
  * never remounts; the tray reads play state from game/state.ts → playingAtom.
  */
 import { useCallback, useRef, useState } from 'react'
-import { Tldraw, type TLComponents, type Editor } from 'tldraw'
+import { DefaultStylePanel, Tldraw, useValue, type TLComponents, type Editor } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Tray } from './render/Tray'
 import { PlayerToolbar } from './render/PlayerToolbar'
+import { PhysicsPanel } from './render/PhysicsPanel'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
-import { playingAtom } from './game/state'
+import { playingAtom, tunablesAtom } from './game/state'
+import { makeTunables } from './game/physics'
 import './App.css'
 
 // InFrontOfTheCanvas takes a single component; render both the drag tray and the
@@ -28,12 +30,23 @@ function InFront() {
     <>
       <Tray />
       <PlayerToolbar />
+      <PhysicsPanel />
     </>
   )
 }
 
+// During play the physics panel sits top-right, exactly where tldraw's style
+// panel lives — and styling shapes mid-play is meaningless anyway. So hide the
+// style panel while playing; otherwise it's the stock one.
+function StylePanel() {
+  const playing = useValue('style panel: playing', () => playingAtom.get(), [])
+  if (playing) return null
+  return <DefaultStylePanel />
+}
+
 const components: TLComponents = {
   InFrontOfTheCanvas: InFront,
+  StylePanel,
 }
 
 const IDLE: GameState = { status: 'playing', collected: 0, total: 0, deaths: 0 }
@@ -48,6 +61,9 @@ export default function App() {
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
     editor.user.updateUserPreferences({ colorScheme: 'light' })
+    // Start each session from the shipped "tight & snappy" defaults (the atom is
+    // module-global, so a previous session's live edits would otherwise linger).
+    tunablesAtom.set(makeTunables())
     runtimeRef.current = new GameRuntime(editor, setState)
     // First visit (empty canvas) starts on the default level. An existing (saved)
     // canvas is left as the player left it — Reset is how you get back here.
