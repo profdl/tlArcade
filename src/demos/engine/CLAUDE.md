@@ -103,6 +103,37 @@ with it only because it animates an *overlay*, not a shape). Play isn't
 hard-locked; selection is just cleared, and because the sim rewrites the player's
 position every frame, a stray drag self-heals on the next tick.
 
+## The N-entity model (`game/entities/`)
+
+The sim steps a **list of entities** (`GameRuntime.entities`); the **player is
+`entities[0]`** with `motion: 'platformer'`. The per-substep physics, per-axis
+collision resolution, and outline overlap test are the **pure, editor-free**
+functions in [game/entities/step.ts](game/entities/step.ts) (`stepEntity`,
+`resolveAxis`, `deepestShift`, `tryCornerCorrect`, `touches`) — unit-tested in
+`step.test.ts` with hand-built `Body` fixtures, exactly like `physics.ts`/
+`collision.ts`. `GameRuntime` owns only the editor glue (read the level, read
+input, write shapes, fire effects). The entity types live in
+[game/entities/types.ts](game/entities/types.ts) (`Entity`, `EntityKinematic`,
+`EntityInput`).
+
+- **Only the player reads input and runs the jump/coyote/buffer/variable-cut/
+  slope-jump feel pipeline** — that whole block in `stepEntity` is gated on
+  `isPlatformer`. **Gravity + per-axis integrate + collision resolution run for
+  every entity**, so a future mover reuses the same path.
+- **Trigger/win/respawn ownership stays on the player** (`checkTriggers`/
+  `respawn` in `engine.ts`): the runtime keeps its own inline effect loop (a
+  hazard respawn mutates `player.kin` mid-loop, so later triggers that frame see
+  the respawned position — the original ordering) and uses the pure `touches()`
+  only for the overlap test.
+- **Per-leaf offsets stay in `entity.parts`** (a group player is many leaves at
+  their own page offsets), NOT flattened onto the entity — flattening would deform
+  a group figure. `EntityKinematic` carries only the body's bounds top-left.
+- Today there is **exactly one entity**; with a single `platformer` entity and no
+  others (the only state that exists — no `meta.role`/behavior is ever set yet)
+  the loop is byte-for-byte the original player-only path, so every level keeps
+  working. This was a behavior-preserving refactor, adversarially verified. Movers
+  (enemy, moving platform) become **additional entities** in later phases.
+
 ## The sim
 
 Per fixed substep (`SIM.FIXED_DT`): read input + jump edges → accelerate `vx`
@@ -159,9 +190,11 @@ avoid the overlap. Slider layout is data-driven from `TUNABLE_GROUPS`.
 
 ## Known limits / gotchas
 
-- **Only the player moves.** The level is gathered once at `start()`, so there
-  are no moving platforms or AI movers yet — those are the next roles to add
-  (enemy, ball, spawner; see the repo brainstorm).
+- **Only the player moves** *today*. The sim is now N-entity-capable (see The
+  N-entity model above), but only one entity — the player — is ever built, and
+  the level is gathered once at `start()`. Moving platforms / AI movers are added
+  as **additional entities** with non-`platformer` motions in later phases (enemy,
+  ball, spawner; see PLAN.md §G2/G3).
 - **Solids are captured once at start**, in page space — a rotated wall collides
   by its real outline (see collision.ts) but a wall moved/rotated mid-play won't
   update. Collision is not swept: keep walls thicker than one substep's travel to
