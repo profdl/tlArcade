@@ -11,6 +11,10 @@ export default defineConfig({
   // uses its own vitest.config.ts instead: the Cloudflare plugin's Worker
   // environment isn't compatible with Vitest's test environment setup.
   plugins: [react(), cloudflare()],
+  // Honor $PORT when set (the preview harness / multiple concurrent Claude
+  // chats assign one) so the dev server doesn't collide on the default 5173.
+  // Plain `npm run dev` leaves this undefined and keeps the 5173 default.
+  server: process.env.PORT ? { port: Number(process.env.PORT), strictPort: true } : undefined,
   resolve: {
     alias: {
       // @tonejs/piano's MIDI input imports Node's built-in `events`, which Vite

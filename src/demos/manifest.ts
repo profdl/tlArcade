@@ -11,6 +11,13 @@ export interface DemoEntry {
 
 export const demos: DemoEntry[] = [
 	{
+		slug: 'engine',
+		title: 'Engine',
+		blurb:
+			'A drag-and-drop game builder — drop players, walls, tokens, hazards, and goals from a tray, draw terrain with the pencil, then hit Play to test-drive a platformer.',
+		Component: lazy(() => import('./engine/App')),
+	},
+	{
 		slug: 'line-rider-classic',
 		title: 'Line Rider: Classic',
 		blurb:

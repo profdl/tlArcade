@@ -1,0 +1,140 @@
+/* Engine — HUD lives outside .tl-container, so tldraw's theme vars don't reach
+   it; these match the light theme by hand (see busytown/App.tsx for the same). */
+.eng-root {
+  position: fixed;
+  inset: 0;
+}
+
+.eng-tray {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  background: #fcfcfc;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 11px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.eng-divider {
+  width: 1px;
+  align-self: stretch;
+  background: rgba(0, 0, 0, 0.08);
+  margin: 2px 2px;
+}
+
+.eng-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #1d1d1d;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.eng-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+}
+.eng-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.eng-emoji {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.eng-play {
+  background: #099268;
+  color: #fff;
+}
+.eng-play:hover:not(:disabled) {
+  background: #087a58;
+}
+.eng-stop {
+  background: #e03131;
+  color: #fff;
+}
+.eng-stop:hover:not(:disabled) {
+  background: #c92a2a;
+}
+
+.eng-stat {
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1d1d1d;
+  white-space: nowrap;
+}
+
+.eng-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: system-ui, -apple-system, sans-serif;
+  pointer-events: none;
+}
+
+.eng-toast {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 400;
+  padding: 8px 14px;
+  background: #e03131;
+  color: #fff;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: system-ui, -apple-system, sans-serif;
+  animation: eng-toast-life 2.2s ease forwards;
+}
+@keyframes eng-toast-life {
+  0% { opacity: 0; transform: translate(-50%, -6px); }
+  12%, 78% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -6px); }
+}
+
+.eng-banner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 40px;
+  background: #fcfcfc;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+.eng-banner-title {
+  font-size: 28px;
+  font-weight: 800;
+  color: #1d1d1d;
+}
