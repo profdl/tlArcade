@@ -66,14 +66,23 @@ export interface Viewport {
 }
 
 /**
- * Map a desired SCREEN target position (screen px, before zoom) for a page point
- * to the camera translation that places it there — the ONE spot encoding tldraw's
- * sign convention (see the module header). Flip the returned sign here if the
- * integrator finds the world scrolls the wrong way; nothing else in this file
- * assumes a direction.
+ * How far (SCREEN px) the camera must translate to bring a point at screen
+ * position `pos` back inside a band of half-width `half` centered on `bandCenter`.
+ * Returns 0 when the point is already inside the band (the camera holds).
+ *
+ * This is the SIGN CONVENTION spot (see the module header). tldraw's screen
+ * position of a page point is `(page + camera) * z`, so increasing the camera
+ * translation moves a point RIGHT/DOWN on screen. If the point is past the RIGHT
+ * edge (`pos > center + half`), we must move the camera LEFT (negative) to pull it
+ * back — hence the returned correction shifts the camera by the NEGATIVE of the
+ * overshoot. Flip both signs here if the integrator finds the world scrolls the
+ * wrong way; nothing else in this file assumes a direction.
  */
-function screenTargetToCamera(screenTarget: number, pagePos: number, z: number): number {
-  return screenTarget / z - pagePos
+function edgeCorrection(pos: number, bandCenter: number, half: number): number {
+  const over = pos - bandCenter
+  if (over > half) return -(over - half) // past the right/bottom edge → camera moves back
+  if (over < -half) return -(over + half) // past the left/top edge
+  return 0 // inside the band → hold
 }
 
 /**
@@ -128,17 +137,15 @@ export function computeCamera(
   const leadX = clampAbs(player.vx * t.lookAhead, t.lookAheadMax)
   const leadY = clampAbs(player.vy * t.lookAhead * 0.5, t.lookAheadMax * 0.5)
 
-  // The SCREEN position we want the player to occupy: center, shifted by the lead.
-  const screenTargetX = centerX + leadX
-  const screenTargetY = centerY + leadY
-
-  // Per axis: only pursue the target if the player is currently OUTSIDE the band on
-  // that axis. Inside the band → keep prev (the camera holds, no scroll).
-  const outsideX = Math.abs(screenX - centerX) > halfW
-  const outsideY = Math.abs(screenY - centerY) > halfH
-
-  const targetX = outsideX ? screenTargetToCamera(screenTargetX, player.x, z) : prev.x
-  const targetY = outsideY ? screenTargetToCamera(screenTargetY, player.y, z) : prev.y
+  // Deadzone as a boundary, NOT a snap-to-center. When the player pushes past an
+  // edge of the band (band centered on `center + lead`), the target only scrolls
+  // enough to bring the player back to THAT EDGE — never all the way to center.
+  // Snapping to center overshoots, drops the player back inside the band, and the
+  // next frame it holds — producing the fast-move stutter (chase→hold→chase). By
+  // targeting the edge, the camera settles exactly at the boundary and holds
+  // smoothly, so a running player rides the leading edge without oscillation.
+  const targetX = prev.x + edgeCorrection(screenX, centerX + leadX, halfW) / z
+  const targetY = prev.y + edgeCorrection(screenY, centerY + leadY, halfH) / z
 
   // Smooth toward the target (lerp). `smooth` of 1 snaps; small values ease in.
   const s = t.smooth

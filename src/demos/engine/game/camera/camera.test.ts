@@ -92,14 +92,49 @@ describe('computeCamera — smoothing (lerp)', () => {
     expect(frac).toBeCloseTo(CAMERA_DEFAULTS.smooth, 5)
   })
 
-  it('smooth = 1 snaps straight to the target', () => {
+  it('smooth = 1 snaps the player to the band EDGE, not screen center', () => {
     const prev = cam(10, 20)
     const base = centeredPlayerX(prev)
     const player = { x: base + CAMERA_DEFAULTS.deadzoneW, y: centeredPlayerY(prev), vx: 0, vy: 0 }
     const snapped = computeCamera(player, viewport, prev, { ...CAMERA_DEFAULTS, smooth: 1 })
-    // The snapped camera places the player exactly at the (look-ahead-free) screen center.
+    // The deadzone is a BOUNDARY, not a snap-to-center: a player pushed past the
+    // right edge lands exactly on the edge (center + halfW), NOT at screen center.
+    // This is what prevents the fast-move stutter (chase-to-center → overshoot →
+    // fall back inside band → hold → repeat).
     const screenX = (player.x + snapped.x) * snapped.z
-    expect(screenX).toBeCloseTo(viewport.w / 2, 6)
+    expect(screenX).toBeCloseTo(viewport.w / 2 + CAMERA_DEFAULTS.deadzoneW / 2, 4)
+  })
+})
+
+describe('computeCamera — anti-stutter (deadzone is a boundary)', () => {
+  it('a player riding steadily past the edge does NOT oscillate in/out of the band', () => {
+    // Simulate a fast right-runner over many frames at smooth=1 (worst case for
+    // overshoot). Each frame the player advances a fixed page step; feed the camera
+    // its own previous output. The player's on-screen x must not bounce back and
+    // forth across the band edge — with edge-correction it converges to the edge and
+    // stays pinned there (drift within one page-step), never overshooting to center.
+    const t = { ...CAMERA_DEFAULTS, smooth: 1 }
+    let prev = cam(0, 0)
+    const step = 6 // page px advanced per frame (a fast run)
+    let px = centeredPlayerX(prev)
+    // Band edge including the constant look-ahead lead (vx*lookAhead, clamped).
+    const lead = Math.min(400 * CAMERA_DEFAULTS.lookAhead, CAMERA_DEFAULTS.lookAheadMax)
+    const edge = viewport.w / 2 + lead + t.deadzoneW / 2
+    const screensAtEdge: number[] = []
+    for (let i = 0; i < 200; i++) {
+      px += step
+      const next = computeCamera({ x: px, y: centeredPlayerY(prev), vx: 400, vy: 0 }, viewport, prev, t)
+      prev = next
+      const screenX = (px + next.x) * next.z
+      if (i > 60) screensAtEdge.push(screenX) // sample well after convergence
+    }
+    // Once converged, the player sits pinned at the leading edge every frame — the
+    // spread across frames is ~0 (a fixed point), NOT oscillating. A snap-to-center
+    // camera would instead swing the player by ~deadzoneW/2 each frame.
+    const min = Math.min(...screensAtEdge)
+    const max = Math.max(...screensAtEdge)
+    expect(max - min).toBeLessThan(1) // pinned steady — no stutter
+    expect(min).toBeCloseTo(edge, 0) // pinned AT the leading edge, not center
   })
 })
 

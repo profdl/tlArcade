@@ -289,6 +289,7 @@ export class GameRuntime {
     this.deaths = 0
     // Fresh session (lives/score/timer) for this attempt.
     this.session = newSession(this.rules)
+    this.lastStatus = null // force the first emit('playing') to reach App
     // Remember the authored camera so stop() can restore the author's view.
     this.authoredCamera = { ...editor.getCamera() }
 
@@ -587,8 +588,10 @@ export class GameRuntime {
     return false
   }
 
-  private emit(status: GameState['status']) {
-    const state: GameState = {
+  private lastStatus: GameState['status'] | null = null
+
+  private buildState(status: GameState['status']): GameState {
+    return {
       status,
       collected: this.collected.size,
       total: this.triggers.filter((t) => t.role === 'token').length,
@@ -597,9 +600,23 @@ export class GameRuntime {
       score: this.session.score,
       timeMs: Math.round(this.session.elapsedMs),
     }
-    // The App callback (banners / Play-Stop state) AND the HUD atom both read this.
-    this.onState(state)
-    gameStateAtom.set(state)
+  }
+
+  /**
+   * Emit game state. The HUD atom is updated every call (cheap reactive read).
+   * The App callback (`onState` → React setState) fires ONLY when the `status`
+   * changes — win/lose/playing transitions App actually renders on — NOT on the
+   * per-frame timer/score tick. Calling setState 60×/s re-renders App every frame
+   * and competes with the rAF sim loop (a source of movement stutter); the HUD
+   * reads the atom instead, so the on-screen numbers still update smoothly.
+   */
+  private emit(status: GameState['status']) {
+    const state = this.buildState(status)
+    gameStateAtom.set(state) // HUD reads this every frame (cheap)
+    if (status !== this.lastStatus) {
+      this.lastStatus = status
+      this.onState(state) // App re-renders only on a status transition
+    }
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
