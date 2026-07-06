@@ -11,7 +11,8 @@
  * visit (empty canvas) and the Reset button reloads it.
  */
 import type { Editor } from 'tldraw'
-import { shapeForRole, type Role } from './roles'
+import { ROLES, shapeForRole, tiles, type Role } from './roles'
+import { createBuilderPlayer } from './builder'
 
 export interface Placement {
   role: Role
@@ -21,26 +22,33 @@ export interface Placement {
   h?: number
 }
 
-/** A small, winnable platformer: jump the hazard, climb the steps collecting
- *  all three tokens, then drop to the goal on the right. */
+/**
+ * A small, winnable platformer, authored on the 60px tile grid (see roles.ts →
+ * TILE): jump the hazard, climb the 2-tile steps collecting all three tokens,
+ * then drop to the goal on the right. Positions and sizes are whole/half tile
+ * multiples via `tiles()`; the ground sits at y=480 (tile row 8), platforms two
+ * tiles up each step. The player is 2 tiles tall, so steps rise ~1 tile each.
+ */
+const T = tiles
 export const DEFAULT_LEVEL: Placement[] = [
-  // Ground + steps.
-  { role: 'wall', x: 40, y: 440, w: 820, h: 32 },
-  { role: 'wall', x: 260, y: 380, w: 150, h: 24 },
-  { role: 'wall', x: 470, y: 320, w: 150, h: 24 },
-  { role: 'wall', x: 680, y: 260, w: 150, h: 24 },
-  // Player, on the ground at the left.
-  { role: 'player', x: 90, y: 360 },
-  // A hazard on the ground to jump over.
-  { role: 'hazard', x: 160, y: 412, w: 100, h: 28 },
-  // Tokens, one per step.
-  { role: 'token', x: 320, y: 340 },
-  { role: 'token', x: 530, y: 280 },
-  { role: 'token', x: 740, y: 220 },
+  // Ground floor: a 14-tile-wide, 2-tile-tall slab. Top at y=480.
+  { role: 'wall', x: T(1), y: T(8), w: T(14), h: T(2) },
+  // A staircase of 3-tile-wide platforms, each rising one tile.
+  { role: 'wall', x: T(5), y: T(7), w: T(3), h: T(1) },
+  { role: 'wall', x: T(9), y: T(6), w: T(3), h: T(1) },
+  { role: 'wall', x: T(12), y: T(5), w: T(3), h: T(1) },
+  // Player (the drawn builder, 2 tiles tall) standing on the ground at the left.
+  { role: 'player', x: T(2), y: T(6) },
+  // A hazard on the ground to jump over (1 tile wide, half tall).
+  { role: 'hazard', x: T(3), y: T(7.5) },
+  // Tokens, one above each step.
+  { role: 'token', x: T(6.25), y: T(6) },
+  { role: 'token', x: T(10.25), y: T(5) },
+  { role: 'token', x: T(13.25), y: T(4) },
   // An enemy patrolling the ground floor — stomp it from above, or dodge it.
-  { role: 'enemy', x: 380, y: 400 },
-  // Goal, on the ground at the far right.
-  { role: 'goal', x: 792, y: 368 },
+  { role: 'enemy', x: T(6), y: T(7) },
+  // Goal, standing on the ground at the far right (2 tiles tall).
+  { role: 'goal', x: T(13.5), y: T(6) },
 ]
 
 /**
@@ -59,6 +67,13 @@ export function loadLevel(editor: Editor, level: Placement[] = DEFAULT_LEVEL, ig
       const ids = editor.getCurrentPageShapes().map((s) => s.id)
       if (ids.length) editor.deleteShapes(ids)
       for (const p of level) {
+        // The player is the hand-drawn BUILDER (a marked group of draw strokes),
+        // not a geo shape — see game/builder.ts. Everything else is its geo shape.
+        if (p.role === 'player') {
+          const h = p.h ?? ROLES.player.size.h
+          createBuilderPlayer(editor, p.x, p.y, h)
+          continue
+        }
         const base = shapeForRole(p.role)
         editor.createShape({
           ...base,

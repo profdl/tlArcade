@@ -68,6 +68,26 @@ appearance, the geo shape the tray drops (`shapeForRole`), its color, default
 size, and the three behavior axes — **motion** / **collision** / **effect**.
 `roleForColor` maps a color back to a role for the engine.
 
+## The tile grid
+
+Levels are built on a **square tile grid** like a classic side-scroller. The
+unit is `roles.ts` → **`TILE = 60`**, chosen so the player (the drawn builder,
+`builder.ts` → `BUILDER_HEIGHT = 120`) is exactly **1 tile wide × 2 tiles tall**
+— the standard 1×2 platformer footprint. Every role's default `size` is a
+whole/half-tile multiple expressed via `tiles(n)` (wall 1×1, token ½×½, hazard
+1×½, goal 1×2, enemy 1×1, spring 1×¼, checkpoint ½×1½, oneway 2×¼). **Walls
+default to a 1×1 square you stretch to whole-tile multiples** to build floors and
+platforms (a floor is one wide wall, not many stacked squares).
+
+`level.ts` and the templates author positions **and** sizes in tile units via
+`tiles()` (aliased `T`), so a layout reads as grid coordinates and stays on the
+grid. The **ground row sits at `T(8)` (y=480)**; the player and goal are 2 tiles
+tall, so they rest on it at `y = T(6)`. Keep new levels grid-aligned. There is no
+interactive snap-to-grid yet — dragged/placed shapes size on the grid but land at
+the free cursor point; snapping would be a `Tray.tsx`/editor-config follow-up.
+Nothing hardcodes a pixel size: `Tray.tsx` and `ai/autoLevel.ts` read `ROLES[…]
+.size` at runtime, so changing `TILE` (or a role's tile size) reflows everything.
+
 ## The left tray
 
 [render/Tray.tsx](render/Tray.tsx) is adapted from tldraw's official "Drag and

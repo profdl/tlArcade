@@ -12,6 +12,7 @@
  * → loadLevel), so the result is ordinary editable shapes the user can hand-tweak.
  */
 import type { Placement } from '../level'
+import { tiles as T } from '../roles'
 import type { SessionRules } from '../session/session'
 
 export interface Template {
@@ -27,29 +28,30 @@ export interface Template {
 const marioLike: Template = {
   name: 'Mario 1-1',
   blurb: 'Run, jump, stomp a Goomba, grab the coins, reach the flag.',
+  // Authored on the 60px tile grid (roles.ts → TILE). Ground top at y=480.
   level: [
-    // Ground: a long floor with a gap to jump.
-    { role: 'wall', x: 0, y: 460, w: 640, h: 40 },
-    { role: 'wall', x: 720, y: 460, w: 900, h: 40 },
-    // Player at the far left.
-    { role: 'player', x: 60, y: 380 },
+    // Ground: a long floor (2 tiles tall) with a 2-tile gap to jump.
+    { role: 'wall', x: T(0), y: T(8), w: T(11), h: T(2) },
+    { role: 'wall', x: T(13), y: T(8), w: T(15), h: T(2) },
+    // Player at the far left, standing on the ground.
+    { role: 'player', x: T(1), y: T(6) },
     // A couple of floating brick platforms (one-way so you can jump up through).
-    { role: 'oneway', x: 300, y: 340, w: 160, h: 14 },
-    { role: 'oneway', x: 520, y: 280, w: 160, h: 14 },
+    { role: 'oneway', x: T(5), y: T(6) },
+    { role: 'oneway', x: T(9), y: T(5) },
     // Coins to collect (over the platforms + past the gap).
-    { role: 'token', x: 360, y: 300 },
-    { role: 'token', x: 580, y: 240 },
-    { role: 'token', x: 900, y: 400 },
-    { role: 'token', x: 1080, y: 400 },
+    { role: 'token', x: T(5.75), y: T(5.25) },
+    { role: 'token', x: T(9.75), y: T(4.25) },
+    { role: 'token', x: T(15), y: T(7) },
+    { role: 'token', x: T(18), y: T(7) },
     // A patrolling enemy on the far ground — stomp it or dodge it.
-    { role: 'enemy', x: 950, y: 420 },
-    // A pipe-ish wall bump to hop over.
-    { role: 'wall', x: 1240, y: 400, w: 60, h: 60 },
+    { role: 'enemy', x: T(16), y: T(7) },
+    // A pipe-ish wall bump (2 tiles tall) to hop over.
+    { role: 'wall', x: T(21), y: T(6), w: T(1), h: T(2) },
     // A bounce pad for a shortcut up to a high coin.
-    { role: 'spring', x: 1360, y: 448 },
-    { role: 'token', x: 1370, y: 180 },
-    // The flag goal at the far right.
-    { role: 'goal', x: 1520, y: 388 },
+    { role: 'spring', x: T(23), y: T(7.75) },
+    { role: 'token', x: T(23.25), y: T(3) },
+    // The flag goal at the far right (2 tiles tall).
+    { role: 'goal', x: T(26), y: T(6) },
   ],
   rules: {
     lives: 3,
@@ -66,24 +68,25 @@ const marioLike: Template = {
 const autoRunner: Template = {
   name: 'Runner',
   blurb: 'A quick dash: hop the gaps and the hazard, grab coins, reach the goal.',
+  // Authored on the 60px tile grid (roles.ts → TILE). Landings step up by a tile.
   level: [
-    { role: 'player', x: 40, y: 380 },
-    // A staircase of platforms with gaps.
-    { role: 'wall', x: 0, y: 460, w: 260, h: 40 },
-    { role: 'wall', x: 340, y: 430, w: 200, h: 30 },
-    { role: 'wall', x: 620, y: 400, w: 200, h: 30 },
-    { role: 'wall', x: 900, y: 430, w: 220, h: 30 },
-    { role: 'wall', x: 1200, y: 460, w: 320, h: 40 },
-    // A hazard in a gap to time a jump over.
-    { role: 'hazard', x: 560, y: 445, w: 60, h: 20 },
+    { role: 'player', x: T(1), y: T(6) },
+    // A staircase of platforms with gaps, each landing one tile higher then back.
+    { role: 'wall', x: T(0), y: T(8), w: T(4), h: T(2) },
+    { role: 'wall', x: T(6), y: T(7), w: T(3), h: T(3) },
+    { role: 'wall', x: T(11), y: T(6), w: T(3), h: T(4) },
+    { role: 'wall', x: T(16), y: T(7), w: T(3), h: T(3) },
+    { role: 'wall', x: T(21), y: T(8), w: T(6), h: T(2) },
+    // A hazard in a gap to time a jump over (1 tile wide, half tall).
+    { role: 'hazard', x: T(9.5), y: T(7.5) },
     // Coins along the run.
-    { role: 'token', x: 400, y: 390 },
-    { role: 'token', x: 680, y: 360 },
-    { role: 'token', x: 960, y: 390 },
-    // A checkpoint mid-course.
-    { role: 'checkpoint', x: 900, y: 366 },
-    // The goal at the end.
-    { role: 'goal', x: 1440, y: 388 },
+    { role: 'token', x: T(7), y: T(6) },
+    { role: 'token', x: T(12), y: T(5) },
+    { role: 'token', x: T(17), y: T(6) },
+    // A checkpoint mid-course, standing on the middle platform.
+    { role: 'checkpoint', x: T(12), y: T(4.5) },
+    // The goal at the end (2 tiles tall).
+    { role: 'goal', x: T(25), y: T(6) },
   ],
   rules: {
     lives: 5,

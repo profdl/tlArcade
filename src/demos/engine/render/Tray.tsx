@@ -12,6 +12,7 @@
 import { useMemo, useRef } from 'react'
 import { Box, Vec, useAtom, useEditor, useQuickReactor, useValue } from 'tldraw'
 import { ROLE_LIST, ROLES, shapeForRole, type Role } from '../game/roles'
+import { createBuilderPlayer } from '../game/builder'
 import { RoleIcon } from './icons'
 import { playingAtom } from '../game/state'
 
@@ -74,11 +75,16 @@ export function Tray() {
           const page = editor.screenToPage(new Vec(e.clientX, e.clientY))
           const { size } = ROLES[current.role]
           editor.markHistoryStoppingPoint('drop element')
-          editor.createShape({
-            ...shapeForRole(current.role),
-            x: page.x - size.w / 2,
-            y: page.y - size.h / 2,
-          })
+          if (current.role === 'player') {
+            // The player is the hand-drawn builder group, not a geo shape.
+            createBuilderPlayer(editor, page.x - size.w / 2, page.y - size.h / 2, size.h)
+          } else {
+            editor.createShape({
+              ...shapeForRole(current.role),
+              x: page.x - size.w / 2,
+              y: page.y - size.h / 2,
+            })
+          }
         }
       }
       cleanup()
