@@ -106,3 +106,53 @@ describe('pointInPolygon', () => {
     expect(pointInPolygon({ x: 5, y: 90 }, tri)).toBe(false)
   })
 })
+
+// The steep-hill jump fix (engine.ts) keys off the SHAPE of the push-out normal:
+// a slope too steep to walk up has a WALL-ish normal (|nx| large, |ny| small), so
+// it can't ground you — and that's exactly the surface the engine must let you
+// JUMP off instead of trapping you. These pin the geometric contract the fix
+// relies on, mirrored against the engine's SIM thresholds (WALL_NX 0.82,
+// GROUND_NY 0.64) without importing the private SIM object.
+describe('penetration — steep slope produces a wall-ish normal (slope-jump contract)', () => {
+  const WALL_NX = 0.82
+  const GROUND_NY = 0.64
+
+  // A ~72° down-right ramp: from (0,0) to (30,92). Its surface normal is nearly
+  // horizontal — this is the "too steep to climb, acts as a wall" case from the
+  // bug report (running into the side of a drawn hill).
+  const steep = bandBody(
+    [
+      { x: 0, y: 0 },
+      { x: 30, y: 92 },
+    ],
+    9,
+  )
+
+  it('a point left of a steep ramp is pushed nearly straight LEFT (wall-ish)', () => {
+    // Just left of the line → outward normal points left-and-slightly-up.
+    const hit = penetration({ x: 8, y: 40 }, steep)
+    expect(hit).not.toBeNull()
+    // Wall-ish: horizontal component dominates and exceeds the engine's WALL_NX,
+    // so the X pass treats it as a wall (blocks forward walk).
+    expect(Math.abs(hit!.nx)).toBeGreaterThan(WALL_NX)
+    // And it is NOT floor-ish — |ny| is below GROUND_NY, so it can't ground you.
+    // This is precisely why the fix adds a slope jump: no ground => no normal jump.
+    expect(Math.abs(hit!.ny)).toBeLessThan(GROUND_NY)
+  })
+
+  it('a shallow ramp stays floor-ish and grounds you (no slope jump needed)', () => {
+    // A ~27° ramp: (0,0) → (100,50). Normal is mostly vertical → grounds you, so
+    // the engine already lets you walk up and jump normally; the fix is inert here.
+    const shallow = bandBody(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 50 },
+      ],
+      9,
+    )
+    const hit = penetration({ x: 40, y: 12 }, shallow) // above the line
+    expect(hit).not.toBeNull()
+    expect(Math.abs(hit!.ny)).toBeGreaterThan(GROUND_NY) // floor-ish → grounds
+    expect(Math.abs(hit!.nx)).toBeLessThan(WALL_NX) // not a wall on X
+  })
+})

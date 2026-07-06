@@ -88,6 +88,13 @@ export class GameRuntime {
   // Releasing the key while this is true and still rising applies the variable-
   // height jump cut (short hop). Cleared on land / cut so it fires once per jump.
   private jumpHeld = false
+  // Touching a STEEP surface this step — one too steep to count as `grounded`
+  // (walkable floor), like the side of a drawn hill. It doesn't seat you for
+  // movement, but it DOES let you jump off (a slope jump), so a steep hill can't
+  // trap you: `wallNx` is that surface's outward horizontal normal (sign = the
+  // way OFF the hill), used to kick the jump away from it.
+  private touchingWall = false
+  private wallNx = 0
 
   private spawn = { x: 0, y: 0 }
   private solids: Body[] = []
@@ -197,6 +204,8 @@ export class GameRuntime {
     this.vx = 0
     this.vy = 0
     this.grounded = false
+    this.touchingWall = false
+    this.wallNx = 0
     this.coyoteTimer = 0
     this.bufferTimer = 0
     this.jumpHeld = false
@@ -312,6 +321,15 @@ export class GameRuntime {
       this.jumpHeld = true // this jump is live until released or landed
       this.bufferTimer = 0
       this.coyoteTimer = 0
+    } else if (this.bufferTimer > 0 && this.touchingWall) {
+      // Slope/wall jump: not on walkable ground, but pressed against a surface too
+      // steep to climb (the side of a drawn hill). Jump UP and AWAY from it (along
+      // the surface's outward normal) so a steep hillside can't trap you — this is
+      // the fix for "stuck on a steep hill, can't move forward or jump".
+      this.vy = -t.jumpSpeed
+      this.vx = this.wallNx * t.moveSpeed
+      this.jumpHeld = true
+      this.bufferTimer = 0
     }
     // Variable height: releasing the key while still rising cuts the ascent, so a
     // tap is a short hop and a hold is a full jump. Only bites once per jump.
@@ -328,6 +346,7 @@ export class GameRuntime {
     // lifts the player up the incline instead of the slope stalling forward walk.
     this.py += this.vy * dt
     this.grounded = false
+    this.touchingWall = false // re-detected each step by resolveAxis
     this.resolveAxis('y', t)
     this.px += this.vx * dt
     this.resolveAxis('x', t)
@@ -356,13 +375,20 @@ export class GameRuntime {
    * upward, floor-ish correction grounds the player (enables jumping).
    */
   private resolveAxis(axis: 'x' | 'y', t: PhysicsTunables) {
-    const { shift, ny } = this.deepestShift(axis, this.px, this.py)
+    const { shift, nx, ny } = this.deepestShift(axis, this.px, this.py)
 
     if (shift === 0) return
 
     if (axis === 'x') {
       this.px += shift
-      // Zero horizontal velocity only if we were pushed against our motion.
+      // Pushed sideways out of a near-vertical WALL. Record it as a wall contact
+      // (outward normal points the way OFF it) so a steep hill you've run into
+      // can still be jumped off — see the jump check in step(). Only cancel
+      // horizontal velocity if the push opposed our motion.
+      if (Math.abs(nx) >= SIM.WALL_NX) {
+        this.touchingWall = true
+        this.wallNx = nx
+      }
       if ((this.vx > 0 && shift < 0) || (this.vx < 0 && shift > 0)) this.vx = 0
     } else {
       if (shift > 0 && this.vy < 0) {
@@ -379,8 +405,15 @@ export class GameRuntime {
         this.grounded = true
         if (this.vy > 0) this.vy = 0
       } else if (this.vy > 0 && shift < 0) {
-        // Pushed up while falling against a steep (wall-ish) surface — stop the fall.
+        // Pushed up while falling against a STEEP surface (too steep to ground) —
+        // stop the fall, and record it as a wall contact so you can jump off a
+        // steep hillside instead of being trapped sliding against it. The outward
+        // normal's horizontal part (nx) is the way off the slope.
         this.vy = 0
+        if (Math.abs(nx) > 1e-3) {
+          this.touchingWall = true
+          this.wallNx = nx
+        }
       }
     }
   }
@@ -392,8 +425,13 @@ export class GameRuntime {
    * without moving the player. Returns the signed axis shift and the ny of the
    * contact that produced it (for grounding).
    */
-  private deepestShift(axis: 'x' | 'y', ox: number, oy: number): { shift: number; ny: number } {
+  private deepestShift(
+    axis: 'x' | 'y',
+    ox: number,
+    oy: number,
+  ): { shift: number; nx: number; ny: number } {
     let bestShift = 0
+    let bestNx = 0
     let bestNy = 0
     for (const local of this.playerSamples) {
       const p: Pt = { x: local.x + ox, y: local.y + oy }
@@ -412,11 +450,12 @@ export class GameRuntime {
         const axisShift = (hit.depth / Math.abs(comp)) * Math.sign(comp)
         if (Math.abs(axisShift) > Math.abs(bestShift)) {
           bestShift = axisShift
+          bestNx = hit.nx
           bestNy = hit.ny
         }
       }
     }
-    return { shift: bestShift, ny: bestNy }
+    return { shift: bestShift, nx: bestNx, ny: bestNy }
   }
 
   /**
@@ -526,6 +565,7 @@ export class GameRuntime {
     this.vx = 0
     this.vy = 0
     this.grounded = false
+    this.touchingWall = false
     this.deaths++
     this.emit('playing')
   }

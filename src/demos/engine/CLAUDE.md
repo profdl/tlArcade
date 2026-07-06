@@ -130,12 +130,21 @@ gravity math and every tunable. The pipeline is contemporary-platformer standard
 - **Corner correction** — on a ceiling bonk the resolver probes ±`cornerCorrect`
   px sideways (`tryCornerCorrect` via `deepestShift`) and slips the head past a
   small overhang instead of killing the jump.
+- **Slope jump** — a slope too steep to walk up (its normal is wall-ish, so it
+  fails `GROUND_NY` and can't ground you) would otherwise TRAP you: no forward
+  walk (X pass blocks it), no jump (not grounded). So `resolveAxis` records a
+  `touchingWall` contact + its outward `wallNx` whenever it pushes you out of a
+  steep/wall surface, and `step` lets a buffered jump fire off it — kicking UP
+  and AWAY along `wallNx`. Gravity still slides you down a steep slope otherwise.
+  `touchingWall` is re-detected every step (no coyote grace), which is fine since
+  gravity keeps you pressed into the hill while in contact.
 
 Collision resolution is still **per-axis** against the real-outline solids
-collected at start (`resolveAxis` → `deepestShift`; `SIM.WALL_NX`/`GROUND_NY`
-decide wall-vs-slope-vs-floor). Non-feel constants (substep, ground/wall normal
-thresholds) are `SIM` in physics.ts; add new feel knobs to `PhysicsTunables` +
-`PHYSICS_DEFAULTS`, never as inline literals.
+collected at start (`resolveAxis` → `deepestShift`, which returns the governing
+contact's `nx`/`ny`; `SIM.WALL_NX`/`GROUND_NY` decide wall-vs-slope-vs-floor).
+Non-feel constants (substep, ground/wall normal thresholds) are `SIM` in
+physics.ts; add new feel knobs to `PhysicsTunables` + `PHYSICS_DEFAULTS`, never
+as inline literals.
 
 ### Live tuning
 
