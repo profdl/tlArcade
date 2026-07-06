@@ -177,6 +177,44 @@ avoid the overlap. Slider layout is data-driven from `TUNABLE_GROUPS`.
   CLAUDE.md explains why this must never be shared). Levels persist in
   localStorage.
 
+## The AI substrate (`game/ai/`, `worker/engine.ts`)
+
+The toolkit spine for "AI authors data; the deterministic runtime plays data"
+(see [PLAN.md](PLAN.md) §1). Three pieces, all shipped:
+
+- **Worker proxy** — [worker/engine.ts](../../../worker/engine.ts), mounted at
+  `POST /api/engine/messages` (see [worker/worker.ts](../../../worker/worker.ts)).
+  A thin relay that attaches the Anthropic key (`ANTHROPIC_API_KEY`, a **Worker
+  secret** — `wrangler secret put ANTHROPIC_API_KEY`; never in the browser bundle)
+  and forwards a Messages-API body to Anthropic. No prompt logic lives here — it's
+  just the key-holder, so it stays stable as prompts evolve.
+- **AI client** — [game/ai/client.ts](game/ai/client.ts) → `generate({ schema,
+  prompt, images? })`. POSTs through the proxy, extracts the model's JSON (tolerant
+  of ```` ```json ```` fences / stray prose via `stripToJson`), **Zod-validates it
+  against the caller's schema, and retries ONCE on invalid JSON, feeding the parse
+  error back** so Claude fixes its own output. Every converter is a thin wrapper
+  over this one call. Tested in `client.test.ts` with a stubbed `fetch`.
+- **Schemas** — [game/ai/schemas.ts](game/ai/schemas.ts): the single Zod contract
+  shared by client, Worker, and every converter. Each persisted model carries a
+  `version` (levels persist in localStorage, so old docs carry old schemas — parse
+  + migrate, never crash). Ships `LevelLayout` and `TunablesPatch` today; Rig /
+  Clip / EnemyBehavior / GameDef extend the same pattern later.
+
+**The perception bundle** — [game/ai/perceive.ts](game/ai/perceive.ts) →
+`perceive(editor, ids)`. THE reusable "let Claude see a drawing" primitive: one
+bundle of **PNG** (what Claude visually perceives), **leaf geometry keyed by real
+shape id** (the ground truth it maps onto, so it returns real ids + exact
+coordinates, not guesses), and **SVG** (precision tiebreaker). Every vision
+converter calls this and differs only in prompt + schema. Verified tldraw APIs:
+`toImageDataUrl` → `{ url, width, height }` (a `data:` URL, **not** a bare string —
+split it with `toImageInput`), `getSvgString` → `{ svg, … } | undefined`,
+`getShapeAndDescendantIds` to expand a group to its leaves.
+
+The converter pattern that builds on this (data model → runtime → manual editor →
+AI → docs) is the `engine-data-converter` skill; the runtime invariants are
+`engine-runtime-conventions`; the native-UI rules are `tldraw-v5-native-ui`; the
+self-check gate is `engine-verify` (all in `.claude/skills/`).
+
 ## tldraw v5 reference
 
 Offline doc exports live in [docs/tldraw/](../../../docs/tldraw/) — start at

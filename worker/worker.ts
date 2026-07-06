@@ -2,6 +2,7 @@ import { handleUnfurlRequest } from 'cloudflare-workers-unfurl'
 import type { IRequest } from 'itty-router';
 import { AutoRouter, error } from 'itty-router'
 import { handleAssetDownload, handleAssetUpload } from './assetUploads'
+import { handleEngineMessages } from './engine'
 
 // make sure our sync durable object is made available to cloudflare
 export { TldrawDurableObject } from './TldrawDurableObject'
@@ -28,6 +29,10 @@ const router = AutoRouter<IRequest, [env: Env, ctx: ExecutionContext]>({
 		const room = env.TLDRAW_DURABLE_OBJECT.get(id)
 		return room.fetch(request as unknown as Request)
 	})
+
+	// the Engine demo's AI converters POST Anthropic Messages requests here; the
+	// proxy attaches the server-side API key (see worker/engine.ts).
+	.post('/api/engine/messages', handleEngineMessages)
 
 	// assets can be uploaded to the bucket under /uploads:
 	.post('/api/uploads/:uploadId', handleAssetUpload)

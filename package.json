@@ -28,7 +28,8 @@
     "react-dom": "^19.2.6",
     "react-router-dom": "^6.28.2",
     "tldraw": "^5.1.1",
-    "tone": "^14.9.17"
+    "tone": "^14.9.17",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.29.1",
