@@ -48,6 +48,9 @@ export interface EntityKinematic {
   coyoteTimer: number
   bufferTimer: number
   jumpHeld: boolean
+  // --- patrol state ---
+  /** Current facing/walk direction for a patroller: -1 left, +1 right. */
+  facing: number
 }
 
 /** A fresh, zeroed kinematic state at a given start position. */
@@ -63,8 +66,18 @@ export function makeKinematic(x: number, y: number): EntityKinematic {
     coyoteTimer: 0,
     bufferTimer: 0,
     jumpHeld: false,
+    facing: 1,
   }
 }
+
+/** Per-motion tuning params carried on an entity (patrol so far; more later). */
+export interface MotionParams {
+  /** Patrol walk speed, px/s. */
+  patrolSpeed?: number
+}
+
+/** Default patrol speed (px/s) for an enemy with no explicit param. */
+export const DEFAULT_PATROL_SPEED = 90
 
 /**
  * One entity the runtime drives. `kin` is the mutable live state; the rest is the
@@ -77,6 +90,8 @@ export interface Entity {
   motion: Motion
   collision: Collision
   effect: Effect
+  /** Per-motion tuning (patrol speed, …). */
+  params: MotionParams
   /** Live kinematic + feel state (mutated each step). */
   kin: EntityKinematic
   /**
@@ -90,6 +105,11 @@ export interface Entity {
    * for a group). Per-leaf page offsets live HERE (risk R3), not on the entity.
    */
   parts: PlayerPart[]
+  /**
+   * Live flag: a defeated entity (e.g. a stomped enemy) stops stepping and is
+   * hidden. NOT persisted — stop() restores the shape from its part snapshot.
+   */
+  defeated?: boolean
 }
 
 /** Per-substep input for the platformer entity (edges consumed once, see stepEntity). */

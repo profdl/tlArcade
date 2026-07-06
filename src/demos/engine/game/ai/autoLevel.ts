@@ -63,6 +63,8 @@ function roleHint(role: string): string {
       return 'kills on touch (respawn); place as an obstacle to jump over.'
     case 'goal':
       return 'the win; reach it after collecting all tokens.'
+    case 'enemy':
+      return 'a patroller that walks back and forth; stomp it from above (the player bounces), or it kills on side contact. Place on a platform for the player to hop on.'
     default:
       return ''
   }

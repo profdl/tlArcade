@@ -13,14 +13,24 @@
  */
 import type { TLDefaultColorStyle, TLGeoShape } from 'tldraw'
 
-export type Role = 'player' | 'wall' | 'token' | 'hazard' | 'goal'
+export type Role = 'player' | 'wall' | 'token' | 'hazard' | 'goal' | 'enemy'
 
-/** How an entity moves during play. */
-export type Motion = 'static' | 'platformer'
+/**
+ * How an entity moves during play.
+ * - `static` — never moves (walls, tokens, hazards, goal).
+ * - `platformer` — the player: input + jump/gravity feel pipeline.
+ * - `patrol` — a mover that walks back and forth, turning at ledges/walls (enemy).
+ */
+export type Motion = 'static' | 'platformer' | 'patrol'
 /** How it interacts: `solid` blocks; `trigger` fires on overlap. */
 export type Collision = 'solid' | 'trigger'
-/** What happens when the player touches a `trigger`. */
-export type Effect = 'none' | 'collect' | 'kill' | 'win'
+/**
+ * What happens when the player overlaps this entity.
+ * - `kill` — respawn the player (hazard; an enemy from the side).
+ * - `stomp` — the enemy is defeated when the player lands on it from ABOVE, and
+ *   the player bounces; touching it from the side is a `kill`. (Enemy only.)
+ */
+export type Effect = 'none' | 'collect' | 'kill' | 'win' | 'stomp'
 
 type GeoKind = TLGeoShape['props']['geo']
 
@@ -89,10 +99,24 @@ export const ROLES: Record<Role, RoleDef> = {
     collision: 'trigger',
     effect: 'win',
   },
+  enemy: {
+    label: 'Enemy',
+    emoji: '👾',
+    geo: 'rectangle',
+    color: 'violet',
+    size: { w: 44, h: 40 },
+    // A patroller: walks back and forth, turning at walls/ledges. Stompable from
+    // above (the player bounces), lethal from the side. It's a moving entity, so
+    // the player passes through it — contact fires the stomp/kill decision rather
+    // than blocking — hence collision 'trigger'.
+    motion: 'patrol',
+    collision: 'trigger',
+    effect: 'stomp',
+  },
 }
 
 /** Tray order. */
-export const ROLE_LIST: Role[] = ['player', 'wall', 'token', 'hazard', 'goal']
+export const ROLE_LIST: Role[] = ['player', 'wall', 'token', 'hazard', 'goal', 'enemy']
 
 /** color → role. Built from ROLES; relies on each role's color being unique. */
 const COLOR_TO_ROLE = new Map<TLDefaultColorStyle, Role>(

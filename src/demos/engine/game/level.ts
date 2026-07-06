@@ -37,6 +37,8 @@ export const DEFAULT_LEVEL: Placement[] = [
   { role: 'token', x: 320, y: 340 },
   { role: 'token', x: 530, y: 280 },
   { role: 'token', x: 740, y: 220 },
+  // An enemy patrolling the ground floor — stomp it from above, or dodge it.
+  { role: 'enemy', x: 380, y: 400 },
   // Goal, on the ground at the far right.
   { role: 'goal', x: 792, y: 368 },
 ]

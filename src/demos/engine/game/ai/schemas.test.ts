@@ -6,7 +6,7 @@ import { ROLE_LIST } from '../roles'
 describe('RoleSchema', () => {
   it('accepts every registered role and nothing else', () => {
     for (const role of ROLE_LIST) expect(RoleSchema.safeParse(role).success).toBe(true)
-    expect(RoleSchema.safeParse('enemy').success).toBe(false)
+    expect(RoleSchema.safeParse('dragon').success).toBe(false)
     expect(RoleSchema.safeParse('').success).toBe(false)
   })
 })

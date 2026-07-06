@@ -19,26 +19,46 @@
  */
 import { penetration, pointInPolygon, type Body, type Pt } from '../collision'
 import { SIM, stepVx, stepVy, type PhysicsTunables } from '../physics'
-import type { EntityKinematic, EntityInput } from './types'
+import {
+  DEFAULT_PATROL_SPEED,
+  type EntityKinematic,
+  type EntityInput,
+  type Motion,
+  type MotionParams,
+} from './types'
+
+/** How far ahead (px) a patroller probes for a ledge before turning. */
+const LEDGE_PROBE = 8
 
 /**
  * Advance one entity by a fixed substep against static `solids`. Mutates `kin` in
- * place. `input` drives the platformer feel pipeline; it is only consulted when
- * `isPlatformer` (entity 0 today). Non-platformer entities fall under gravity and
- * resolve against solids but read no input and run no jump logic.
+ * place. Dispatches on `motion`:
+ *  - `platformer` — the player: input-driven accel + the full jump/coyote/buffer
+ *    feel pipeline. `input` is consulted only here.
+ *  - `patrol` — a walker: constant walk speed in `kin.facing`, reversing at walls
+ *    and ledges. No input, no jump.
+ *  - anything else (`static`) — falls under gravity and resolves, nothing more.
+ * Gravity + per-axis collision resolution run for EVERY motion, so every mover
+ * reuses the same integrate+resolve path.
  */
 export function stepEntity(
   kin: EntityKinematic,
   samples: Pt[],
   solids: Body[],
   input: EntityInput,
-  isPlatformer: boolean,
+  motion: Motion,
+  params: MotionParams,
   dt: number,
   t: PhysicsTunables,
 ): void {
+  const isPlatformer = motion === 'platformer'
+
   if (isPlatformer) {
     // --- horizontal: accelerate toward the target, or rub off with friction ---
     kin.vx = stepVx(kin.vx, input.dir, kin.grounded, dt, t)
+  } else if (motion === 'patrol') {
+    // --- patrol: walk at a constant speed in the current facing direction ---
+    kin.vx = kin.facing * (params.patrolSpeed ?? DEFAULT_PATROL_SPEED)
   }
 
   // --- gravity: heavier falling, floaty apex (see physics.ts) — every entity ---
@@ -96,6 +116,32 @@ export function stepEntity(
     }
     if (kin.bufferTimer > 0) kin.bufferTimer -= dt
   }
+
+  if (motion === 'patrol') {
+    // Turn around at a wall (the X pass recorded a wall contact) or at a ledge
+    // (grounded, but no ground just ahead in the walk direction). Only flip when
+    // grounded so an airborne patroller doesn't jitter mid-fall.
+    if (kin.grounded) {
+      if (kin.touchingWall || !groundAhead(kin, samples, solids, kin.facing)) {
+        kin.facing = -kin.facing
+        kin.vx = 0 // stop this frame; next step walks the new way
+      }
+    }
+  }
+}
+
+/**
+ * A patroller's ledge probe: would the entity still be grounded if it stepped
+ * `dir * LEDGE_PROBE` px forward? Nudges the outline forward and checks whether a
+ * downward push-out still finds a floor-ish surface. False ⇒ a ledge is ahead.
+ */
+function groundAhead(kin: EntityKinematic, samples: Pt[], solids: Body[], dir: number): boolean {
+  // Probe slightly forward and a hair below, then look for a floor-ish contact.
+  const probeX = kin.x + dir * LEDGE_PROBE
+  const { shift, ny } = deepestShift(samples, solids, 'y', probeX, kin.y + 1)
+  // Grounded-ahead iff a downward move would be pushed UP out of a floor-ish
+  // surface (shift < 0 with a floor normal) — i.e. there's ground under the step.
+  return shift < 0 && -ny >= SIM.GROUND_NY
 }
 
 /**
@@ -234,4 +280,35 @@ export function touches(kin: EntityKinematic, samples: Pt[], body: Body): boolea
     }
   }
   return false
+}
+
+/**
+ * Decide a player↔enemy overlap: a STOMP (player defeats the enemy, bounces) vs a
+ * KILL (side/underneath hit, player respawns). It's a stomp iff the player is
+ * moving DOWN (`playerVy > 0`) and the player's FEET (bounds bottom) are above the
+ * enemy's vertical midpoint at contact — the standard Mario rule. Pure: caller
+ * passes the two page-space vertical bounds and the player's vy.
+ *
+ * @returns 'stomp' | 'kill'.
+ */
+export function stompCheck(
+  playerBottom: number,
+  playerVy: number,
+  enemyTop: number,
+  enemyBottom: number,
+): 'stomp' | 'kill' {
+  const enemyMid = (enemyTop + enemyBottom) / 2
+  return playerVy > 0 && playerBottom <= enemyMid ? 'stomp' : 'kill'
+}
+
+/** The page-space vertical bounds of an entity's outline at its current position. */
+export function verticalBounds(kin: EntityKinematic, samples: Pt[]): { top: number; bottom: number } {
+  let top = Infinity
+  let bottom = -Infinity
+  for (const s of samples) {
+    const y = s.y + kin.y
+    if (y < top) top = y
+    if (y > bottom) bottom = y
+  }
+  return { top, bottom }
 }

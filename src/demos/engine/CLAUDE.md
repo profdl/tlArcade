@@ -23,6 +23,7 @@ explicitly (see **The player** below), and that marker wins over color:
 | yellow | token | trigger → collect |
 | red | hazard | trigger → respawn |
 | green | goal | trigger → win |
+| violet | enemy | patrol mover → stomp / kill (see The enemy below) |
 
 Both `geo` shapes (from the tray) **and shapes drawn with the pencil** (`draw`)
 map their color to a role — so you can draw any element, not just place it. A
@@ -128,11 +129,36 @@ input, write shapes, fire effects). The entity types live in
 - **Per-leaf offsets stay in `entity.parts`** (a group player is many leaves at
   their own page offsets), NOT flattened onto the entity — flattening would deform
   a group figure. `EntityKinematic` carries only the body's bounds top-left.
-- Today there is **exactly one entity**; with a single `platformer` entity and no
-  others (the only state that exists — no `meta.role`/behavior is ever set yet)
-  the loop is byte-for-byte the original player-only path, so every level keeps
-  working. This was a behavior-preserving refactor, adversarially verified. Movers
-  (enemy, moving platform) become **additional entities** in later phases.
+- The player is **entity 0** (`platformer`); the first real mover is the **enemy**
+  (`patrol`, see below). A level with **no** non-player entity plays byte-for-byte
+  the original player-only path (the N-entity refactor was behavior-preserving,
+  adversarially verified). More movers (moving platform, projectile) are further
+  motion kinds added the same way.
+
+## The enemy (patrol + stomp, G2a)
+
+The first non-player mover — a **violet** `geo` shape (tray role `enemy`, motion
+`patrol`). At `start()` each enemy shape becomes an entity via `collectPlayerBody`
+(a lone shape → one leaf, offset 0, merged outline — same path as a single-shape
+player); enemies are **excluded from solids and triggers** (they're movers, not
+static geometry).
+
+- **Patrol motion** (`entities/step.ts` → `stepEntity` `motion === 'patrol'`):
+  walks at `params.patrolSpeed` (default `DEFAULT_PATROL_SPEED`) in `kin.facing`,
+  falls under gravity + resolves like any entity, and **reverses when grounded** on
+  hitting a wall (`touchingWall`) or reaching a **ledge** (`groundAhead` probes a
+  few px forward for a floor-ish contact). Pure + unit-tested (`step.test.ts`).
+- **Stomp vs kill** (`engine.ts` → `checkEnemies`, each frame before the static
+  triggers): when the player AABB overlaps a live enemy, `stompCheck` decides —
+  **stomp** (player falling, feet above the enemy's vertical midpoint) defeats the
+  enemy (`entity.defeated = true`, shape hidden, player bounces up `jumpSpeed *
+  STOMP_BOUNCE`), else **kill** (side/underneath → `respawn`, same as a hazard). A
+  defeated enemy stops stepping and isn't written; `stop()` restores its shape from
+  the part snapshot (position + opacity), so Play/Stop stays non-destructive.
+- The stomp/kill *decision* is pure (`stompCheck`/`verticalBounds`, tested); an
+  end-to-end integration sim (`enemy.integration.test.ts`) drives a player + a
+  patrol enemy through the real `stepEntity` and reproduces the engine's overlap
+  decision to prove patrol / stomp-and-bounce / side-kill together.
 
 ## The sim
 
@@ -190,15 +216,18 @@ avoid the overlap. Slider layout is data-driven from `TUNABLE_GROUPS`.
 
 ## Known limits / gotchas
 
-- **Only the player moves** *today*. The sim is now N-entity-capable (see The
-  N-entity model above), but only one entity — the player — is ever built, and
-  the level is gathered once at `start()`. Moving platforms / AI movers are added
-  as **additional entities** with non-`platformer` motions in later phases (enemy,
-  ball, spawner; see PLAN.md §G2/G3).
+- **The player and enemies move; the terrain doesn't.** The player (`platformer`)
+  and enemies (`patrol`, G2a) are stepped entities; walls/tokens/hazards/goal are
+  static and the level is gathered once at `start()`. More movers (moving platform,
+  projectile, ball, spawner) are further motion kinds (PLAN.md §G2/G3).
 - **Solids are captured once at start**, in page space — a rotated wall collides
   by its real outline (see collision.ts) but a wall moved/rotated mid-play won't
   update. Collision is not swept: keep walls thicker than one substep's travel to
   avoid tunneling at high speed (no continuous collision detection yet).
+- **Enemies collide with terrain but not each other**, and the player passes
+  *through* an enemy (contact fires stomp/kill rather than blocking). Enemies read
+  the same `solids` captured at start — they patrol static ground, not each other
+  or moving platforms.
 - **The player is driven by `shape.x/shape.y`** of the player record — the group
   (or lone shape), top-level and unrotated. Moving the group carries its parts;
   but don't rotate the player record, or re-parent it under something else, and

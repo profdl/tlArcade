@@ -43,7 +43,7 @@ import { buildBody, type Body } from './collision'
 import { SIM, type PhysicsTunables } from './physics'
 import { tunablesAtom } from './state'
 import { makeKinematic, type Entity, type EntityInput } from './entities/types'
-import { stepEntity, touches } from './entities/step'
+import { stepEntity, touches, stompCheck, verticalBounds } from './entities/step'
 
 /** Native tldraw shape types the engine reads: geo and draw carry a role via
  *  color; lines are always solid terrain. */
@@ -159,12 +159,20 @@ export class GameRuntime {
     this.snapshot.clear()
     this.solids = []
     this.triggers = []
+    // Enemy shape ids collected in the scan; turned into patrol entities below.
+    const enemyIds: TLShapeId[] = []
     for (const s of shapes) {
       if (!LEVEL_TYPES.has(s.type)) continue
       if (playerIds.has(s.id)) continue
+      const role = this.roleOf(s)
+      // Enemies are MOVING entities, not static geometry — collect their ids and
+      // build them as entities after the player (skip solids/triggers for them).
+      if (role === 'enemy') {
+        enemyIds.push(s.id)
+        continue
+      }
       const body = buildBody(editor, s.id)
       if (!body) continue
-      const role = this.roleOf(s)
       if (role === 'token' || role === 'hazard' || role === 'goal') {
         this.triggers.push({ id: s.id, type: s.type, role, body })
         this.snapshot.set(s.id, { x: s.x, y: s.y, opacity: s.opacity })
@@ -187,11 +195,36 @@ export class GameRuntime {
         motion: 'platformer',
         collision: 'solid',
         effect: 'none',
+        params: {},
         kin,
         samples,
         parts: playerBody.parts,
       },
     ]
+
+    // Build the enemy entities (motion 'patrol'). Each is a lone geo shape, so
+    // collectPlayerBody gives us its bounds + merged outline + single leaf part
+    // (offset 0) exactly as for a single-shape player. Snapshot its part so stop()
+    // restores where it walked from.
+    for (const id of enemyIds) {
+      const body = collectPlayerBody(editor, id)
+      if (!body) continue
+      const eKin = makeKinematic(body.bounds.minX, body.bounds.minY)
+      const eSamples = body.samples.map((p) => ({
+        x: p.x - body.bounds.minX,
+        y: p.y - body.bounds.minY,
+      }))
+      this.entities.push({
+        id,
+        motion: 'patrol',
+        collision: 'trigger',
+        effect: 'stomp',
+        params: {},
+        kin: eKin,
+        samples: eSamples,
+        parts: body.parts,
+      })
+    }
     this.spawn = { x: kin.x, y: kin.y }
     this.jumpPressed = false
     this.jumpReleased = false
@@ -273,6 +306,7 @@ export class GameRuntime {
     }
 
     this.writeEntities()
+    this.checkEnemies() // stomp/kill against the player, before static triggers
     if (this.checkTriggers()) return // won → loop already stopped
     this.raf = requestAnimationFrame(this.frame)
   }
@@ -294,10 +328,19 @@ export class GameRuntime {
     this.jumpReleased = false
 
     for (const entity of this.entities) {
-      const isPlatformer = entity.motion === 'platformer'
+      if (entity.defeated) continue // a stomped enemy stops stepping
       // Only the player reads input; other entities get a neutral input.
-      const entityInput = isPlatformer ? input : NEUTRAL_INPUT
-      stepEntity(entity.kin, entity.samples, this.solids, entityInput, isPlatformer, dt, t)
+      const entityInput = entity.motion === 'platformer' ? input : NEUTRAL_INPUT
+      stepEntity(
+        entity.kin,
+        entity.samples,
+        this.solids,
+        entityInput,
+        entity.motion,
+        entity.params,
+        dt,
+        t,
+      )
     }
   }
 
@@ -310,6 +353,7 @@ export class GameRuntime {
     this.editor.run(
       () => {
         for (const entity of this.entities) {
+          if (entity.defeated) continue // hidden; leave it where it fell
           for (const part of entity.parts) {
             const local = part.toLocal.applyToPoint({
               x: entity.kin.x + part.offX,
@@ -370,6 +414,46 @@ export class GameRuntime {
     return false
   }
 
+  /**
+   * Player ↔ enemy interactions. For each live enemy overlapping the player,
+   * `stompCheck` decides: STOMP (player was falling onto it from above → defeat the
+   * enemy, hide it, bounce the player) or KILL (side/underneath hit → respawn).
+   * Runs each frame against the settled positions, before the static triggers.
+   */
+  private checkEnemies() {
+    const player = this.player
+    if (!player || this.finished) return
+    const pV = verticalBounds(player.kin, player.samples)
+    const pBox = aabbOf(player.kin, player.samples)
+
+    for (const enemy of this.entities) {
+      if (enemy.motion !== 'patrol' || enemy.defeated) continue
+      const eBox = aabbOf(enemy.kin, enemy.samples)
+      if (!aabbOverlap(pBox, eBox)) continue
+
+      const eV = verticalBounds(enemy.kin, enemy.samples)
+      if (stompCheck(pV.bottom, player.kin.vy, eV.top, eV.bottom) === 'stomp') {
+        // Defeat the enemy: stop stepping it, hide the shape, and bounce the player.
+        enemy.defeated = true
+        this.editor.run(
+          () => this.editor.updateShape({ id: enemy.id, type: this.shapeType(enemy.id), opacity: 0 } as TLShapePartial),
+          { history: 'ignore', ignoreShapeLock: true },
+        )
+        const bounce = this.tunables().jumpSpeed * STOMP_BOUNCE
+        player.kin.vy = -bounce
+        player.kin.jumpHeld = false
+      } else {
+        this.respawn()
+        return // respawned — don't process further enemies this frame
+      }
+    }
+  }
+
+  /** The current shape type for an entity's record (for a typed updateShape). */
+  private shapeType(id: TLShapeId): string {
+    return this.editor.getShape(id)?.type ?? 'geo'
+  }
+
   private respawn() {
     const player = this.player
     if (!player) return
@@ -422,6 +506,39 @@ export class GameRuntime {
 
 /** Input for a non-player entity: no movement intent, no jump edges. */
 const NEUTRAL_INPUT: EntityInput = { dir: 0, jumpPressed: false, jumpReleased: false }
+
+/** Fraction of jumpSpeed applied as the upward bounce after stomping an enemy. */
+const STOMP_BOUNCE = 0.7
+
+/** A page-space AABB. */
+interface Aabb {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+/** The page-space bounding box of an entity's outline at its current position. */
+function aabbOf(kin: { x: number; y: number }, samples: { x: number; y: number }[]): Aabb {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const s of samples) {
+    const x = s.x + kin.x
+    const y = s.y + kin.y
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  return { minX, minY, maxX, maxY }
+}
+
+/** True if two AABBs overlap (touching edges count as overlap). */
+function aabbOverlap(a: Aabb, b: Aabb): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
+}
 
 /** Keys the runtime owns while playing (so tldraw doesn't pan/scroll on them). */
 const GAME_KEYS = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', ' '])

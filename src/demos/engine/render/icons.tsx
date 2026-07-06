@@ -15,6 +15,7 @@ const HEX: Record<string, string> = {
   yellow: '#f1ac4b',
   red: '#e03131',
   green: '#099268',
+  violet: '#ae3ec9',
 }
 
 function rgba(hex: string, a: number): string {
@@ -57,6 +58,10 @@ export function RoleIcon({ role, size = 24 }: { role: Role; size?: number }) {
       break
     case 'token':
       shape = <polygon points={starPoints(12, 12.5, 9, 3.9)} {...paint} />
+      break
+    case 'enemy':
+      // A little walker: a rounded body with two "feet" notches read as an enemy.
+      shape = <rect x={3.5} y={6} width={17} height={13} rx={3} {...paint} />
       break
   }
   return (

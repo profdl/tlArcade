@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Body, Pt } from '../collision'
 import { makeTunables, SIM } from '../physics'
-import { makeKinematic, type EntityInput } from './types'
-import { stepEntity, deepestShift, touches } from './step'
+import { makeKinematic, type EntityInput, type MotionParams, type Motion } from './types'
+import { stepEntity, deepestShift, touches, stompCheck, verticalBounds } from './step'
 
 // Characterization tests for the pure entity sim (S3). These PIN the behavior the
 // N-entity refactor must preserve — extracted verbatim from GameRuntime.step. They
@@ -48,10 +48,18 @@ function boxSamples(w = 20, h = 24): Pt[] {
 const noInput: EntityInput = { dir: 0, jumpPressed: false, jumpReleased: false }
 const dt = SIM.FIXED_DT
 
-/** Run n substeps with fixed input. */
-function run(kin: ReturnType<typeof makeKinematic>, samples: Pt[], solids: Body[], input: EntityInput, n: number) {
+/** Run n substeps with fixed input (defaults to the player: platformer motion). */
+function run(
+  kin: ReturnType<typeof makeKinematic>,
+  samples: Pt[],
+  solids: Body[],
+  input: EntityInput,
+  n: number,
+  motion: Motion = 'platformer',
+  params: MotionParams = {},
+) {
   const t = makeTunables()
-  for (let i = 0; i < n; i++) stepEntity(kin, samples, solids, input, true, dt, t)
+  for (let i = 0; i < n; i++) stepEntity(kin, samples, solids, input, motion, params, dt, t)
 }
 
 describe('stepEntity — gravity & grounding', () => {
@@ -87,7 +95,7 @@ describe('stepEntity — jump feel pipeline (platformer only)', () => {
     expect(kin.grounded).toBe(true)
     const t = makeTunables()
     // Press jump this substep.
-    stepEntity(kin, samples, [floor], { dir: 0, jumpPressed: true, jumpReleased: false }, true, dt, t)
+    stepEntity(kin, samples, [floor], { dir: 0, jumpPressed: true, jumpReleased: false }, 'platformer', {}, dt, t)
     expect(kin.vy).toBeLessThan(0) // launched upward
     expect(kin.grounded).toBe(false)
     expect(kin.jumpHeld).toBe(true)
@@ -97,10 +105,10 @@ describe('stepEntity — jump feel pipeline (platformer only)', () => {
     const t = makeTunables()
     const kin = makeKinematic(0, 150)
     run(kin, samples, [floor], noInput, 60)
-    stepEntity(kin, samples, [floor], { dir: 0, jumpPressed: true, jumpReleased: false }, true, dt, t)
+    stepEntity(kin, samples, [floor], { dir: 0, jumpPressed: true, jumpReleased: false }, 'platformer', {}, dt, t)
     const rising = kin.vy
     expect(rising).toBeLessThan(0)
-    stepEntity(kin, samples, [floor], { dir: 0, jumpPressed: false, jumpReleased: true }, true, dt, t)
+    stepEntity(kin, samples, [floor], { dir: 0, jumpPressed: false, jumpReleased: true }, 'platformer', {}, dt, t)
     // vy was cut (× jumpCut) then gravity added a little; still a large reduction.
     expect(kin.vy).toBeGreaterThan(rising * t.jumpCut - 5)
     expect(kin.jumpHeld).toBe(false)
@@ -112,11 +120,11 @@ describe('stepEntity — jump feel pipeline (platformer only)', () => {
     run(kin, samples, [floor], noInput, 60)
     expect(kin.grounded).toBe(true)
     // Walk off: remove the floor and take one ungrounded step (still in coyote window).
-    stepEntity(kin, samples, [], noInput, true, dt, t)
+    stepEntity(kin, samples, [], noInput, 'platformer', {}, dt, t)
     expect(kin.grounded).toBe(false)
     expect(kin.coyoteTimer).toBeGreaterThan(0)
     // Now press: should still jump off the vanished ledge.
-    stepEntity(kin, samples, [], { dir: 0, jumpPressed: true, jumpReleased: false }, true, dt, t)
+    stepEntity(kin, samples, [], { dir: 0, jumpPressed: true, jumpReleased: false }, 'platformer', {}, dt, t)
     expect(kin.vy).toBeLessThan(0)
   })
 
@@ -126,7 +134,7 @@ describe('stepEntity — jump feel pipeline (platformer only)', () => {
     expect(kin.coyoteTimer).toBeLessThanOrEqual(0)
     const t = makeTunables()
     const before = kin.vy
-    stepEntity(kin, boxSamples(), [], { dir: 0, jumpPressed: true, jumpReleased: false }, true, dt, t)
+    stepEntity(kin, boxSamples(), [], { dir: 0, jumpPressed: true, jumpReleased: false }, 'platformer', {}, dt, t)
     // No jump: vy only increased by gravity, never went sharply negative.
     expect(kin.vy).toBeGreaterThan(before)
   })
@@ -148,7 +156,7 @@ describe('stepEntity — walls & slopes', () => {
   it('input does nothing on a non-platformer entity (vx stays 0)', () => {
     const t = makeTunables()
     const kin = makeKinematic(0, 0)
-    stepEntity(kin, boxSamples(), [], { dir: 1, jumpPressed: true, jumpReleased: false }, false, dt, t)
+    stepEntity(kin, boxSamples(), [], { dir: 1, jumpPressed: true, jumpReleased: false }, 'static', {}, dt, t)
     expect(kin.vx).toBe(0) // no input read, no jump — only gravity applied
     expect(kin.vy).toBeGreaterThan(0)
   })
@@ -171,5 +179,64 @@ describe('deepestShift / touches — pure geometry helpers', () => {
     const outside = makeKinematic(0, 0)
     expect(touches(inside, samples, token)).toBe(true)
     expect(touches(outside, samples, token)).toBe(false)
+  })
+})
+
+describe('stepEntity — patrol motion (enemy)', () => {
+  const samples = boxSamples(30, 24)
+
+  it('walks in its facing direction at patrolSpeed', () => {
+    const floor = rect(-200, 200, 800, 40)
+    const kin = makeKinematic(0, 176) // resting on the floor (176+24 = 200)
+    kin.facing = 1
+    run(kin, samples, [floor], noInput, 30, 'patrol', { patrolSpeed: 100 })
+    expect(kin.x).toBeGreaterThan(0) // moved right
+    expect(kin.grounded).toBe(true)
+  })
+
+  it('reverses at a wall', () => {
+    const floor = rect(-200, 200, 800, 40)
+    const wall = rect(120, 100, 20, 100) // wall to the right
+    const kin = makeKinematic(60, 176)
+    kin.facing = 1
+    run(kin, samples, [floor, wall], noInput, 120, 'patrol', { patrolSpeed: 120 })
+    // After hitting the wall it should have flipped to face left.
+    expect(kin.facing).toBe(-1)
+    // And its right edge never punched through the wall's left face (x=120).
+    expect(kin.x + 30).toBeLessThanOrEqual(121)
+  })
+
+  it('reverses at a ledge instead of walking off', () => {
+    // A floor that ends at x=200; nothing beyond → a right-facing patroller must
+    // turn before its outline clears the edge.
+    const floor = rect(-200, 200, 400, 40) // spans x∈[-200,200]
+    const kin = makeKinematic(150, 176)
+    kin.facing = 1
+    run(kin, samples, [floor], noInput, 240, 'patrol', { patrolSpeed: 120 })
+    expect(kin.facing).toBe(-1) // turned back from the ledge
+    // Never fell: still grounded near the floor top, not plummeting.
+    expect(kin.grounded).toBe(true)
+    expect(kin.y + 24).toBeLessThan(210)
+  })
+})
+
+describe('stompCheck / verticalBounds', () => {
+  it('a downward-moving player above the enemy midpoint is a STOMP', () => {
+    // enemy top=200 bottom=240 → mid=220. Player feet at 210 (above mid), vy>0.
+    expect(stompCheck(210, 300, 200, 240)).toBe('stomp')
+  })
+
+  it('a rising player is a KILL even if positioned high', () => {
+    expect(stompCheck(210, -300, 200, 240)).toBe('kill')
+  })
+
+  it('a side hit (feet below the enemy midpoint) is a KILL', () => {
+    expect(stompCheck(235, 300, 200, 240)).toBe('kill')
+  })
+
+  it('verticalBounds returns the outline top/bottom in page space', () => {
+    const samples = boxSamples(30, 24)
+    const kin = makeKinematic(0, 100)
+    expect(verticalBounds(kin, samples)).toEqual({ top: 100, bottom: 124 })
   })
 })
