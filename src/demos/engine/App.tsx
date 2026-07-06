@@ -14,11 +14,16 @@
 import { useCallback, useRef, useState } from 'react'
 import {
   DefaultHelperButtons,
+  DefaultMainMenu,
   DefaultStylePanel,
   Tldraw,
+  TldrawUiMenuGroup,
+  TldrawUiMenuItem,
+  TldrawUiMenuSubmenu,
   useValue,
   type TLComponents,
   type TLUiHelperButtonsProps,
+  type TLUiMainMenuProps,
   type Editor,
 } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -26,10 +31,12 @@ import { Tray } from './render/Tray'
 import { PlayerToolbar } from './render/PlayerToolbar'
 import { PhysicsPanel } from './render/PhysicsPanel'
 import { GeneratePanel } from './render/GeneratePanel'
+import { Hud } from './render/Hud'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
-import { playingAtom, tunablesAtom } from './game/state'
+import { playingAtom, tunablesAtom, templateBridge } from './game/state'
 import { makeTunables } from './game/physics'
+import { TEMPLATE_LIST } from './game/templates'
 import './App.css'
 
 // InFrontOfTheCanvas takes a single component; render both the drag tray and the
@@ -41,6 +48,7 @@ function InFront() {
       <Tray />
       <PlayerToolbar />
       <PhysicsPanel />
+      <Hud />
     </>
   )
 }
@@ -65,13 +73,45 @@ function HelperButtons(props: TLUiHelperButtonsProps) {
   )
 }
 
+// "New from template" — a native MainMenu submenu listing the bundled games
+// (PLAN §5.5). The item calls templateBridge.load (App registers it on mount),
+// since a stable-identity slot component can't take props.
+function MainMenu(props: TLUiMainMenuProps) {
+  return (
+    <DefaultMainMenu {...props}>
+      <TldrawUiMenuGroup id="engine-templates">
+        <TldrawUiMenuSubmenu id="engine-new-from-template" label="New from template">
+          {TEMPLATE_LIST.map(({ key, template }) => (
+            <TldrawUiMenuItem
+              key={key}
+              id={`template-${key}`}
+              label={template.name}
+              readonlyOk
+              onSelect={() => templateBridge.load?.(key)}
+            />
+          ))}
+        </TldrawUiMenuSubmenu>
+      </TldrawUiMenuGroup>
+    </DefaultMainMenu>
+  )
+}
+
 const components: TLComponents = {
   InFrontOfTheCanvas: InFront,
   StylePanel,
   HelperButtons,
+  MainMenu,
 }
 
-const IDLE: GameState = { status: 'playing', collected: 0, total: 0, deaths: 0 }
+const IDLE: GameState = {
+  status: 'playing',
+  collected: 0,
+  total: 0,
+  deaths: 0,
+  lives: 3,
+  score: 0,
+  timeMs: 0,
+}
 
 export default function App() {
   const editorRef = useRef<Editor | null>(null)
@@ -95,7 +135,21 @@ export default function App() {
     if (import.meta.env.DEV) {
       ;(window as unknown as { __editor?: Editor }).__editor = editor
     }
+    // Register the "New from template" loader for the MainMenu item.
+    templateBridge.load = (templateKey: string) => {
+      const t = TEMPLATE_LIST.find((x) => x.key === templateKey)?.template
+      if (!t) return
+      runtimeRef.current?.stop()
+      playingAtom.set(false)
+      setPlaying(false)
+      setState(IDLE)
+      setNoPlayer(false)
+      tunablesAtom.set(makeTunables())
+      runtimeRef.current?.setRules(t.rules)
+      loadLevel(editor, t.level)
+    }
     return () => {
+      templateBridge.load = null
       runtimeRef.current?.stop()
       runtimeRef.current = null
       playingAtom.set(false)
@@ -106,6 +160,7 @@ export default function App() {
     const editor = editorRef.current
     if (!editor) return
     runtimeRef.current?.stop()
+    runtimeRef.current?.setRules(undefined) // default level → default rules
     playingAtom.set(false)
     setPlaying(false)
     setState(IDLE)
@@ -153,6 +208,7 @@ export default function App() {
   }, [])
 
   const won = playing && state.status === 'won'
+  const lost = playing && state.status === 'lost'
 
   return (
     <div className="eng-root">
@@ -179,13 +235,9 @@ export default function App() {
           ↺ Reset
         </button>
         {playing && (
-          <>
-            <span className="eng-stat">
-              {state.total > 0 ? `⭐ ${state.collected}/${state.total}` : 'No tokens'}
-              {state.deaths > 0 ? ` · 💀 ${state.deaths}` : ''}
-            </span>
-            <span className="eng-controls">← → move · ↑ jump</span>
-          </>
+          // Score/lives/timer live in the HUD (top-center); the topbar keeps only
+          // the controls hint.
+          <span className="eng-controls">← → move · ↑ jump</span>
         )}
       </div>
 
@@ -198,11 +250,38 @@ export default function App() {
       {won && (
         <div className="eng-banner">
           <div className="eng-banner-title">🏁 You win!</div>
-          <button className="eng-btn eng-play" onClick={togglePlay}>
-            Back to editing
-          </button>
+          <div className="eng-banner-sub">Score {state.score} · {formatTime(state.timeMs)}</div>
+          <div className="eng-banner-actions">
+            <button className="eng-btn eng-play" onClick={handleRestart} title="Play again">
+              ↻ Play again
+            </button>
+            <button className="eng-btn" onClick={togglePlay}>
+              Back to editing
+            </button>
+          </div>
+        </div>
+      )}
+
+      {lost && (
+        <div className="eng-banner">
+          <div className="eng-banner-title">💀 Game over</div>
+          <div className="eng-banner-sub">Score {state.score}</div>
+          <div className="eng-banner-actions">
+            <button className="eng-btn eng-play" onClick={handleRestart} title="Try again">
+              ↻ Try again
+            </button>
+            <button className="eng-btn" onClick={togglePlay}>
+              Back to editing
+            </button>
+          </div>
         </div>
       )}
     </div>
   )
+}
+
+/** mm:ss from milliseconds (for the win/lose banner). */
+function formatTime(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }

@@ -47,6 +47,12 @@ export const DEFAULT_LEVEL: Placement[] = [
  * Replace everything on the page with `level`. `ignoreHistory` keeps the initial
  * populate off the undo stack; a user-triggered reset leaves it undoable.
  */
+/** Load a template's frozen level data (an authoring action → undoable). Rules
+ *  are applied by the caller (App wires them into the runtime). */
+export function loadTemplateLevel(editor: Editor, level: Placement[]) {
+  loadLevel(editor, level)
+}
+
 export function loadLevel(editor: Editor, level: Placement[] = DEFAULT_LEVEL, ignoreHistory = false) {
   editor.run(
     () => {

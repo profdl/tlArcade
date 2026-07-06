@@ -13,7 +13,16 @@
  */
 import type { TLDefaultColorStyle, TLGeoShape } from 'tldraw'
 
-export type Role = 'player' | 'wall' | 'token' | 'hazard' | 'goal' | 'enemy'
+export type Role =
+  | 'player'
+  | 'wall'
+  | 'token'
+  | 'hazard'
+  | 'goal'
+  | 'enemy'
+  | 'spring'
+  | 'checkpoint'
+  | 'oneway'
 
 /**
  * How an entity moves during play.
@@ -22,15 +31,26 @@ export type Role = 'player' | 'wall' | 'token' | 'hazard' | 'goal' | 'enemy'
  * - `patrol` — a mover that walks back and forth, turning at ledges/walls (enemy).
  */
 export type Motion = 'static' | 'platformer' | 'patrol'
-/** How it interacts: `solid` blocks; `trigger` fires on overlap. */
-export type Collision = 'solid' | 'trigger'
+/**
+ * How it interacts.
+ * - `solid` — blocks from every side.
+ * - `trigger` — fires an effect on overlap, never blocks.
+ * - `oneWay` — a platform that blocks only from ABOVE: you land on it when
+ *   falling onto its top, but jump/pass up through it from below (see
+ *   `entities/props.ts` → `oneWayBlocks`).
+ */
+export type Collision = 'solid' | 'trigger' | 'oneWay'
 /**
  * What happens when the player overlaps this entity.
  * - `kill` — respawn the player (hazard; an enemy from the side).
  * - `stomp` — the enemy is defeated when the player lands on it from ABOVE, and
  *   the player bounces; touching it from the side is a `kill`. (Enemy only.)
+ * - `bounce` — a spring/bounce pad: launch the player UP on overlap (see
+ *   `entities/props.ts` → `springLaunchVy`).
+ * - `checkpoint` — the first time the player overlaps it, the respawn point
+ *   moves here (see `entities/props.ts` → `shouldActivateCheckpoint`).
  */
-export type Effect = 'none' | 'collect' | 'kill' | 'win' | 'stomp'
+export type Effect = 'none' | 'collect' | 'kill' | 'win' | 'stomp' | 'bounce' | 'checkpoint'
 
 type GeoKind = TLGeoShape['props']['geo']
 
@@ -113,10 +133,53 @@ export const ROLES: Record<Role, RoleDef> = {
     collision: 'trigger',
     effect: 'stomp',
   },
+  spring: {
+    label: 'Spring',
+    emoji: '🕹️',
+    geo: 'rectangle',
+    color: 'orange',
+    // A wide, short pad: overlap it and the player is launched straight up.
+    size: { w: 80, h: 16 },
+    motion: 'static',
+    collision: 'trigger',
+    effect: 'bounce',
+  },
+  checkpoint: {
+    label: 'Checkpoint',
+    emoji: '🚩',
+    geo: 'rectangle',
+    color: 'light-blue',
+    // A tall, thin flag-ish marker: touch it once to move the respawn point here.
+    size: { w: 20, h: 64 },
+    motion: 'static',
+    collision: 'trigger',
+    effect: 'checkpoint',
+  },
+  oneway: {
+    label: 'One-Way',
+    emoji: '➖',
+    geo: 'rectangle',
+    color: 'light-green',
+    // A thin platform you can jump UP through but land ON from above.
+    size: { w: 160, h: 14 },
+    motion: 'static',
+    collision: 'oneWay',
+    effect: 'none',
+  },
 }
 
 /** Tray order. */
-export const ROLE_LIST: Role[] = ['player', 'wall', 'token', 'hazard', 'goal', 'enemy']
+export const ROLE_LIST: Role[] = [
+  'player',
+  'wall',
+  'token',
+  'hazard',
+  'goal',
+  'enemy',
+  'spring',
+  'checkpoint',
+  'oneway',
+]
 
 /** color → role. Built from ROLES; relies on each role's color being unique. */
 const COLOR_TO_ROLE = new Map<TLDefaultColorStyle, Role>(

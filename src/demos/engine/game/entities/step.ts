@@ -216,6 +216,15 @@ export function deepestShift(
     for (const body of solids) {
       const hit = penetration(p, body)
       if (!hit) continue
+      // One-way platform (G3a): solid only from ABOVE. It never blocks sideways
+      // motion (skip on X) and only produces a Y contact that is a floor normal
+      // LIFTING the entity up (a landing) — never a ceiling bonk from below. The
+      // runtime additionally only feeds one-way bodies to a DESCENDING entity, so
+      // together this is "jump up through, land on top".
+      if (body.oneWay) {
+        if (axis === 'x') continue
+        if (-hit.ny < SIM.GROUND_NY) continue // not a floor-ish top surface
+      }
       // On the X pass, ignore floor-ish/slope contacts: a surface you can walk UP
       // (normal mostly vertical) shouldn't block sideways motion — the Y pass
       // lifts you up it instead. Only a near-vertical WALL normal stops you here.

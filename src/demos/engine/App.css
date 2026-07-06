@@ -201,6 +201,19 @@
   font-weight: 800;
   color: #1d1d1d;
 }
+.eng-banner-sub {
+  font-size: 15px;
+  font-weight: 600;
+  color: #666;
+  margin-top: -4px;
+}
+.eng-banner-actions {
+  display: flex;
+  gap: 10px;
+}
+.eng-banner-actions .eng-btn {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
 
 /* --- Live physics debug panel (right side, only during play) --- */
 .eng-physics {
@@ -427,4 +440,34 @@
   margin-top: 8px;
   font-size: 12px;
   color: #27916b;
+}
+
+/* ── On-screen HUD overlay (top-center, only during play) ────────────────── */
+/* Display-only, so the container stays pointer-events:none (a HUD isn't
+   interactive) — canvas panning passes straight through it. Sits top-center so
+   it clears the physics panel (top-right) and the tray (left). */
+.eng-hud {
+  pointer-events: none;
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  background: #fcfcfc;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-family: system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+.eng-hud-stat {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d1d1d;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }

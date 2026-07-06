@@ -41,25 +41,46 @@ import { roleForColor, type Role } from './roles'
 import { collectPlayerBody, isPlayerMarked } from './player'
 import { buildBody, type Body } from './collision'
 import { SIM, type PhysicsTunables } from './physics'
-import { tunablesAtom } from './state'
+import { tunablesAtom, gameStateAtom } from './state'
 import { makeKinematic, type Entity, type EntityInput } from './entities/types'
 import { stepEntity, touches, stompCheck, verticalBounds } from './entities/step'
+import { springLaunchVy, shouldActivateCheckpoint } from './entities/props'
+import {
+  newSession,
+  tickTime,
+  onCollect,
+  onStomp,
+  onDeath,
+  onWin,
+  type Session,
+  type SessionRules,
+} from './session/session'
+import { computeCamera, type CameraState } from './camera/camera'
 
 /** Native tldraw shape types the engine reads: geo and draw carry a role via
  *  color; lines are always solid terrain. */
 const LEVEL_TYPES = new Set(['geo', 'draw', 'line'])
 
 export interface GameState {
-  status: 'playing' | 'won' | 'no-player'
+  /** `lost` = out of lives (game over); `won` = reached the goal. */
+  status: 'playing' | 'won' | 'lost' | 'no-player'
   collected: number
   total: number
+  /** Deaths this session (kept for compatibility / the death counter). */
   deaths: number
+  // --- M1 session rules (lean) ---
+  /** Lives remaining; a hazard/enemy kill decrements it, 0 ⇒ game over. */
+  lives: number
+  /** Score: tokens + stomps + a time bonus on win. */
+  score: number
+  /** Elapsed play time this attempt, ms (drives the HUD timer). */
+  timeMs: number
 }
 
 interface Trigger {
   id: TLShapeId
   type: string // geo or draw — a trigger can be drawn too
-  role: Extract<Role, 'token' | 'hazard' | 'goal'>
+  role: Extract<Role, 'token' | 'hazard' | 'goal' | 'spring' | 'checkpoint'>
   body: Body
 }
 
@@ -82,6 +103,15 @@ export class GameRuntime {
   private collected = new Set<TLShapeId>()
   private deaths = 0
 
+  // --- M1 session (lives/score/timer) + G3a checkpoint tracking ---
+  private session: Session = newSession()
+  /** Checkpoint ids already activated (each fires once — moves the spawn point). */
+  private checkpoints = new Set<TLShapeId>()
+
+  // --- M5 follow camera ---
+  /** The camera at start(), restored on stop() so play doesn't move the author's view. */
+  private authoredCamera: CameraState | null = null
+
   /** id → authored { x, y, opacity } for non-destructive restore on stop. */
   private snapshot = new Map<TLShapeId, { x: number; y: number; opacity: number }>()
 
@@ -94,10 +124,18 @@ export class GameRuntime {
 
   private editor: Editor
   private onState: (s: GameState) => void
+  /** Session rules (lives/score/timer) for the current level. */
+  private rules: SessionRules | undefined
 
-  constructor(editor: Editor, onState: (s: GameState) => void) {
+  constructor(editor: Editor, onState: (s: GameState) => void, rules?: SessionRules) {
     this.editor = editor
     this.onState = onState
+    this.rules = rules
+  }
+
+  /** Set the session rules for subsequent plays (e.g. loading a template). */
+  setRules(rules: SessionRules | undefined) {
+    this.rules = rules
   }
 
   /** The player is entity 0. Convenience accessor for the (currently only) mover. */
@@ -144,7 +182,15 @@ export class GameRuntime {
     const playerBody = player && collectPlayerBody(editor, player.id)
 
     if (!player || !playerBody) {
-      this.onState({ status: 'no-player', collected: 0, total: 0, deaths: 0 })
+      this.onState({
+        status: 'no-player',
+        collected: 0,
+        total: 0,
+        deaths: 0,
+        lives: this.rules?.lives ?? 3,
+        score: 0,
+        timeMs: 0,
+      })
       return false
     }
     const playerBounds = playerBody.bounds
@@ -173,9 +219,19 @@ export class GameRuntime {
       }
       const body = buildBody(editor, s.id)
       if (!body) continue
-      if (role === 'token' || role === 'hazard' || role === 'goal') {
+      if (
+        role === 'token' ||
+        role === 'hazard' ||
+        role === 'goal' ||
+        role === 'spring' ||
+        role === 'checkpoint'
+      ) {
+        // Overlap triggers: collect / kill / win / bounce / checkpoint.
         this.triggers.push({ id: s.id, type: s.type, role, body })
         this.snapshot.set(s.id, { x: s.x, y: s.y, opacity: s.opacity })
+      } else if (role === 'oneway') {
+        // A one-way platform: solid only from above (see collision.ts Body.oneWay).
+        this.solids.push({ ...body, oneWay: true })
       } else {
         // wall, unlabelled geo, or draw / line → solid terrain
         this.solids.push(body)
@@ -229,7 +285,12 @@ export class GameRuntime {
     this.jumpPressed = false
     this.jumpReleased = false
     this.collected.clear()
+    this.checkpoints.clear()
     this.deaths = 0
+    // Fresh session (lives/score/timer) for this attempt.
+    this.session = newSession(this.rules)
+    // Remember the authored camera so stop() can restore the author's view.
+    this.authoredCamera = { ...editor.getCamera() }
 
     // NB: don't use `isReadonly` to lock editing — it also blocks our own
     // programmatic `updateShape` writes, so the player could never move. We just
@@ -290,6 +351,12 @@ export class GameRuntime {
       },
       { history: 'ignore', ignoreShapeLock: true },
     )
+
+    // Restore the author's camera — play may have scrolled it to follow the player.
+    if (this.authoredCamera) {
+      editor.setCamera(this.authoredCamera)
+      this.authoredCamera = null
+    }
   }
 
   private frame = (now: number) => {
@@ -305,10 +372,43 @@ export class GameRuntime {
       this.acc -= SIM.FIXED_DT
     }
 
+    // Advance the session clock (drives the HUD timer + any countdown loss).
+    tickTime(this.session, dt * 1000)
+
     this.writeEntities()
+    this.updateCamera() // M5: follow the player during play
     this.checkEnemies() // stomp/kill against the player, before static triggers
     if (this.checkTriggers()) return // won → loop already stopped
+    // A countdown timeout or an out-of-lives death ends the game (game over).
+    if (this.session.status === 'lost') {
+      this.endGame('lost')
+      return
+    }
+    this.emit('playing') // refresh the HUD (timer/score) each frame
     this.raf = requestAnimationFrame(this.frame)
+  }
+
+  /** M5 follow camera: keep the player in a deadzone with velocity look-ahead. */
+  private updateCamera() {
+    const player = this.player
+    if (!player) return
+    const box = aabbOf(player.kin, player.samples)
+    const center = { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 }
+    const vb = this.editor.getViewportScreenBounds()
+    const prev = this.editor.getCamera()
+    const next = computeCamera(
+      { x: center.x, y: center.y, vx: player.kin.vx, vy: player.kin.vy },
+      { w: vb.w, h: vb.h },
+      { x: prev.x, y: prev.y, z: prev.z },
+    )
+    this.editor.setCamera(next)
+  }
+
+  /** End the game (won or lost): stop the sim, keep the session, emit the status. */
+  private endGame(status: 'won' | 'lost') {
+    this.finished = true
+    cancelAnimationFrame(this.raf)
+    this.emit(status)
   }
 
   /** One fixed substep: advance every entity, feeding the player its input. */
@@ -390,6 +490,7 @@ export class GameRuntime {
       if (t.role === 'token') {
         if (!this.collected.has(t.id)) {
           this.collected.add(t.id)
+          onCollect(this.session)
           this.editor.run(
             () => this.editor.updateShape({ id: t.id, type: t.type, opacity: 0 } as TLShapePartial),
             { history: 'ignore', ignoreShapeLock: true },
@@ -397,16 +498,25 @@ export class GameRuntime {
           this.emit('playing')
         }
       } else if (t.role === 'hazard') {
-        this.respawn()
+        if (this.respawn()) return true // out of lives → game over, loop stops
+      } else if (t.role === 'spring') {
+        // A bounce pad: launch the player straight up (G3a).
+        player.kin.vy = springLaunchVy(this.tunables().jumpSpeed * SPRING_LAUNCH)
+        player.kin.jumpHeld = false
+      } else if (t.role === 'checkpoint') {
+        // Move the respawn point here, once per checkpoint (G3a).
+        if (shouldActivateCheckpoint(t.id, this.checkpoints)) {
+          this.checkpoints.add(t.id)
+          this.spawn = { x: player.kin.x, y: player.kin.y }
+        }
       } else if (t.role === 'goal') {
         // Must sweep every token first (if any exist) before the goal counts.
         if (this.collected.size >= total) {
-          // End the sim but keep the session active, so the next Play/Stop toggle
-          // routes to stop() → restore (not a fresh start() that re-snapshots the
-          // won positions as the new authored scene).
-          this.finished = true
-          cancelAnimationFrame(this.raf)
-          this.emit('won')
+          // Award the time bonus + end the game. Keep the session active so the
+          // next Play/Stop toggle routes to stop() → restore (not a fresh start()
+          // that re-snapshots the won positions as the new authored scene).
+          onWin(this.session)
+          this.endGame('won')
           return true
         }
       }
@@ -433,8 +543,9 @@ export class GameRuntime {
 
       const eV = verticalBounds(enemy.kin, enemy.samples)
       if (stompCheck(pV.bottom, player.kin.vy, eV.top, eV.bottom) === 'stomp') {
-        // Defeat the enemy: stop stepping it, hide the shape, and bounce the player.
+        // Defeat the enemy: stop stepping it, hide the shape, score it, bounce.
         enemy.defeated = true
+        onStomp(this.session)
         this.editor.run(
           () => this.editor.updateShape({ id: enemy.id, type: this.shapeType(enemy.id), opacity: 0 } as TLShapePartial),
           { history: 'ignore', ignoreShapeLock: true },
@@ -443,8 +554,9 @@ export class GameRuntime {
         player.kin.vy = -bounce
         player.kin.jumpHeld = false
       } else {
-        this.respawn()
-        return // respawned — don't process further enemies this frame
+        // Side/underneath hit → lose a life and respawn (or game over).
+        if (this.respawn()) this.endGame('lost')
+        return // handled this frame; don't process further enemies
       }
     }
   }
@@ -454,26 +566,40 @@ export class GameRuntime {
     return this.editor.getShape(id)?.type ?? 'geo'
   }
 
-  private respawn() {
+  /**
+   * The player died. Costs a life (session); if lives remain, respawn at the
+   * spawn point (moved by checkpoints). @returns true if that emptied lives —
+   * i.e. the game is over — so the caller ends it.
+   */
+  private respawn(): boolean {
     const player = this.player
-    if (!player) return
+    if (!player) return false
+    this.deaths++
+    const { respawn } = onDeath(this.session)
+    if (!respawn) return true // out of lives → game over (caller ends the game)
     player.kin.x = this.spawn.x
     player.kin.y = this.spawn.y
     player.kin.vx = 0
     player.kin.vy = 0
     player.kin.grounded = false
     player.kin.touchingWall = false
-    this.deaths++
     this.emit('playing')
+    return false
   }
 
   private emit(status: GameState['status']) {
-    this.onState({
+    const state: GameState = {
       status,
       collected: this.collected.size,
       total: this.triggers.filter((t) => t.role === 'token').length,
       deaths: this.deaths,
-    })
+      lives: this.session.lives,
+      score: this.session.score,
+      timeMs: Math.round(this.session.elapsedMs),
+    }
+    // The App callback (banners / Play-Stop state) AND the HUD atom both read this.
+    this.onState(state)
+    gameStateAtom.set(state)
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -509,6 +635,9 @@ const NEUTRAL_INPUT: EntityInput = { dir: 0, jumpPressed: false, jumpReleased: f
 
 /** Fraction of jumpSpeed applied as the upward bounce after stomping an enemy. */
 const STOMP_BOUNCE = 0.7
+
+/** Spring launch as a multiple of jumpSpeed (a spring throws you higher than a jump). */
+const SPRING_LAUNCH = 1.6
 
 /** A page-space AABB. */
 interface Aabb {

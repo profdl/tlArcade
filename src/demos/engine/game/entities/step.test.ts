@@ -220,6 +220,45 @@ describe('stepEntity — patrol motion (enemy)', () => {
   })
 })
 
+describe('stepEntity — one-way platform (G3a)', () => {
+  const samples = boxSamples(20, 24)
+  /** A one-way platform body. */
+  function oneWay(x: number, y: number, w: number, h: number): Body {
+    return { ...rect(x, y, w, h), oneWay: true }
+  }
+
+  it('lands on a one-way platform from above (like a floor)', () => {
+    const plat = oneWay(-100, 200, 400, 12)
+    const kin = makeKinematic(0, 150) // above the platform, falls onto it
+    run(kin, samples, [plat], noInput, 60)
+    expect(kin.grounded).toBe(true)
+    expect(kin.y + 24).toBeGreaterThan(199)
+    expect(kin.y + 24).toBeLessThan(201.5)
+  })
+
+  it('passes UP through a one-way platform (no ceiling bonk)', () => {
+    // Player starts just below the platform, launched upward hard.
+    const plat = oneWay(-100, 100, 400, 12)
+    const kin = makeKinematic(0, 130) // below the platform top (100)
+    kin.vy = -600 // rising fast
+    // One Y-resolve step: rising through it should NOT be blocked (vy stays negative).
+    const t = makeTunables()
+    stepEntity(kin, samples, [plat], noInput, 'platformer', {}, dt, t)
+    expect(kin.vy).toBeLessThan(0) // still rising — passed through, no bonk
+  })
+
+  it('does not block sideways motion (walk past it horizontally)', () => {
+    // A one-way to the right at the same level — a normal wall would stop the walk.
+    const plat = oneWay(120, 150, 30, 60)
+    const floor = rect(-200, 200, 600, 40)
+    const kin = makeKinematic(60, 176)
+    run(kin, samples, [floor, plat], { dir: 1, jumpPressed: false, jumpReleased: false }, 120)
+    // Walked past x=120 (a one-way never blocks horizontally).
+    expect(kin.x + 20).toBeGreaterThan(121)
+    expect(kin.touchingWall).toBe(false)
+  })
+})
+
 describe('stompCheck / verticalBounds', () => {
   it('a downward-moving player above the enemy midpoint is a STOMP', () => {
     // enemy top=200 bottom=240 → mid=220. Player feet at 210 (above mid), vy>0.

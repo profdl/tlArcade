@@ -16,6 +16,9 @@ const HEX: Record<string, string> = {
   red: '#e03131',
   green: '#099268',
   violet: '#ae3ec9',
+  orange: '#e16919',
+  'light-blue': '#4dabf7',
+  'light-green': '#40c057',
 }
 
 function rgba(hex: string, a: number): string {
@@ -62,6 +65,48 @@ export function RoleIcon({ role, size = 24 }: { role: Role; size?: number }) {
     case 'enemy':
       // A little walker: a rounded body with two "feet" notches read as an enemy.
       shape = <rect x={3.5} y={6} width={17} height={13} rx={3} {...paint} />
+      break
+    case 'spring':
+      // A bounce pad: a wide short pad with an up-arrow hint above it (the coil
+      // spring launching the player skyward).
+      shape = (
+        <g>
+          <rect x={3} y={15} width={18} height={5} rx={1.5} {...paint} />
+          <path
+            d="M12 4 L12 13 M12 4 L8.5 7.5 M12 4 L15.5 7.5"
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
+      )
+      break
+    case 'checkpoint':
+      // A little flag on a pole: the pole is the tall thin marker, the pennant
+      // reads as "checkpoint".
+      shape = (
+        <g>
+          <line x1={7.5} y1={3} x2={7.5} y2={21} stroke={stroke} strokeWidth={1.8} strokeLinecap="round" />
+          <polygon points="7.5,4 18,7 7.5,11" {...paint} />
+        </g>
+      )
+      break
+    case 'oneway':
+      // A thin dashed platform: solid from above, pass-through from below — the
+      // dashes read as "not a full wall".
+      shape = (
+        <rect
+          x={2}
+          y={11}
+          width={20}
+          height={3.5}
+          rx={1}
+          {...paint}
+          strokeDasharray="3 2.5"
+        />
+      )
       break
   }
   return (

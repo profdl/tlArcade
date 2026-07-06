@@ -37,6 +37,13 @@ export interface Body {
   bounds: Bounds
   /** Half-thickness for open (band) bodies; 0 for closed (filled) bodies. */
   margin: number
+  /**
+   * A one-way platform (G3a): solid only from ABOVE. The resolver ignores its
+   * contact unless the push-out is a floor normal lifting the entity UP (a
+   * landing) — so you jump up through it and land on top, but never bonk it from
+   * below or get blocked sideways. Undefined/false = a normal solid.
+   */
+  oneWay?: boolean
 }
 
 /** How thick an open stroke's collision band is (page px, each side of the line). */

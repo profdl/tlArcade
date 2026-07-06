@@ -160,6 +160,47 @@ static geometry).
   patrol enemy through the real `stepEntity` and reproduces the engine's overlap
   decision to prove patrol / stomp-and-bounce / side-kill together.
 
+## Static props (G3a) — spring, checkpoint, one-way
+
+Three more color-coded roles, all pure decisions in
+[entities/props.ts](game/entities/props.ts) wired into `engine.ts`:
+
+- **spring** (orange, `effect: 'bounce'`) — a trigger that launches the player up
+  (`springLaunchVy(jumpSpeed * SPRING_LAUNCH)`).
+- **checkpoint** (light-blue, `effect: 'checkpoint'`) — a trigger that, on first
+  touch (`shouldActivateCheckpoint`), moves the respawn point to the player.
+- **oneway** (light-green, `collision: 'oneWay'`) — a platform solid **only from
+  above**. Tagged `Body.oneWay`; the resolver (`deepestShift`) skips it on the X
+  pass and accepts only floor-normal (landing) contacts on Y — so you jump up
+  through it and land on top. Unit-tested in `step.test.ts`.
+
+## Game session & framing (M1 lean, M5, M8)
+
+- **Session** (M1, lean) — [session/session.ts](game/session/session.ts): a PURE
+  reducer for **lives / score / timer** + the win/lose decision (`newSession`,
+  `onCollect`/`onStomp`/`onDeath`/`onWin`, `tickTime`). The runtime owns a
+  `Session`, calls it on each event, and `endGame('won'|'lost')` stops the sim while
+  keeping the session active (so the next Play/Stop restores). A death costs a life;
+  0 lives ⇒ game over. Single-level scope for now (a multi-level `GameDef` is later).
+- **Follow camera** (M5) — [camera/camera.ts](game/camera/camera.ts): a PURE
+  `computeCamera(player, viewport, prev)` (deadzone + velocity look-ahead), applied
+  each frame via `editor.setCamera` in `updateCamera()`; the authored camera is
+  captured at `start()` and restored at `stop()`. **Sign convention** (`screen =
+  (page + camera) * z`) is isolated in the module's `screenTargetToCamera` — the one
+  spot to flip if the view ever scrolls the wrong way.
+- **HUD** (M8) — [render/Hud.tsx](render/Hud.tsx): a play-only `InFrontOfTheCanvas`
+  overlay (top-center) reading `gameStateAtom` (which `emit()` sets alongside the
+  App callback). Shows lives / tokens / score / timer.
+
+## Templates (v1 exit test, §5.5)
+
+[templates/index.ts](game/templates/index.ts) — **frozen data** (level `Placement[]`
++ `SessionRules`), no new engine code: a template is AI-shaped data with no AI in the
+loop. Ships **Mario-1-1-like** and **Runner** (v1's exit tests), loaded via the
+`MainMenu` → "New from template" item (App registers the loader through
+`templateBridge` in state.ts; a stable-identity slot can't take props). Each template
+is its own regression fixture (`templates.test.ts`: one player, a goal, valid roles).
+
 ## The sim
 
 Per fixed substep (`SIM.FIXED_DT`): read input + jump edges → accelerate `vx`
