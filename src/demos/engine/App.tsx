@@ -6,6 +6,7 @@
  * drag-and-drop tray (render/Tray.tsx, mounted via components); press Play and a
  * GameRuntime (game/engine.ts) reads the level off the canvas and runs a
  * platformer sim. A default level loads on first visit; Reset rebuilds it.
+ * Restart (shown mid-play) re-runs the CURRENT level from its authored start.
  *
  * The `components` object is a module-level const (stable identity) so the tray
  * never remounts; the tray reads play state from game/state.ts → playingAtom.
@@ -91,6 +92,26 @@ export default function App() {
     loadLevel(editor)
   }, [])
 
+  // Restart keeps the authored level exactly as-is but re-runs it from the top:
+  // stop() restores every authored position/opacity (player parts, tokens, …),
+  // then a fresh start() re-collects the same on-canvas level and spawns the
+  // player back at its authored spot. Only meaningful while a game is running.
+  const handleRestart = useCallback(() => {
+    const rt = runtimeRef.current
+    if (!rt || !rt.isPlaying) return
+    rt.stop()
+    setNoPlayer(false)
+    if (!rt.start()) {
+      playingAtom.set(false)
+      setPlaying(false)
+      setState(IDLE)
+      setNoPlayer(true)
+      return
+    }
+    playingAtom.set(true)
+    setPlaying(true)
+  }, [])
+
   const togglePlay = useCallback(() => {
     const rt = runtimeRef.current
     if (!rt) return
@@ -124,6 +145,15 @@ export default function App() {
         >
           {playing ? '■ Stop' : '▶ Play'}
         </button>
+        {playing && (
+          <button
+            className="eng-btn eng-restart"
+            onClick={handleRestart}
+            title="Restart this level from the beginning"
+          >
+            ↻ Restart
+          </button>
+        )}
         <button className="eng-btn eng-reset" onClick={handleReset} title="Reset to the default level">
           ↺ Reset
         </button>
