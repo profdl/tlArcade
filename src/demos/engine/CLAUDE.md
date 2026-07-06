@@ -248,6 +248,36 @@ AI → docs) is the `engine-data-converter` skill; the runtime invariants are
 `engine-runtime-conventions`; the native-UI rules are `tldraw-v5-native-ui`; the
 self-check gate is `engine-verify` (all in `.claude/skills/`).
 
+## The AI converters (`game/ai/auto*.ts`)
+
+Each is a thin wrapper over `generate()` following the five-step recipe (schema →
+runtime → manual editor → AI → docs). All reach the user through **one** native
+door: **✨ Generate** in the `HelperButtons` slot ([render/GeneratePanel.tsx]
+(render/GeneratePanel.tsx)), a small form with a target selector — never a button
+per converter (PLAN §7.5). Add a converter by adding a target here, not a button.
+
+- **autoTune** (G5, feel) — [game/ai/autoTune.ts](game/ai/autoTune.ts). Prompt
+  ("floaty like Celeste with a big jump") → a partial `TunablesPatch` (only the
+  knobs the prompt implies) → `applyTunables` **merges it onto `tunablesAtom`,
+  clamped to each knob's panel range**, so the runtime feels it next substep and
+  the live physics panel (the manual editor / safety net) reflects it. No
+  perception, no shape mutation. Pure merge/clamp logic is unit-tested
+  (`autoTune.test.ts`); the model prompt is built from `TUNABLE_GROUPS` so it can't
+  drift from the real knobs.
+- **autoLevel** (G4, level) — [game/ai/autoLevel.ts](game/ai/autoLevel.ts). Prompt
+  → a `LevelLayout` (roles + page coords) → `applyLevelLayout` lays it down as
+  **native shapes via the same `createShape`/`shapeForRole` path as `level.ts`** —
+  so the result is ordinary shapes the tray+canvas (the manual editor) already
+  edits and the runtime already plays. Two modes: **replace** (clear + generate
+  fresh) and **extend** (`perceive()` the current drawing, add only NEW
+  placements). The role prompt is built from the `ROLES` registry.
+
+Both proven end-to-end against the live API. Set the key first:
+`wrangler secret put ANTHROPIC_API_KEY` (a local `.env` `ANTHROPIC_API_KEY` works
+for `npm run dev`). Note: **AI output is non-deterministic** — the same prompt
+yields different (valid) data each call; that's authoring, not the loop. The
+runtime is deterministic only once the data is fixed.
+
 ## tldraw v5 reference
 
 Offline doc exports live in [docs/tldraw/](../../../docs/tldraw/) — start at

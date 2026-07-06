@@ -12,11 +12,20 @@
  * never remounts; the tray reads play state from game/state.ts → playingAtom.
  */
 import { useCallback, useRef, useState } from 'react'
-import { DefaultStylePanel, Tldraw, useValue, type TLComponents, type Editor } from 'tldraw'
+import {
+  DefaultHelperButtons,
+  DefaultStylePanel,
+  Tldraw,
+  useValue,
+  type TLComponents,
+  type TLUiHelperButtonsProps,
+  type Editor,
+} from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Tray } from './render/Tray'
 import { PlayerToolbar } from './render/PlayerToolbar'
 import { PhysicsPanel } from './render/PhysicsPanel'
+import { GeneratePanel } from './render/GeneratePanel'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
 import { playingAtom, tunablesAtom } from './game/state'
@@ -45,9 +54,21 @@ function StylePanel() {
   return <DefaultStylePanel />
 }
 
+// The single "✨ Generate" AI door lives in tldraw's bottom-left HelperButtons
+// slot, next to the stock helper buttons (PLAN §7.5 — one native AI entry point).
+function HelperButtons(props: TLUiHelperButtonsProps) {
+  return (
+    <DefaultHelperButtons {...props}>
+      {props.children}
+      <GeneratePanel />
+    </DefaultHelperButtons>
+  )
+}
+
 const components: TLComponents = {
   InFrontOfTheCanvas: InFront,
   StylePanel,
+  HelperButtons,
 }
 
 const IDLE: GameState = { status: 'playing', collected: 0, total: 0, deaths: 0 }

@@ -19,10 +19,15 @@
  */
 import { z } from 'zod'
 import { PHYSICS_DEFAULTS } from '../physics'
-import { ROLE_LIST } from '../roles'
+import { ROLE_LIST, type Role } from '../roles'
 
-/** The role enum, derived from roles.ts so it can never drift from the registry. */
-export const RoleSchema = z.enum(ROLE_LIST as [string, ...string[]])
+/**
+ * The role enum, derived from ROLE_LIST so it can never drift from the registry.
+ * Runtime-validates against the real role names; its inferred type is the `Role`
+ * union (not a bare `string`), so a parsed placement's `role` feeds straight into
+ * `shapeForRole`.
+ */
+export const RoleSchema = z.enum(ROLE_LIST as [Role, ...Role[]])
 export type RoleName = z.infer<typeof RoleSchema>
 
 // ---------------------------------------------------------------------------
