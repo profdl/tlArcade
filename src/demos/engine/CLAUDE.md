@@ -196,10 +196,10 @@ Three more color-coded roles, all pure decisions in
 
 [templates/index.ts](game/templates/index.ts) — **frozen data** (level `Placement[]`
 + `SessionRules`), no new engine code: a template is AI-shaped data with no AI in the
-loop. Ships **Mario-1-1-like** and **Runner** (v1's exit tests), loaded via the
-`MainMenu` → "New from template" item (App registers the loader through
-`templateBridge` in state.ts; a stable-identity slot can't take props). Each template
-is its own regression fixture (`templates.test.ts`: one player, a goal, valid roles).
+loop. Ships **Mario-1-1-like** and **Runner** (v1's exit tests), loaded from the
+**📦 Template dropdown in the custom top panel** (App.tsx's `handleLoadTemplate`
+lays the level down + applies the rules). Each template is its own regression fixture
+(`templates.test.ts`: one player, a goal, valid roles).
 
 ## The sim
 
@@ -321,10 +321,11 @@ self-check gate is `engine-verify` (all in `.claude/skills/`).
 ## The AI converters (`game/ai/auto*.ts`)
 
 Each is a thin wrapper over `generate()` following the five-step recipe (schema →
-runtime → manual editor → AI → docs). All reach the user through **one** native
-door: **✨ Generate** in the `HelperButtons` slot ([render/GeneratePanel.tsx]
-(render/GeneratePanel.tsx)), a small form with a target selector — never a button
-per converter (PLAN §7.5). Add a converter by adding a target here, not a button.
+runtime → manual editor → AI → docs). All reach the user through **one** door:
+**✨ Generate** in the custom top panel (a button that drops down a form —
+[render/GeneratePanel.tsx](render/GeneratePanel.tsx), which takes the `editor` as a
+prop since the topbar renders outside tldraw's context), with a target selector —
+never a button per converter (PLAN §7.5). Add a converter by adding a target here.
 
 - **autoTune** (G5, feel) — [game/ai/autoTune.ts](game/ai/autoTune.ts). Prompt
   ("floaty like Celeste with a big jump") → a partial `TunablesPatch` (only the

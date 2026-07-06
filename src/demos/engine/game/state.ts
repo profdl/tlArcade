@@ -35,11 +35,3 @@ export const gameStateAtom = atom<GameState>('engine:gameState', {
   score: 0,
   timeMs: 0,
 })
-
-/**
- * Bridge for the "New from template" MainMenu item (a native slot component with
- * stable identity, so it can't take props). App registers a loader on mount; the
- * menu item calls it. Same "components read a module-level thing, not props"
- * discipline as the atoms above — just a callback instead of a value.
- */
-export const templateBridge: { load: ((templateKey: string) => void) | null } = { load: null }

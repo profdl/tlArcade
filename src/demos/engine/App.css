@@ -120,6 +120,23 @@
   background: rgba(0, 0, 0, 0.06);
 }
 
+/* Template loader dropdown — a native select styled to sit in the topbar row. */
+.eng-template-select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 7px;
+  background: #fff;
+  color: #1d1d1d;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.eng-template-select:hover {
+  background: #fafafa;
+}
+
 .eng-play {
   background: #099268;
   color: #fff;
@@ -323,27 +340,15 @@
   background: rgba(0, 0, 0, 0.05);
 }
 
-/* ── ✨ Generate: the single AI door (HelperButtons slot, bottom-left) ── */
-.eng-generate-open {
-  pointer-events: all;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid rgba(0, 0, 0, 0.07);
-  border-radius: 8px;
-  background: #fcfcfc;
-  color: #1d1d1d;
-  font: 600 13px system-ui, -apple-system, sans-serif;
-  cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
-}
-.eng-generate-open:hover {
-  background: #fff;
-}
+/* ── ✨ Generate: the single AI door (a dropdown from the custom top panel) ── */
+/* The ✨ Generate trigger is a plain topbar button (.eng-btn). Its form pops out
+   below the topbar as an anchored dropdown, so the topbar row keeps its height. */
 .eng-generate {
-  pointer-events: all;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 320;
   width: 268px;
   padding: 10px 12px 12px;
   background: #fcfcfc;

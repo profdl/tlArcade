@@ -1,23 +1,21 @@
 /**
  * Engine — the single "✨ Generate" AI door (PLAN §7.5).
  *
- * One native affordance, not one button per converter: a ✨ button in tldraw's
- * `HelperButtons` slot (bottom-left) opens a small prompt form with a TARGET
- * selector (this level / the feel). The result lands as editable data — a level
- * becomes native shapes on the canvas; a feel patch merges onto the live tunables
- * (which the physics panel then reflects). Per the tldraw-v5-native-ui skill this
- * is the one AI entry point; new converters add a target here, never a new button.
+ * One affordance, not one button per converter: a ✨ button in the custom top
+ * panel (App.tsx, after the template dropdown) drops down a small prompt form with
+ * a TARGET selector (this level / the feel). The result lands as editable data — a
+ * level becomes native shapes on the canvas; a feel patch merges onto the live
+ * tunables (which the physics panel reflects). New converters add a target here.
  *
- * It reads the editor via useEditor() (available inside tldraw's UI context) so
- * App's `components` const keeps stable identity — same discipline as the tray and
- * physics panel (which read atoms rather than take props).
+ * It takes the `editor` as a PROP (not useEditor()) because the topbar renders
+ * outside tldraw's context. App only mounts it when not playing (generation is an
+ * authoring action).
  */
 import { useCallback, useRef, useState } from 'react'
-import { useEditor, useValue } from 'tldraw'
+import { type Editor } from 'tldraw'
 import { autoLevel, type LevelMode } from '../game/ai/autoLevel'
 import { autoTune } from '../game/ai/autoTune'
 import { AiError } from '../game/ai/client'
-import { playingAtom } from '../game/state'
 
 type Target = 'level' | 'feel'
 
@@ -26,11 +24,14 @@ const PLACEHOLDERS: Record<Target, string> = {
   feel: 'floaty like Celeste with a big, high jump',
 }
 
-export function GeneratePanel() {
-  const editor = useEditor()
-  // Hide the door during play — generation is an authoring action.
-  const playing = useValue('generate: playing', () => playingAtom.get(), [])
-
+/**
+ * The single "✨ Generate" AI door (PLAN §7.5). Lives in the custom top panel
+ * (App.tsx), so it takes the editor as a prop rather than useEditor() — the topbar
+ * renders OUTSIDE tldraw's context. App hides it during play (generation is an
+ * authoring action). The result lands as editable data: a level → native shapes;
+ * a feel patch → the live tunables.
+ */
+export function GeneratePanel({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false)
   const [target, setTarget] = useState<Target>('level')
   const [levelMode, setLevelMode] = useState<LevelMode>('replace')
@@ -69,12 +70,11 @@ export function GeneratePanel() {
     setBusy(false)
   }, [])
 
-  if (playing) return null
-
+  // The trigger button lives in the topbar; the form pops OVER the canvas below it.
   if (!open) {
     return (
       <button
-        className="eng-generate-open"
+        className="eng-btn eng-generate-open"
         onClick={() => setOpen(true)}
         title="Generate a level or tune the feel with AI"
       >

@@ -13,17 +13,10 @@
  */
 import { useCallback, useRef, useState } from 'react'
 import {
-  DefaultHelperButtons,
-  DefaultMainMenu,
   DefaultStylePanel,
   Tldraw,
-  TldrawUiMenuGroup,
-  TldrawUiMenuItem,
-  TldrawUiMenuSubmenu,
   useValue,
   type TLComponents,
-  type TLUiHelperButtonsProps,
-  type TLUiMainMenuProps,
   type Editor,
 } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -34,7 +27,7 @@ import { GeneratePanel } from './render/GeneratePanel'
 import { Hud } from './render/Hud'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
-import { playingAtom, tunablesAtom, templateBridge } from './game/state'
+import { playingAtom, tunablesAtom } from './game/state'
 import { makeTunables } from './game/physics'
 import { TEMPLATE_LIST } from './game/templates'
 import './App.css'
@@ -62,45 +55,9 @@ function StylePanel() {
   return <DefaultStylePanel />
 }
 
-// The single "✨ Generate" AI door lives in tldraw's bottom-left HelperButtons
-// slot, next to the stock helper buttons (PLAN §7.5 — one native AI entry point).
-function HelperButtons(props: TLUiHelperButtonsProps) {
-  return (
-    <DefaultHelperButtons {...props}>
-      {props.children}
-      <GeneratePanel />
-    </DefaultHelperButtons>
-  )
-}
-
-// "New from template" — a native MainMenu submenu listing the bundled games
-// (PLAN §5.5). The item calls templateBridge.load (App registers it on mount),
-// since a stable-identity slot component can't take props.
-function MainMenu(props: TLUiMainMenuProps) {
-  return (
-    <DefaultMainMenu {...props}>
-      <TldrawUiMenuGroup id="engine-templates">
-        <TldrawUiMenuSubmenu id="engine-new-from-template" label="New from template">
-          {TEMPLATE_LIST.map(({ key, template }) => (
-            <TldrawUiMenuItem
-              key={key}
-              id={`template-${key}`}
-              label={template.name}
-              readonlyOk
-              onSelect={() => templateBridge.load?.(key)}
-            />
-          ))}
-        </TldrawUiMenuSubmenu>
-      </TldrawUiMenuGroup>
-    </DefaultMainMenu>
-  )
-}
-
 const components: TLComponents = {
   InFrontOfTheCanvas: InFront,
   StylePanel,
-  HelperButtons,
-  MainMenu,
 }
 
 const IDLE: GameState = {
@@ -119,9 +76,13 @@ export default function App() {
   const [playing, setPlaying] = useState(false)
   const [state, setState] = useState<GameState>(IDLE)
   const [noPlayer, setNoPlayer] = useState(false)
+  // Also in state so the topbar (which renders the editor-bound ✨ Generate) shows
+  // it once the editor is ready — a ref alone wouldn't trigger that re-render.
+  const [editor, setEditor] = useState<Editor | null>(null)
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
+    setEditor(editor)
     editor.user.updateUserPreferences({ colorScheme: 'light' })
     // Start each session from the shipped "tight & snappy" defaults (the atom is
     // module-global, so a previous session's live edits would otherwise linger).
@@ -135,25 +96,29 @@ export default function App() {
     if (import.meta.env.DEV) {
       ;(window as unknown as { __editor?: Editor }).__editor = editor
     }
-    // Register the "New from template" loader for the MainMenu item.
-    templateBridge.load = (templateKey: string) => {
-      const t = TEMPLATE_LIST.find((x) => x.key === templateKey)?.template
-      if (!t) return
-      runtimeRef.current?.stop()
-      playingAtom.set(false)
-      setPlaying(false)
-      setState(IDLE)
-      setNoPlayer(false)
-      tunablesAtom.set(makeTunables())
-      runtimeRef.current?.setRules(t.rules)
-      loadLevel(editor, t.level)
-    }
     return () => {
-      templateBridge.load = null
       runtimeRef.current?.stop()
       runtimeRef.current = null
+      setEditor(null)
       playingAtom.set(false)
     }
+  }, [])
+
+  // Load a bundled template (from the topbar dropdown): stop play, reset feel to
+  // defaults, apply the template's rules, and lay its level down as native shapes.
+  const handleLoadTemplate = useCallback((templateKey: string) => {
+    const editor = editorRef.current
+    if (!editor) return
+    const t = TEMPLATE_LIST.find((x) => x.key === templateKey)?.template
+    if (!t) return
+    runtimeRef.current?.stop()
+    playingAtom.set(false)
+    setPlaying(false)
+    setState(IDLE)
+    setNoPlayer(false)
+    tunablesAtom.set(makeTunables())
+    runtimeRef.current?.setRules(t.rules)
+    loadLevel(editor, t.level)
   }, [])
 
   const handleReset = useCallback(() => {
@@ -234,6 +199,31 @@ export default function App() {
         <button className="eng-btn eng-reset" onClick={handleReset} title="Reset to the default level">
           ↺ Reset
         </button>
+        {!playing && (
+          <>
+            {/* Load a bundled starter game (§5.5). Authoring-only. */}
+            <select
+              className="eng-template-select"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) handleLoadTemplate(e.target.value)
+                e.target.value = '' // reset so the same template can be re-picked
+              }}
+              title="Load a template level"
+            >
+              <option value="" disabled>
+                📦 Template…
+              </option>
+              {TEMPLATE_LIST.map(({ key, template }) => (
+                <option key={key} value={key}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+            {/* The single ✨ Generate AI door, right after the template dropdown. */}
+            {editor && <GeneratePanel editor={editor} />}
+          </>
+        )}
         {playing && (
           // Score/lives/timer live in the HUD (top-center); the topbar keeps only
           // the controls hint.
