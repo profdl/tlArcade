@@ -5,9 +5,17 @@
  * start() it snapshots authored state, collects the level from the NATIVE shapes
  * on the page (role read from a shape's color — see roles.ts → roleForColor),
  * and drives the single player shape with a fixed-timestep sim (gravity +
- * WASD/arrow movement + AABB collision). On stop() it restores, so Play/Stop is
- * non-destructive and never touches the undo stack (all canvas writes go through
- * `editor.run(..., { history: 'ignore' })`).
+ * WASD/arrow movement + geometry-accurate collision). On stop() it restores, so
+ * Play/Stop is non-destructive and never touches the undo stack (all canvas
+ * writes go through `editor.run(..., { history: 'ignore' })`).
+ *
+ * Collision matches each shape's REAL perimeter, not its bounding box (see
+ * game/collision.ts): a triangle collides as a triangle, a hand-drawn stroke as
+ * a thin band along its path (so you can draw hills and valleys), and the player
+ * collides by points sampled around its OWN outline — so an oddly-shaped player
+ * nestles into terrain by its real edge. Resolution is still per-axis (move X,
+ * separate; move Y, separate) so the platformer keeps crisp control and a
+ * reliable `grounded` flag for jumping.
  *
  * The player can be a geo shape (blue, from the tray) OR a blue shape drawn with
  * the pencil — so it's sized/positioned from its page bounds, not props.w/h
@@ -15,11 +23,19 @@
  *
  * MVP scope / known limits (see CLAUDE.md):
  *  - Only the player moves. The level is collected ONCE at start.
- *  - Collision is axis-aligned-bounding-box. A rotated wall collides as its
- *    upright AABB. Keep walls thicker than one sim step (~a few px) to be safe.
+ *  - Solids are static: a wall's outline is captured once at start, in page
+ *    space, so rotating/moving a wall mid-play won't update its collision.
  */
 import type { Editor, TLDrawShape, TLGeoShape, TLShapeId, TLShapePartial } from 'tldraw'
 import { roleForColor, type Role } from './roles'
+import {
+  buildBody,
+  outlineSamples,
+  penetration,
+  pointInPolygon,
+  type Body,
+  type Pt,
+} from './collision'
 
 export const PHYSICS = {
   GRAVITY: 2600, // px/s²
@@ -28,6 +44,18 @@ export const PHYSICS = {
   MAX_FALL: 1800, // terminal downward speed
   FIXED_DT: 1 / 120, // sim substep
   MAX_FRAME: 0.05, // clamp real dt so a stall can't spiral the sim
+  // A push-out whose normal is at least this far from horizontal (|ny| above it)
+  // counts as "floor-ish" and grounds the player when it opposes a downward move.
+  // ~cos(50°): steep enough that walls don't ground you, shallow enough that a
+  // drawn hillside still does.
+  GROUND_NY: 0.64,
+  // On the X pass, only a contact whose normal is at least this horizontal
+  // (|nx| above it) is treated as a WALL that stops sideways motion. A slope's
+  // normal is mostly vertical (|nx| small), so it's ignored on X and the player
+  // walks up it via the Y pass instead of stalling against it — which is what
+  // made a hill walkable one way but not the other. ~sin(55°): a surface steeper
+  // than ~55° blocks you; anything shallower you can climb.
+  WALL_NX: 0.82,
 } as const
 
 /** Native tldraw shape types the engine reads: geo and draw carry a role via
@@ -41,22 +69,12 @@ export interface GameState {
   deaths: number
 }
 
-interface Aabb {
-  minX: number
-  minY: number
-  maxX: number
-  maxY: number
-}
-
 interface Trigger {
   id: TLShapeId
   type: string // geo or draw — a trigger can be drawn too
   role: Extract<Role, 'token' | 'hazard' | 'goal'>
-  box: Aabb
+  body: Body
 }
-
-const overlaps = (a: Aabb, b: Aabb) =>
-  a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY
 
 export class GameRuntime {
   private raf = 0
@@ -67,10 +85,12 @@ export class GameRuntime {
 
   private playerId!: TLShapeId
   private playerType = 'geo' // the player may be a geo shape or a drawn (pencil) shape
-  private w = 0
-  private h = 0
   private px = 0 // player bounds top-left (page space) — what the sim moves
   private py = 0
+  // Player outline sample points, relative to the bounds top-left. Adding (px,py)
+  // gives their live page position each step, so an oddly-shaped player collides
+  // by its real perimeter without re-reading geometry mid-sim.
+  private playerSamples: Pt[] = []
   // The player's record x/y differs from its bounds top-left for a draw shape
   // (its points don't start at the origin); this offset bridges the two.
   private offX = 0
@@ -80,7 +100,7 @@ export class GameRuntime {
   private grounded = false
 
   private spawn = { x: 0, y: 0 }
-  private solids: Aabb[] = []
+  private solids: Body[] = []
   private triggers: Trigger[] = []
   private collected = new Set<TLShapeId>()
   private deaths = 0
@@ -121,38 +141,41 @@ export class GameRuntime {
 
     const player = shapes.find((s) => this.roleOf(s) === 'player')
     const playerBounds = player && editor.getShapePageBounds(player.id)
+    const samples = player && outlineSamples(editor, player.id)
 
-    if (!player || !playerBounds) {
+    if (!player || !playerBounds || !samples) {
       this.onState({ status: 'no-player', collected: 0, total: 0, deaths: 0 })
       return false
     }
 
-    // Collect the level once, and snapshot anything we might mutate.
+    // Collect the level once, and snapshot anything we might mutate. Every solid
+    // and trigger becomes a real-outline body (polygon for closed shapes, a thin
+    // band for open strokes) so collision follows the shape's perimeter.
     this.snapshot.clear()
     this.solids = []
     this.triggers = []
     for (const s of shapes) {
       if (!LEVEL_TYPES.has(s.type)) continue
       if (s.id === player.id) continue
-      const box = editor.getShapePageBounds(s.id)
-      if (!box) continue
-      const aabb: Aabb = { minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY }
+      const body = buildBody(editor, s.id)
+      if (!body) continue
       const role = this.roleOf(s)
       if (role === 'token' || role === 'hazard' || role === 'goal') {
-        this.triggers.push({ id: s.id, type: s.type, role, box: aabb })
+        this.triggers.push({ id: s.id, type: s.type, role, body })
         this.snapshot.set(s.id, { x: s.x, y: s.y, opacity: s.opacity })
       } else {
         // wall, unlabelled geo, or draw / line → solid terrain
-        this.solids.push(aabb)
+        this.solids.push(body)
       }
     }
 
     this.playerId = player.id
     this.playerType = player.type
-    this.w = playerBounds.w
-    this.h = playerBounds.h
     this.px = playerBounds.minX
     this.py = playerBounds.minY
+    // Store the player's outline samples relative to its bounds top-left, so
+    // adding (px,py) each step yields their live page position.
+    this.playerSamples = samples.map((p) => ({ x: p.x - playerBounds.minX, y: p.y - playerBounds.minY }))
     // A draw shape's record origin isn't its bounds' top-left; remember the gap
     // so we can convert the sim's bounds position back to a record x/y to write.
     this.offX = player.x - playerBounds.minX
@@ -244,42 +267,80 @@ export class GameRuntime {
     }
 
     // Move + resolve one axis at a time so a corner can't wedge the player.
-    this.px += this.vx * dt
-    this.resolveX()
+    // Resolve Y first (gravity seats the player on the surface), then X — so on
+    // the X pass the player is already sitting on a slope and only a genuine WALL
+    // (near-vertical normal) blocks horizontal motion. A slope's normal is mostly
+    // vertical, so the X pass ignores it (see resolveAxis) and the next Y pass
+    // lifts the player up the incline instead of the slope stalling forward walk.
     this.py += this.vy * dt
     this.grounded = false
-    this.resolveY()
+    this.resolveAxis('y')
+    this.px += this.vx * dt
+    this.resolveAxis('x')
   }
 
-  private playerBox(): Aabb {
-    return { minX: this.px, minY: this.py, maxX: this.px + this.w, maxY: this.py + this.h }
-  }
+  /**
+   * Push the player out of every solid it overlaps, correcting along ONE axis.
+   *
+   * We sample the player's outline points at the current position and, for each
+   * one penetrating a solid body, ask collision.ts for the minimum push-out
+   * (unit normal + depth). Projecting that onto the moving axis gives how far to
+   * shift the player back along it; we take the LARGEST such shift across all
+   * points/bodies (the deepest penetration governs) and apply it, then zero the
+   * velocity on that axis if the correction opposed the motion. On the Y pass an
+   * upward, floor-ish correction grounds the player (enables jumping).
+   */
+  private resolveAxis(axis: 'x' | 'y') {
+    let bestShift = 0 // signed displacement to apply on this axis (px/py += it)
+    let bestNy = 0 // ny of the correction that produced bestShift (for grounding)
 
-  private resolveX() {
-    const p = this.playerBox()
-    for (const s of this.solids) {
-      if (!overlaps(p, s)) continue
-      if (this.vx > 0) this.px = s.minX - this.w
-      else if (this.vx < 0) this.px = s.maxX
-      this.vx = 0
-      p.minX = this.px
-      p.maxX = this.px + this.w
-    }
-  }
-
-  private resolveY() {
-    const p = this.playerBox()
-    for (const s of this.solids) {
-      if (!overlaps(p, s)) continue
-      if (this.vy > 0) {
-        this.py = s.minY - this.h
-        this.grounded = true
-      } else if (this.vy < 0) {
-        this.py = s.maxY
+    for (const local of this.playerSamples) {
+      const p: Pt = { x: local.x + this.px, y: local.y + this.py }
+      for (const body of this.solids) {
+        const hit = penetration(p, body)
+        if (!hit) continue
+        // On the X pass, ignore floor-ish/slope contacts: a surface you can walk
+        // UP (its normal is mostly vertical) shouldn't block sideways motion —
+        // the Y pass lifts the player up it instead. Only a near-vertical WALL
+        // normal stops you here. This is what makes a drawn hill walkable in BOTH
+        // directions (an uphill contact used to cancel forward velocity).
+        if (axis === 'x' && Math.abs(hit.nx) < PHYSICS.WALL_NX) continue
+        // Component of the unit push-out normal along the axis we're resolving.
+        // A near-zero component means this normal barely resolves along this axis
+        // (e.g. a wall's sideways normal on the Y pass) — leave it to the other
+        // axis rather than shoving the player a huge distance to clear it here.
+        const comp = axis === 'x' ? hit.nx : hit.ny
+        if (Math.abs(comp) < 1e-3) continue
+        // The point must move `depth` along (nx,ny). Realised as a pure move along
+        // this axis, that's depth / |comp| in the sign of `comp`. The deepest such
+        // correction across all points/bodies governs the axis.
+        const axisShift = (hit.depth / Math.abs(comp)) * Math.sign(comp)
+        if (Math.abs(axisShift) > Math.abs(bestShift)) {
+          bestShift = axisShift
+          bestNy = hit.ny
+        }
       }
-      this.vy = 0
-      p.minY = this.py
-      p.maxY = this.py + this.h
+    }
+
+    if (bestShift === 0) return
+
+    if (axis === 'x') {
+      this.px += bestShift
+      // Zero horizontal velocity only if we were pushed against our motion.
+      if ((this.vx > 0 && bestShift < 0) || (this.vx < 0 && bestShift > 0)) this.vx = 0
+    } else {
+      this.py += bestShift
+      if (bestShift < 0 && -bestNy >= PHYSICS.GROUND_NY) {
+        // Pushed up out of a floor-ish surface → grounded (enables jumping).
+        this.grounded = true
+        if (this.vy > 0) this.vy = 0
+      } else if (this.vy < 0 && bestShift > 0) {
+        // Pushed down while rising → bonked a ceiling.
+        this.vy = 0
+      } else if (this.vy > 0 && bestShift < 0) {
+        // Pushed up while falling against a steep (wall-ish) surface — stop the fall.
+        this.vy = 0
+      }
     }
   }
 
@@ -299,13 +360,25 @@ export class GameRuntime {
     )
   }
 
+  /** True if any player sample point is inside/within a trigger's body. */
+  private touches(body: Body): boolean {
+    for (const local of this.playerSamples) {
+      const p: Pt = { x: local.x + this.px, y: local.y + this.py }
+      if (body.closed) {
+        if (pointInPolygon(p, body.pts)) return true
+      } else if (penetration(p, body)) {
+        return true
+      }
+    }
+    return false
+  }
+
   /** @returns true if the game just ended (win), so the frame loop stops. */
   private checkTriggers(): boolean {
-    const p = this.playerBox()
     const total = this.triggers.filter((t) => t.role === 'token').length
 
     for (const t of this.triggers) {
-      if (!overlaps(p, t.box)) continue
+      if (!this.touches(t.body)) continue
 
       if (t.role === 'token') {
         if (!this.collected.has(t.id)) {
