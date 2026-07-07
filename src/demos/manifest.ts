@@ -32,6 +32,13 @@ export const demos: DemoEntry[] = [
 		Component: lazy(() => import('./line-rider-side/App')),
 	},
 	{
+		slug: 'sonic',
+		title: 'Sonic',
+		blurb:
+			'A momentum platformer: draw slopes, ramps, and loops, then run a self-propelled character that keeps its speed across curves and flies off ramps — the Line Rider sled sim turned into a Sonic-style level builder.',
+		Component: lazy(() => import('./sonic/App')),
+	},
+	{
 		slug: 'busytown',
 		title: 'Busytown',
 		blurb:
