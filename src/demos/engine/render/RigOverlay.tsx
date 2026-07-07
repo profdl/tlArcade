@@ -109,6 +109,41 @@ export function RigOverlay() {
 
   return (
     <>
+      {/* Play-time control: toggle the bone overlay on/off. Shown whenever a rig is
+          evaluating (rigDebug is published only for a rigged player). Its own
+          pointer-events:all island in the otherwise click-through overlay layer. */}
+      {playing && rigDebug && (
+        <div
+          style={{
+            // Bottom-RIGHT: the bottom-left corner holds tldraw's native minimap/zoom
+            // menu, and the top-right holds the physics panel — this corner is clear
+            // during play.
+            position: 'absolute',
+            right: 12,
+            bottom: 12,
+            zIndex: 360,
+            pointerEvents: 'all',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => showRigDebugAtom.set(!showRigDebugAtom.get())}
+            style={{
+              font: '12px/1.4 system-ui, sans-serif',
+              padding: '5px 9px',
+              borderRadius: 6,
+              border: '1px solid var(--color-divider, #ddd)',
+              background: showDebug ? '#12b886' : 'var(--color-panel, #fff)',
+              color: showDebug ? '#fff' : 'inherit',
+              cursor: 'pointer',
+              boxShadow: '0 1px 4px rgba(0,0,0,.15)',
+            }}
+          >
+            {showDebug ? '🦴 Bones: on' : '🦴 Bones: off'}
+          </button>
+        </div>
+      )}
+
       {/* DEBUG: the live skeleton during play — proves the rig is evaluating. */}
       {playing && showDebug && rigDebug && (
         <svg

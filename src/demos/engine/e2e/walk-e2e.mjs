@@ -105,7 +105,9 @@ const legSpread = relSpread(samples, 'legL', 'legR')
 const armSpread = relSpread(samples, 'armL', 'armR')
 log(`   legL-legR y-spread over walk: ${legSpread.toFixed(2)}px  |  armL-armR: ${armSpread.toFixed(2)}px`)
 check('legs swing while walking (relative offset varies)', legSpread > 3, `${legSpread.toFixed(2)}px`)
-check('arms swing while walking (relative offset varies)', armSpread > 3, `${armSpread.toFixed(2)}px`)
+// Arms hang at the sides now and swing SUBTLY (by design — armSwing < leg swing), so
+// a smaller threshold than the legs. Still must visibly move.
+check('arms swing subtly while walking (relative offset varies)', armSpread > 1.5, `${armSpread.toFixed(2)}px`)
 
 // 3) Stand still → the pose returns to rest → limbs stop varying (steady).
 await page.waitForTimeout(400)

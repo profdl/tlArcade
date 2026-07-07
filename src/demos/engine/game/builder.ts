@@ -35,6 +35,14 @@ import { builderRig } from './rig/builderRig'
  */
 const LIMB_INDEX = { armR: 0, armL: 3, legR: 4, legL: 5 } as const
 
+/**
+ * Capture-order indices of the BODY + FACE shapes the rig's spine/head bones drive
+ * (Phase 1' — these used to ride a static root and never move). Verified against the
+ * shapes' real geometric centers (see the _idx probe): torso silhouette (6), head
+ * ellipse (1), smile (2), and the two eyes (7,8).
+ */
+const BODY_INDEX = { head: 1, smile: 2, torso: 6, eyeL: 7, eyeR: 8 } as const
+
 /** One captured shape: type, normalized origin, and its COMPLETE props (with the
  *  original `segments` for draw shapes). */
 interface BuilderShape {
@@ -173,15 +181,20 @@ export function createBuilderPlayer(
   const rigW = groupBounds?.w ?? figW
   const rigH = groupBounds?.h ?? figH
 
-  // Default rig (R2): a Tier-A skeleton with L/R arm + leg bones attached to the
-  // real limb leaf ids, so the default player's limbs animate on Play (the walk
-  // cycle in game/rig/walk.ts supplies the live pose). Entity-local px = the
-  // rendered figure's page-bounds size.
+  // Default rig (R2): a Tier-A skeleton — a pelvis→spine→head chain plus L/R arm+leg
+  // bones — attached to the real leaf ids, so the default player's WHOLE BODY animates
+  // on Play (the state machine in game/rig/walk.ts supplies the live pose). Entity-local
+  // px = the rendered figure's page-bounds size.
   const rig = builderRig(rigW, rigH, {
     armL: ids[LIMB_INDEX.armL],
     armR: ids[LIMB_INDEX.armR],
     legL: ids[LIMB_INDEX.legL],
     legR: ids[LIMB_INDEX.legR],
+    torso: ids[BODY_INDEX.torso],
+    head: ids[BODY_INDEX.head],
+    smile: ids[BODY_INDEX.smile],
+    eyeL: ids[BODY_INDEX.eyeL],
+    eyeR: ids[BODY_INDEX.eyeR],
   })
 
   editor.updateShape({

@@ -138,9 +138,9 @@ export function evaluateRig(rig: Rig, pose: Pose = {}): Map<string, Mat2D> {
 export function evaluateBoneWorlds(
   rig: Rig,
   pose: Pose = {},
-): { pivot: { x: number; y: number }; tip: { x: number; y: number } }[] {
+): { id: string; pivot: { x: number; y: number }; tip: { x: number; y: number } }[] {
   const world = forwardKinematics(rig, (b) => posedLocal(b, pose))
-  const out: { pivot: { x: number; y: number }; tip: { x: number; y: number } }[] = []
+  const out: { id: string; pivot: { x: number; y: number }; tip: { x: number; y: number } }[] = []
   for (const b of rig.bones) {
     const w = world.get(b.id)
     if (!w) continue
@@ -149,7 +149,7 @@ export function evaluateBoneWorlds(
     const pivot = { x: w.tx, y: w.ty }
     // Tip = pivot + length along the bone's world +x axis (its (a,b) column).
     const tip = { x: w.tx + w.a * b.length, y: w.ty + w.b * b.length }
-    out.push({ pivot, tip })
+    out.push({ id: b.id, pivot, tip })
   }
   return out
 }

@@ -701,11 +701,17 @@ export class GameRuntime {
       else if (!wasGrounded && k.grounded && fallSpeedIn > 0) {
         this.audio.play('land', Math.min(1, fallSpeedIn / t.jumpSpeed))
       }
-      // R2: if the player is rigged, drive its pose from the walk cycle (grounded +
-      // moving → swing arms/legs; else rest). writeEntities evaluates the rig with
+      // R2: if the player is rigged, drive its pose from the animation state machine
+      // (idle/walk/jump/fall → whole-body pose). writeEntities evaluates the rig with
       // this pose. Unrigged players carry no rig, so this is a cheap no-op for them.
       if (playerEntity.rig) {
-        playerEntity.pose = poseForState({ grounded: k.grounded, vx: k.vx, simTime: this.simTime })
+        playerEntity.pose = poseForState({
+          grounded: k.grounded,
+          vx: k.vx,
+          vy: k.vy,
+          touchingWall: k.touchingWall,
+          simTime: this.simTime,
+        })
       }
     }
   }

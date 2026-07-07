@@ -37,8 +37,9 @@ export const rigDebugAtom = atom<
   { bones: { pivot: { x: number; y: number }; tip: { x: number; y: number } }[] } | null
 >('engine:rigDebug', null)
 
-/** Toggle the play-time skeleton overlay (debug). */
-export const showRigDebugAtom = atom('engine:showRigDebug', true)
+/** Toggle the play-time skeleton overlay (debug). Off by default so the figure shows
+ *  clean; the "🦴 Bones" button (RigOverlay) turns it on to inspect the rig. */
+export const showRigDebugAtom = atom('engine:showRigDebug', false)
 
 /** A monotonic counter to name new draft bones without Date.now()/random. */
 export const boneCounterAtom = atom('engine:boneCounter', 0)
