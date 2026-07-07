@@ -680,13 +680,15 @@ export function bodyUpAngle(body: Body): number {
  * value) while horizontal speed is inside `deadband` so a slow/stationary sled
  * doesn't flicker.
  *
- * The art is drawn rotated by `bodyAngle` (the BACK->FRONT runner direction), so
- * its nose points along `facing * (cos angle, sin angle)` — its on-screen x sign
- * is `facing * sign(cos angle)`. To point the nose the way the sled moves across
- * the screen we want that to match `sign(vx)`, hence `facing = sign(vx) *
- * sign(cos angle)`. The `cos angle` term self-corrects the runner's 180°
- * ambiguity: when a tumble leaves FRONT on the left, this still faces travel
- * instead of latching backward (the bug this fixes).
+ * The art is drawn rotated by `bodyUpAngle` (the FULL orientation, from the mast —
+ * see Rider.tsx), so under that rotation the art's local +x maps to screen
+ * `(cos θ, sin θ)` with θ = bodyUpAngle; its nose's on-screen x sign is
+ * `facing * sign(cos θ)`. To point the nose the way the sled moves across the
+ * screen we want that to match `sign(vx)`, hence `facing = sign(vx) * sign(cos θ)`.
+ * Using bodyUpAngle here (NOT bodyAngle) keeps the mirror CONSISTENT with the
+ * rotation basis: when a flip/roll inverts the body, cos θ flips with it, so the
+ * head keeps leading travel instead of mirroring backward (the bug fixed when the
+ * render switched from bodyAngle to bodyUpAngle).
  *
  * Velocity is the RUNNER's (BACK+FRONT mean) — the mast oscillates on its upright
  * spring and including it would let that wobble flip the facing at low speed.
@@ -698,9 +700,9 @@ export function bodyFacing(body: Body, dt: number, deadband: number, hold: 1 | -
 	// Runner-only mean horizontal velocity (exclude the wobbling mast).
 	const vx = (back.pos.x - back.prev.x + front.pos.x - front.prev.x) / (2 * dt)
 	if (Math.abs(vx) <= deadband) return hold
-	const cos = Math.cos(bodyAngle(body))
-	// At a near-vertical runner (cos ~ 0) horizontal facing is degenerate; the art
-	// is nearly edge-on anyway, so just hold rather than snap on a tiny cos sign.
+	const cos = Math.cos(bodyUpAngle(body))
+	// Near θ = ±90° (cos ~ 0) the art is edge-on and horizontal facing is degenerate;
+	// just hold rather than snap on a tiny cos sign.
 	if (Math.abs(cos) < PHYSICS.facingVerticalCos) return hold
 	return (Math.sign(vx) * Math.sign(cos)) as 1 | -1
 }

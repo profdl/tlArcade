@@ -1032,14 +1032,28 @@ describe('physics: facing (which way the snail points)', () => {
 		expect(bodyFacing(body, DT, 8, 1)).toBe(-1)
 	})
 
-	it('still faces travel when a tumble leaves FRONT on the left (180° runner)', () => {
-		// FRONT now points left, but the snail still slides RIGHT down a ramp. The old
-		// projection-onto-runner rule latched backward here; horizontal velocity wins.
+	it('faces travel by the UPRIGHT (mast) frame, not the runner direction', () => {
+		// Facing now keys off bodyUpAngle (the mast = the art's true up), consistent
+		// with how the art is rendered. With the mast straight up (cos θ = +1) a
+		// rightward slide faces +1 — regardless of the runner's BACK/FRONT direction.
 		const body = makeBody({ x: 0, y: 0 })
-		orientRunner(body, Math.PI) // FRONT to the left, cos(angle) < 0
+		orientRunner(body, Math.PI) // runner flipped, but the mast is still UP
 		setVel(body, BACK, 100, 0) // moving right
 		setVel(body, FRONT, 100, 0)
-		expect(bodyFacing(body, DT, 8, -1)).toBe(-1) // sign(vx)+ * sign(cos)- = -1
+		expect(bodyFacing(body, DT, 8, -1)).toBe(1) // sign(vx)+ * sign(cos θ=up)+ = +1
+	})
+
+	it('mirrors when the body is INVERTED (mast down) so the head still leads travel', () => {
+		// When the body flips upside-down, bodyUpAngle passes ±180° (cos θ < 0), so the
+		// facing mirror flips to keep the head leading horizontal travel under the
+		// flipped rotation — instead of the art moving backward (the bug this fixes).
+		const body = makeBody({ x: 0, y: 0 })
+		// Put the mast BELOW the runner midpoint (inverted): cos(bodyUpAngle) < 0.
+		const midY = (body.points[BACK].pos.y + body.points[FRONT].pos.y) / 2
+		body.points[MAST].pos = { x: body.points[MAST].pos.x, y: midY + PHYSICS.sledMast }
+		setVel(body, BACK, 100, 0) // moving right
+		setVel(body, FRONT, 100, 0)
+		expect(bodyFacing(body, DT, 8, 1)).toBe(-1) // sign(vx)+ * sign(cos θ inverted)- = -1
 	})
 
 	it('holds the previous facing inside the dead-band', () => {
@@ -1050,25 +1064,20 @@ describe('physics: facing (which way the snail points)', () => {
 		expect(bodyFacing(body, DT, 8, -1)).toBe(-1)
 	})
 
-	it('holds facing on a near-vertical runner (degenerate horizontal facing)', () => {
+	it('holds facing when the body is edge-on (mast ~horizontal, cos θ ~ 0)', () => {
+		// bodyUpAngle ~ ±90° means the art is edge-on and horizontal facing is
+		// degenerate; the facingVerticalCos guard HOLDS rather than snapping on the
+		// tiny cos sign. Put the mast ~horizontal (to the side of the runner midpoint).
 		const body = makeBody({ x: 0, y: 0 })
-		orientRunner(body, Math.PI / 2) // runner straight up/down, cos(angle) ~ 0
-		setVel(body, BACK, 0, 200) // dropping fast, no horizontal component
-		setVel(body, FRONT, 0, 200)
-		expect(bodyFacing(body, DT, 8, 1)).toBe(1)
-		expect(bodyFacing(body, DT, 8, -1)).toBe(-1)
-	})
-
-	it('holds facing on a steep (~88deg) near-vertical runner instead of flipping', () => {
-		// The runner is nearly vertical (cos(angle) tiny but nonzero). With the old
-		// EPSILON guard the tiny cos sign still flipped the facing; with the
-		// facingVerticalCos tunable the near-edge-on art HOLDS rather than snapping.
-		const angle = (88 * Math.PI) / 180 // ~88deg, cos ~ +0.035 (well under threshold)
-		const body = makeBody({ x: 0, y: 0 })
-		orientRunner(body, angle)
-		setVel(body, BACK, 100, 0) // moving right; sign(vx)=+, sign(cos)=+ would give +1
+		// Place the mast exactly to the SIDE of the runner MIDPOINT (bodyUpAngle uses
+		// the runner midpoint, not bodyCenter), so the mast vector is horizontal and
+		// cos(bodyUpAngle) ≈ 0.
+		const midX = (body.points[BACK].pos.x + body.points[FRONT].pos.x) / 2
+		const midY = (body.points[BACK].pos.y + body.points[FRONT].pos.y) / 2
+		body.points[MAST].pos = { x: midX + PHYSICS.sledMast, y: midY }
+		setVel(body, BACK, 100, 0) // moving right
 		setVel(body, FRONT, 100, 0)
-		// Held at the previous value rather than snapping on the tiny cos sign.
+		// Held at the previous value rather than snapping on the near-zero cos sign.
 		expect(bodyFacing(body, DT, 8, -1)).toBe(-1)
 		expect(bodyFacing(body, DT, 8, 1)).toBe(1)
 	})
