@@ -75,6 +75,25 @@ export const LEGEND: LegendRow[] = [
 // wall. These four are the shapes whose geometry reads as a ridable line/path.
 const COLLIDABLE_TYPES = new Set(['draw', 'line', 'geo', 'arrow'])
 
+// Rings (collectibles) are small native geo ELLIPSES in the reserved ring color.
+// A geo ellipse looks exactly like a Sonic ring and is small, unlike a sticky
+// note. But geo shapes are normally collision track (COLLIDABLE_TYPES) — so a ring
+// must be BOTH excluded from collision (it's not a wall) AND collected as a ring.
+// The disambiguator is shape-type + geo-kind + color together: a `geo` `ellipse`
+// in RING_COLOR is a ring; any other geo (including a yellow ellipse that isn't...
+// well, yellow ellipses ARE reserved) is solid track. Yellow reads as gold and is
+// only otherwise used for `bounce` on LINES — the ellipse geo type keeps the two
+// apart (a yellow line is a spring; a yellow ellipse is a ring).
+export const RING_COLOR = 'yellow'
+
+/** True when a shape is a ring: a geo ellipse in the reserved ring color. Rings are
+ * excluded from collision (not walls) and collected as scoring rings instead. */
+export function isRingShape(shape: TLShape): boolean {
+	if (shape.type !== 'geo') return false
+	const props = shape.props as { geo?: string; color?: string }
+	return props.geo === 'ellipse' && props.color === RING_COLOR
+}
+
 /** A page-space collision segment with a definite gameplay kind. */
 export interface TrackSegment extends Segment {
 	kind: LineKind
@@ -143,6 +162,10 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		// Skip non-track shape types (text/image/frame/…) so they don't act as
 		// invisible walls, independent of color.
 		if (!COLLIDABLE_TYPES.has(shape.type)) continue
+
+		// Rings (geo ellipses in the ring color) are collectibles, not track — skip
+		// them here so the character passes THROUGH a ring instead of bonking it.
+		if (isRingShape(shape)) continue
 
 		const spec = specOf(shape)
 		if (spec.kind === 'scenery') continue
@@ -220,29 +243,24 @@ function makeSeg(a: Vec2, b: Vec2, spec: KindSpec, shapeType: string): TrackSegm
 	return seg
 }
 
-// Native sticky-note shapes act as scoring flags / checkpoints. Using a distinct
-// native tool (the note tool) for a distinct gameplay role mirrors the
-// color->line-kind contract, and keeps us off custom records. Notes are never
-// collidable track (they're not in COLLIDABLE_TYPES), so this is the only place
-// they matter to gameplay.
-//
-// The oriented-box construction below decomposes the page transform into a single
-// rotation + axis scales. That's exact for notes specifically: a native note's
-// transform is only ever translate + rotate + (uniform) scale — never skew or
-// non-uniform scale — so decompose() recovers its true rotation and footprint.
-// (If a future CHECKPOINT_TYPE could be skewed, the box would approximate it; the
-// pure box math is covered by checkpoints.test.ts.)
-const CHECKPOINT_TYPE = 'note'
+// Rings (the scoring collectible) are geo ELLIPSES in RING_COLOR — see
+// isRingShape. A small gold circle reads as a Sonic ring (a sticky note is far too
+// big) and is a native shape, no custom record. Rings are the ONE geo shape
+// excluded from collision (collectSegmentsNow skips them), so the character passes
+// through and collects them rather than bonking. The oriented-box construction
+// below decomposes the page transform into a rotation + axis scales — exact for an
+// ellipse geo's translate+rotate+scale transform (never skewed), so decompose()
+// recovers its true footprint. The pure box math is covered by checkpoints.test.ts.
 
 /**
- * Collect the page-space boxes of every checkpoint (note) shape on the current
- * page. Backs makeCheckpointsComputed; see the freshness note on
+ * Collect the page-space boxes of every ring (geo ellipse in the ring color) on
+ * the current page. Backs makeCheckpointsComputed; see the freshness note on
  * collectSegmentsNow about passing shape.id to the reactive caches.
  */
 function collectCheckpointsNow(editor: Editor): Checkpoint[] {
 	const checkpoints: Checkpoint[] = []
 	for (const shape of editor.getCurrentPageShapes()) {
-		if (shape.type !== CHECKPOINT_TYPE) continue
+		if (!isRingShape(shape)) continue
 		const box = orientedBox(editor, shape)
 		if (box) checkpoints.push(box)
 	}
