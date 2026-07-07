@@ -1,5 +1,5 @@
 import { computed, getPointsFromDrawSegment, type Computed, type Editor, type TLShape, type TLDrawShape, type Vec } from 'tldraw'
-import type { LineKind, Segment, Vec2 } from './physics'
+import type { LineKind, LoopZone, Segment, Vec2 } from './physics'
 import { makeCheckpoint, type Checkpoint } from './checkpoints'
 import { GOAL_TYPE } from './goal'
 
@@ -94,6 +94,22 @@ export function isRingShape(shape: TLShape): boolean {
 	return props.geo === 'ellipse' && props.color === RING_COLOR
 }
 
+// A LOOP is a native geo ELLIPSE in the reserved loop color — a big circle the
+// author drops where a Sonic loop should be. Like a ring it is EXCLUDED from
+// collision (it's not a wall); instead its bounds become a LoopZone the runner is
+// SCRIPTED around (physics.ts driveLoop) when it arrives fast enough. Blue reads as
+// a loop and is only otherwise used for `oneway` on LINES — the ellipse geo type
+// keeps the two apart (a blue line is a one-way; a blue ellipse is a loop).
+export const LOOP_COLOR = 'blue'
+
+/** True when a shape is a loop: a geo ellipse in the reserved loop color. Excluded
+ * from collision; its bounds drive a scripted LoopZone (see makeLoopsComputed). */
+export function isLoopShape(shape: TLShape): boolean {
+	if (shape.type !== 'geo') return false
+	const props = shape.props as { geo?: string; color?: string }
+	return props.geo === 'ellipse' && props.color === LOOP_COLOR
+}
+
 /** A page-space collision segment with a definite gameplay kind. */
 export interface TrackSegment extends Segment {
 	kind: LineKind
@@ -134,6 +150,35 @@ export function makeGoalComputed(editor: Editor): Computed<Checkpoint | null> {
 	return computed('sonic-goal', () => collectGoalNow(editor))
 }
 
+// Minimum forward speed (px/s) at a loop's base to trigger it. Below this the
+// runner just passes the base on the ground (no loop) — so a too-slow approach
+// doesn't awkwardly capture. Tuned so a normal run-up (~sideCruiseSpeed) clears it.
+const LOOP_MIN_SPEED = 900
+
+/** Reactive view of the loop zones (blue geo ellipses) on the page. Each becomes a
+ * LoopZone (center + radius from its page bounds) the runner is scripted around. */
+export function makeLoopsComputed(editor: Editor): Computed<LoopZone[]> {
+	return computed('sonic-loops', () => collectLoopsNow(editor))
+}
+
+/** Collect every loop ellipse as a LoopZone. Radius = half the mean of the
+ * ellipse's page-bounds width/height (a loop is authored ~circular). See the
+ * freshness note on collectSegmentsNow about the reactive caches. */
+function collectLoopsNow(editor: Editor): LoopZone[] {
+	const loops: LoopZone[] = []
+	for (const shape of editor.getCurrentPageShapes()) {
+		if (!isLoopShape(shape)) continue
+		const b = editor.getShapePageBounds(shape.id)
+		if (!b) continue
+		loops.push({
+			center: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
+			radius: (b.w + b.h) / 4,
+			minSpeed: LOOP_MIN_SPEED,
+		})
+	}
+	return loops
+}
+
 /**
  * Convert collidable shapes on the current page into page-space collision
  * segments.
@@ -166,6 +211,9 @@ function collectSegmentsNow(editor: Editor): TrackSegment[] {
 		// Rings (geo ellipses in the ring color) are collectibles, not track — skip
 		// them here so the character passes THROUGH a ring instead of bonking it.
 		if (isRingShape(shape)) continue
+		// Loops (geo ellipses in the loop color) are scripted zones, not track — skip
+		// them so their circle isn't a solid wall; driveLoop drives the runner around.
+		if (isLoopShape(shape)) continue
 
 		const spec = specOf(shape)
 		if (spec.kind === 'scenery') continue

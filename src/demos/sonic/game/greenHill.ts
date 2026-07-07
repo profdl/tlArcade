@@ -14,18 +14,21 @@
 // collision extractor turns into segments) — no custom geometry.
 
 import { createShapeId, getIndices, type Editor, type TLShapeId, type IndexKey } from 'tldraw'
-import type { Segment, Vec2 } from './physics'
-import { RING_COLOR } from './geometry'
+import type { LoopZone, Segment, Vec2 } from './physics'
+import { RING_COLOR, LOOP_COLOR } from './geometry'
 import { sideGroundY } from './state'
 
 // On-canvas diameter of a ring (geo ellipse), page px. Small enough to read as a
 // Sonic ring you run through, big enough to be an easy catch target.
 const RING_SIZE = 44
 
-/** A tldraw v5 color name → a gameplay LineKind (see geometry.ts COLOR_TO_KIND).
- * blue = oneway (flip:false) — used for the LOOP so the runner passes through the
- * overhanging top from outside and rides the inside surface (see the loop notes). */
-type TrackColor = 'black' | 'red' | 'yellow' | 'grey' | 'blue'
+// Minimum forward speed (px/s) at the loop base to trigger the scripted loop. Below
+// this the runner just passes on the ground. Mirrors geometry.ts LOOP_MIN_SPEED (a
+// hand-authored template carries its own copy so greenHillLoops is self-contained).
+const LOOP_MIN_SPEED = 900
+
+/** A tldraw v5 color name → a gameplay LineKind (see geometry.ts COLOR_TO_KIND). */
+type TrackColor = 'black' | 'red' | 'yellow' | 'grey'
 
 /** One authored track line: a polyline in course-local px (x right, y down), a
  * color (→ behavior), and whether tldraw should render/sample it as a smooth
@@ -106,32 +109,11 @@ const RINGS: Ring[] = [
 	{ x: 2950, y: -40 }, // on the run to the goal
 ]
 
-/**
- * Build the loop as a full circle of points (course-local), traced from the BOTTOM
- * (on the ground at (entryX, 0)) up the +x side, over the top, and back down to the
- * bottom — the winding the one-way orientation (blue, flip:false) needs so each
- * segment blocks from the inside. Enough points that getShapeGeometry samples it as
- * a clean circle. Center one radius above the entry so the loop bottom is on y=0.
- */
-function loopPoints(entryX: number, r: number): Vec2[] {
-	const cx = entryX
-	const cy = -r
-	const pts: Vec2[] = []
-	const N = 40
-	// Start at the bottom (angle +90° from center = straight down) and sweep a FULL
-	// turn the same way the loopProbe traces it (a = 90° - i·360°/N), so the winding
-	// — and thus each one-way segment's blocking side — matches the proven probe.
-	for (let i = 0; i <= N; i++) {
-		const a = Math.PI / 2 - (i / N) * Math.PI * 2
-		pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r })
-	}
-	return pts
-}
-
 /** All the track lines that make up the course, in draw order. The flat GROUND
  * itself is the side-mode auto-ground plane (RunController injects it at y=0), so
- * these are only the features ON that ground: hills, the booster strip, the loop,
- * and the spring. */
+ * these are only the features ON that ground: hills, the booster strip, and the
+ * spring. The LOOP is NOT a line — it's a scripted zone (a blue geo ellipse; see
+ * loadGreenHill / greenHillLoops), because the emergent sled can't crest a loop. */
 function courseLines(): TrackLine[] {
 	const lines: TrackLine[] = []
 	// Rolling UP-only hills (curved, solid) — never dip below the ground.
@@ -146,8 +128,6 @@ function courseLines(): TrackLine[] {
 		color: 'red',
 		curved: false,
 	})
-	// The loop (curved, BLUE = oneway flip:false so the runner rides the inside).
-	lines.push({ pts: loopPoints(LOOP_ENTRY_X, LOOP_R), color: 'blue', curved: true })
 	// The angled spring (yellow = bounce), tilted up-forward, after the loop.
 	const rad = (SPRING_TILT_DEG * Math.PI) / 180
 	lines.push({
@@ -225,6 +205,22 @@ export function loadGreenHill(editor: Editor, start: Vec2): TLShapeId[] {
 		})
 	}
 
+	// The loop — a big blue geo ELLIPSE (geometry.ts → isLoopShape). Excluded from
+	// collision; its bounds become a scripted LoopZone (physics.ts driveLoop) the
+	// runner is driven around when it arrives fast enough. The circle's BASE sits on
+	// the ground at (LOOP_ENTRY_X, 0), so its top-left is one radius left and two
+	// radii up. The visible circle shows the player where the loop is.
+	const loopId = createShapeId()
+	ids.push(loopId)
+	const loopBase = toPage({ x: LOOP_ENTRY_X, y: 0 })
+	editor.createShape({
+		id: loopId,
+		type: 'geo',
+		x: loopBase.x - LOOP_R,
+		y: loopBase.y - 2 * LOOP_R,
+		props: { geo: 'ellipse', w: 2 * LOOP_R, h: 2 * LOOP_R, color: LOOP_COLOR, fill: 'none' },
+	})
+
 	// The goal — a native frame at the end (goal.ts: frame = the finish box).
 	const goalId = createShapeId()
 	ids.push(goalId)
@@ -249,7 +245,6 @@ const KIND_OF: Record<TrackColor, Segment['kind']> = {
 	red: 'accelerate',
 	yellow: 'bounce',
 	grey: 'ice',
-	blue: 'oneway', // the loop; flip:false (set on the segment below) rides the inside
 }
 
 /** Catmull-Rom sample of a polyline into `perSeg` points per control interval, so a
@@ -297,13 +292,26 @@ export function greenHillSegments(start: Vec2): Segment[] {
 		const pts = samplePolyline(line.pts, line.curved).map(toPage)
 		const kind = KIND_OF[line.color]
 		for (let i = 0; i < pts.length - 1; i++) {
-			const seg: Segment = { a: pts[i], b: pts[i + 1], kind, strength: 1 }
-			// blue = oneway flip:false (COLOR_TO_KIND), matching the shape path — the
-			// loop blocks from the inside so the runner rides its inner surface.
-			segs.push(seg)
+			segs.push({ a: pts[i], b: pts[i + 1], kind, strength: 1 })
 		}
 	}
 	return segs
+}
+
+/** The Green-Hill loop as a pure LoopZone (page space) for `start` — the same
+ * circle `loadGreenHill` lays down as a blue geo ellipse. The loop's base sits on
+ * the ground at (LOOP_ENTRY_X, 0); its center is one radius above. So a headless
+ * harness can drive the real scripted loop without a browser. */
+export function greenHillLoops(start: Vec2): LoopZone[] {
+	const groundY = sideGroundY(start)
+	const baseX = start.x + COURSE_AHEAD
+	return [
+		{
+			center: { x: baseX + LOOP_ENTRY_X, y: groundY - LOOP_R },
+			radius: LOOP_R,
+			minSpeed: LOOP_MIN_SPEED,
+		},
+	]
 }
 
 /** The goal's page-space center X for a given start — where a winning run ends. */
