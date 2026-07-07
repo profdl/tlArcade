@@ -40,8 +40,8 @@ const rigInfo = await page.evaluate(() => {
   return { bones: r.bones.map((b) => b.id), slots: r.slots.length }
 })
 check(
-  'default builder has a baked rig with 4 limb bones',
-  !!rigInfo && ['armL', 'armR', 'legL', 'legR'].every((b) => rigInfo.bones.includes(b)),
+  'default builder has a baked rig with arm + two-bone leg chains',
+  !!rigInfo && ['armL', 'armR', 'thighL', 'shinL', 'thighR', 'shinR'].every((b) => rigInfo.bones.includes(b)),
   JSON.stringify(rigInfo),
 )
 
@@ -64,16 +64,22 @@ async function limbOffsets() {
       if (att && att.kind === 'rigid') boneOfLeaf[slot.boneId] = att.leafId
     }
     const out = {}
-    for (const bone of ['armL', 'armR', 'legL', 'legR']) {
+    // legL/legR now map to the THIGH leaf of each leg chain (the swinging segment).
+    const boneFor = { armL: 'armL', armR: 'armR', legL: 'thighL', legR: 'thighR' }
+    for (const [key, bone] of Object.entries(boneFor)) {
       const leafId = boneOfLeaf[bone]
       const b = leafId ? ed.getShapePageBounds(leafId) : null
-      out[bone] = b ? { x: b.x, y: b.y } : null
+      out[key] = b ? { x: b.x, y: b.y } : null
     }
     return out
   })
 }
 
-// 1) Start the runtime (headless can't rely on the audio-gated Play click).
+// 1) Start the runtime (headless can't rely on the audio-gated Play click). Use
+// STRAIGHT-leg mode for the thigh-swing baseline below (IK keeps the thigh more
+// upright as it plants the foot, so its thigh y-spread is smaller — the knee-bend
+// check in step 4 covers IK instead).
+await page.evaluate(() => window.__legMode?.set('straight'))
 const started = await page.evaluate(() => window.__runtime.start())
 check('runtime.start() succeeded (player present)', started === true)
 await page.waitForTimeout(200)
@@ -120,6 +126,25 @@ for (let i = 0; i < 6; i++) {
 const legRest = relSpread(rest, 'legL', 'legR')
 log(`   legL-legR y-spread at rest: ${legRest.toFixed(2)}px`)
 check('limbs settle to rest when standing still (little/no variation)', legRest < 2, `${legRest.toFixed(2)}px`)
+
+// 4) Phase B: in IK mode the KNEE bends while walking — the shin's pose rotation delta
+// varies over the stride (a straight leg would keep it ~0). Read the live pose the
+// runtime applies, so this proves the IK path end-to-end (planner → solver → pose).
+await page.evaluate(() => window.__legMode?.set('ik'))
+await page.evaluate(() => window.__runtime.start())
+await page.waitForTimeout(200)
+await page.evaluate(() => window.__editor.getContainer()?.focus?.())
+await page.keyboard.down('ArrowRight')
+const shinDeltas = []
+for (let i = 0; i < 14; i++) {
+  await page.waitForTimeout(45)
+  const d = await page.evaluate(() => window.__runtime.entities?.[0]?.pose?.shinL?.rotation ?? null)
+  if (d != null) shinDeltas.push(d)
+}
+await page.keyboard.up('ArrowRight')
+const kneeRange = shinDeltas.length ? Math.max(...shinDeltas) - Math.min(...shinDeltas) : 0
+log(`   IK shinL knee-bend delta range over walk: ${kneeRange.toFixed(2)} rad`)
+check('IK legs BEND the knee while walking (shin delta varies)', kneeRange > 0.2, `${kneeRange.toFixed(2)} rad`)
 
 await page.evaluate(() => window.__runtime.stop())
 await browser.close()

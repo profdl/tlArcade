@@ -2,7 +2,7 @@
  * Engine — procedural animation state-machine unit tests.
  */
 import { describe, expect, it } from 'vitest'
-import { legSwing, poseForState, selectState, stridePhase, WALK_DEFAULTS } from './walk'
+import { footTarget, legSwing, poseForState, selectState, stridePhase, WALK_DEFAULTS, type LegRig } from './walk'
 
 const T = WALK_DEFAULTS
 const grounded = (vx: number, simTime = 0.3) => ({ grounded: true, vx, vy: 0, touchingWall: false, wallNx: 0, simTime })
@@ -38,13 +38,13 @@ describe('poseForState — walk', () => {
   it('swings all four limbs when grounded and moving', () => {
     const t = Math.PI / 2 / T.cadence // sin = 1
     const pose = poseForState(grounded(T.fullSpeed, t), T)
-    for (const b of ['legL', 'legR', 'armL', 'armR']) expect(pose[b]).toBeDefined()
+    for (const b of ['thighL', 'thighR', 'armL', 'armR']) expect(pose[b]).toBeDefined()
   })
 
   it('legs swing OPPOSED (exact negation — half a cycle apart on a sine)', () => {
     const d = T.strideLength * 0.2
     const pose = poseForState(walking(T.fullSpeed, d), T)
-    expect(pose.legL!.rotation).toBeCloseTo(-pose.legR!.rotation!, 9)
+    expect(pose.thighL!.rotation).toBeCloseTo(-pose.thighR!.rotation!, 9)
   })
 
   it('arms are LOWERED to the sides (dropped from rest), not raised', () => {
@@ -82,14 +82,14 @@ describe('poseForState — walk', () => {
     const quarter = T.strideLength / 4
     const fast = poseForState(walking(T.fullSpeed, quarter), T)
     const slow = poseForState(walking(T.fullSpeed / 2, quarter), T)
-    expect(Math.abs(slow.legL!.rotation!)).toBeLessThan(Math.abs(fast.legL!.rotation!))
-    expect(Math.abs(fast.legL!.rotation!)).toBeCloseTo(T.amplitude, 6)
+    expect(Math.abs(slow.thighL!.rotation!)).toBeLessThan(Math.abs(fast.thighL!.rotation!))
+    expect(Math.abs(fast.thighL!.rotation!)).toBeCloseTo(T.amplitude, 6)
   })
 
   it('the cycle oscillates over distance (sign flips half a stride later)', () => {
     const a = poseForState(walking(T.fullSpeed, T.strideLength / 4), T)
     const b = poseForState(walking(T.fullSpeed, (3 * T.strideLength) / 4), T)
-    expect(Math.sign(a.legL!.rotation!)).toBe(-Math.sign(b.legL!.rotation!))
+    expect(Math.sign(a.thighL!.rotation!)).toBe(-Math.sign(b.thighL!.rotation!))
   })
 })
 
@@ -126,6 +126,71 @@ describe('distance-driven stride (the anti-slide mechanism)', () => {
   })
 })
 
+describe('footTarget (IK foot planner)', () => {
+  it('plants the foot on the ground during stance (no lift), lifts it during swing', () => {
+    // Stance (u < 0.6): y == footDrop (on the ground). Swing (u > 0.6): y < footDrop.
+    const stance = footTarget(0.3 * 2 * Math.PI, 1, T) // u=0.3, mid-stance
+    expect(stance.y).toBeCloseTo(T.footDrop, 9)
+    const swing = footTarget(0.8 * 2 * Math.PI, 1, T) // u=0.8, mid-swing
+    expect(swing.y).toBeLessThan(T.footDrop) // foot lifted
+  })
+
+  it('the stance foot recedes LINEARLY in phase (world-fixed as the body advances)', () => {
+    const a = footTarget(0.1 * 2 * Math.PI, 1, T).x
+    const b = footTarget(0.2 * 2 * Math.PI, 1, T).x
+    const c = footTarget(0.3 * 2 * Math.PI, 1, T).x
+    expect(a - b).toBeCloseTo(b - c, 9) // even spacing = constant rate = planted
+    expect(a).toBeGreaterThan(c) // sweeps front → back
+  })
+
+  it('mirrors fore/aft by travel direction', () => {
+    const right = footTarget(0.1 * 2 * Math.PI, 1, T).x
+    const left = footTarget(0.1 * 2 * Math.PI, -1, T).x
+    expect(right).toBeCloseTo(-left, 9)
+  })
+})
+
+describe('poseForState — IK legs (Phase B)', () => {
+  // A simple symmetric leg rig (thigh + shin equal length, resting straight down).
+  const legR: LegRig = { hip: { x: 60, y: 90 }, restThighWorld: Math.PI / 2, restShinLocal: 0, thighLen: 20, shinLen: 20, bendSign: 1 }
+  const legL: LegRig = { ...legR, hip: { x: 40, y: 90 }, bendSign: -1 }
+  const ikWalk = (strideDistance: number) => ({
+    grounded: true, vx: T.fullSpeed, vy: 0, touchingWall: false, wallNx: 0, simTime: 0,
+    strideDistance, legMode: 'ik' as const, legs: { L: legL, R: legR },
+  })
+
+  it('drives BOTH thigh and shin (the knee bends) in IK mode', () => {
+    const pose = poseForState(ikWalk(T.strideLength * 0.3), T)
+    expect(pose.thighL).toBeDefined()
+    expect(pose.shinL).toBeDefined()
+    expect(pose.thighR).toBeDefined()
+    expect(pose.shinR).toBeDefined()
+  })
+
+  it('the solved chain places the foot on the planned target (FK round-trip)', () => {
+    const phase = 0.3 * 2 * Math.PI
+    const pose = poseForState(ikWalk((phase / (2 * Math.PI)) * T.strideLength), T)
+    // Rebuild the foot from the pose deltas + rest rig and compare to footTarget.
+    const thighWorld = legR.restThighWorld + pose.thighR!.rotation!
+    const shinWorld = thighWorld + (legR.restShinLocal + pose.shinR!.rotation!)
+    const knee = { x: Math.cos(thighWorld) * legR.thighLen, y: Math.sin(thighWorld) * legR.thighLen }
+    const foot = { x: knee.x + Math.cos(shinWorld) * legR.shinLen, y: knee.y + Math.sin(shinWorld) * legR.shinLen }
+    const want = footTarget(phase + Math.PI, 1, T) // legR runs half a cycle offset
+    expect(foot.x).toBeCloseTo(want.x, 4)
+    expect(foot.y).toBeCloseTo(want.y, 4)
+  })
+
+  it('falls back to straight thighs when legMode is ik but no legs are supplied', () => {
+    const pose = poseForState({
+      grounded: true, vx: T.fullSpeed, vy: 0, touchingWall: false, wallNx: 0,
+      simTime: 0, strideDistance: T.strideLength * 0.25, legMode: 'ik',
+    }, T)
+    // No shin delta (straight path), thigh swings.
+    expect(pose.thighL).toBeDefined()
+    expect(pose.shinL).toBeUndefined()
+  })
+})
+
 describe('poseForState — idle / jump / fall', () => {
   it('idle drops the arms to the sides and never moves the legs', () => {
     const pose = poseForState(grounded(0), T)
@@ -133,7 +198,7 @@ describe('poseForState — idle / jump / fall', () => {
     expect(pose.armR!.rotation).toBeCloseTo(T.armDrop, 9)
     expect(pose.armL!.rotation).toBeCloseTo(-T.armDrop, 9)
     // Legs stay at rest (walking is the only thing that swings them).
-    expect(pose.legL).toBeUndefined()
+    expect(pose.thighL).toBeUndefined()
     expect(pose.spine).toBeDefined()
     expect(pose.head).toBeDefined()
   })
@@ -191,13 +256,13 @@ describe('poseForState — climb (wall-scramble)', () => {
     const a = poseForState(onWall(0.0), T)
     const b = poseForState(onWall(Math.PI / 2 / (T.cadence * 0.75)), T)
     expect(a.armR!.rotation).not.toBeCloseTo(b.armR!.rotation!, 3)
-    expect(a.legL!.rotation).not.toBeCloseTo(b.legL!.rotation!, 3) // legs kick too
+    expect(a.thighL!.rotation).not.toBeCloseTo(b.thighL!.rotation!, 3) // legs kick too
   })
 
   it('is distinct from the jump pose (climb ≠ jump)', () => {
     const climb = poseForState(onWall(), T)
     const jump = poseForState(airborne(-300), T)
-    expect(climb.legL!.rotation).not.toBeCloseTo(jump.legL!.rotation!, 3)
+    expect(climb.thighL!.rotation).not.toBeCloseTo(jump.thighL!.rotation!, 3)
     // The lean/head orientation is climb-only — jump doesn't touch the spine rotation.
     expect(climb.spine!.rotation).toBeDefined()
     expect(jump.spine!.rotation).toBeUndefined()

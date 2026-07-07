@@ -9,9 +9,10 @@
  *
  * What animates now (the whole body, not just stick limbs):
  *   idle — a slow breathing bob (spine rise/fall + tiny head nod), arms/legs at rest.
- *   walk — legs swing opposed, arms counter them, the SPINE bobs twice per stride and
- *          leans into the direction of travel, the head counter-nods. Amplitude scales
- *          with speed; the whole rig MIRRORS by facing so it faces the way it moves.
+ *   walk — two leg modes (Phase B toggle): STRAIGHT swings the thighs opposed (knee
+ *          inline, distance-driven cadence); IK plants each foot at a world target and
+ *          solves the two-bone chain (bending knee) so the feet really carry the walk.
+ *          Both add the arm counter-swing, the SPINE bob + travel lean, and head nod.
  *   jump — rising: arms sweep up, legs tuck, torso stretches slightly (anticipation).
  *   fall — descending airborne: arms out for balance, legs trail, torso compresses.
  *
@@ -22,6 +23,7 @@
  */
 import type { Pose } from './evaluate'
 import { BUILDER_LIMB_BONES } from './builderRig'
+import { solveTwoBoneIk } from './ik'
 
 /** Tunables for the whole animation set. Defaults chosen for the 1×2 builder. */
 export interface WalkTunables {
@@ -62,6 +64,32 @@ export interface WalkTunables {
    * frame. True foot planting needs 2-bone IK with a world foot target (Phase B).
    */
   strideLength: number
+  /**
+   * IK-leg tunables (Phase B, used only in `legMode: 'ik'`). `stepHeight` = how far the
+   * foot lifts off the ground during its swing (px); `stanceReach` = how far ahead/
+   * behind the hip the foot plants at the stride extremes (px, half the stride reach on
+   * the ground); `footDrop` = the ground level below the hip the planted foot sits at
+   * (px, ~full leg extension). These place the world foot TARGET the IK solves for.
+   */
+  stepHeight: number
+  stanceReach: number
+  footDrop: number
+}
+
+/**
+ * Static per-side leg geometry the IK walk needs, measured once from the REST rig by
+ * the runtime (entity-local). The pose uses it to place a foot target relative to the
+ * hip and solve the two-bone chain. `hip` is the thigh pivot; `restThighWorld` /
+ * `restShinLocal` are the rest angles the pose deltas are measured against; `thighLen`
+ * / `shinLen` are the bone lengths; `bendSign` fixes the knee bend direction.
+ */
+export interface LegRig {
+  hip: { x: number; y: number }
+  restThighWorld: number
+  restShinLocal: number
+  thighLen: number
+  shinLen: number
+  bendSign: 1 | -1
 }
 
 export const WALK_DEFAULTS: WalkTunables = {
@@ -76,6 +104,12 @@ export const WALK_DEFAULTS: WalkTunables = {
   armDrop: 1.2, // ~70°: from ~horizontal rest down to the sides
   armSwing: 0.55,
   strideLength: 55, // ~one leg-reach of travel per step (distance-driven cadence)
+  // Tuned to the builder's SHORT legs (thigh+shin ≈ 27px fully extended). footDrop MUST
+  // sit inside that reach so the knee has to BEND to plant the foot — beyond it the IK
+  // clamps to a dead-straight leg (no visible knee). ~20px ⇒ a clear, natural bend.
+  stepHeight: 8, // foot lifts ~8px in swing
+  stanceReach: 9, // foot plants ~9px fore/aft of the hip
+  footDrop: 20, // planted foot ~20px below the hip (74% of full reach ⇒ bent knee)
 }
 
 /** Live inputs from the player's kinematic state. */
@@ -103,6 +137,15 @@ export interface WalkState {
    * `simTime`-driven cycle so those callers behave as before).
    */
   strideDistance?: number
+  /**
+   * Which leg animation to use (Phase B toggle). `'straight'` (or undefined) = the
+   * distance-driven thigh swing with the knee kept inline (looks like the old one-piece
+   * leg). `'ik'` = a bending-knee walk that plants each foot at a world target and
+   * solves the two-bone chain to reach it. `'ik'` requires `legs` (the rig geometry).
+   */
+  legMode?: 'straight' | 'ik'
+  /** Per-side leg rig geometry, required for `legMode: 'ik'` (see LegRig). */
+  legs?: { L: LegRig; R: LegRig }
 }
 
 export type AnimState = 'idle' | 'walk' | 'jump' | 'fall' | 'climb'
@@ -163,11 +206,56 @@ export function legSwing(phase: number, amp: number): number {
 }
 
 /**
- * Walk: legs swing opposed on a DISTANCE-DRIVEN cycle (see `legSwing`/`stridePhase` —
- * the fix for the worst of the "player slides" look); arms counter them; the spine
- * bobs on each footfall and leans into travel; the head counter-nods. The rig faces
- * travel via a lean sign flip — a light "mirror" without rebuilding the rig (true
- * left/right art mirroring is a follow-up; the lean+swing already reads as direction).
+ * The world foot TARGET for one leg at stride `phase`, relative to the hip (entity-local,
+ * +x = travel-forward already resolved by the sign of `strideDistance` → phase). The
+ * cycle splits into STANCE (foot on the ground, sweeping fore→aft) and SWING (foot
+ * lifted, arcing aft→fore). During stance the foot's forward offset is LINEAR in phase
+ * — and phase is linear in distance — so the planted foot holds its WORLD position as
+ * the body advances (true, IK-enforced planting; the solver places the foot exactly).
+ *
+ * `dir` is travel direction (±1) so "forward" is toward travel. Returns the target in
+ * the hip's frame: +x forward, +y down (foot below the hip).
+ */
+export function footTarget(phase: number, dir: number, t: WalkTunables): { x: number; y: number } {
+  const u = ((phase / (2 * Math.PI)) % 1 + 1) % 1
+  const stance = 0.6 // stance-dominant duty (foot grounded 60% of the cycle)
+  if (u < stance) {
+    // Stance: foot forward-offset goes +reach (front) → −reach (rear), LINEAR in phase.
+    const st = u / stance
+    const forward = t.stanceReach * (1 - 2 * st)
+    return { x: dir * forward, y: t.footDrop }
+  }
+  // Swing: arc the lifted foot from the rear plant back to the front, rising then
+  // falling (a half-sine lift), forward-offset easing rear→front on a cosine.
+  const sw = (u - stance) / (1 - stance)
+  const forward = -t.stanceReach * Math.cos(Math.PI * sw)
+  const lift = t.stepHeight * Math.sin(Math.PI * sw)
+  return { x: dir * forward, y: t.footDrop - lift }
+}
+
+/**
+ * IK pose for ONE leg: plant its foot at `footTarget` and solve the two-bone chain →
+ * `rotation` deltas for the thigh and shin bones. The delta is measured against the
+ * bone's REST local rotation (the evaluator ADDS the delta to rest). The thigh's world
+ * angle from IK maps to a thigh delta of `thighWorld − restThighWorld` (both worlds
+ * share the spine frame, so the spine's own pose cancels out here — the IK targets the
+ * hip frame, and the spine pose carries the hip with it). The shin's LOCAL rotation is
+ * `shinWorld − thighWorld`; its delta is that minus the rest shin-local.
+ */
+function ikLegPose(leg: LegRig, phase: number, dir: number, t: WalkTunables): { thigh: number; shin: number } {
+  const target = footTarget(phase, dir, t)
+  const sol = solveTwoBoneIk(target, leg.thighLen, leg.shinLen, leg.bendSign)
+  const thighDelta = sol.thigh - leg.restThighWorld
+  const shinLocal = sol.shin - sol.thigh
+  const shinDelta = shinLocal - leg.restShinLocal
+  return { thigh: thighDelta, shin: shinDelta }
+}
+
+/**
+ * Walk: two leg modes. STRAIGHT — the thighs swing opposed on a DISTANCE-DRIVEN cycle
+ * (the knee stays inline; reads like the old one-piece leg). IK — each foot plants at a
+ * world target and the two-bone chain solves to reach it (bending knee, true planting).
+ * Both share the arm counter-swing, the spine bob/lean, and the head counter-nod.
  */
 function walkPose(s: WalkState, t: WalkTunables): Pose {
   const speed = Math.abs(s.vx)
@@ -175,24 +263,44 @@ function walkPose(s: WalkState, t: WalkTunables): Pose {
   const amp = t.amplitude * drive
   const phase = stridePhase(s, t)
   const dir = Math.sign(s.vx) || 1
-  // Legs are half a cycle out of phase (opposed): one swings forward as the other back.
-  const legLSwing = legSwing(phase, amp)
-  const legRSwing = legSwing(phase + Math.PI, amp)
   // The body dips on each footfall (twice per stride) and leans forward — |sin| peaks
   // as weight transfers between the feet.
   const dip = Math.abs(Math.sin(phase)) * t.bob * drive
-  // Arms hang at the sides (dropped from their outstretched rest) and swing subtly,
-  // countering the legs (arm follows the OPPOSITE leg, as in a real gait). armR drops
-  // with +armDrop, armL with −armDrop (mirror), each swinging by armSwing around it.
+  const spineHead: Pose = {
+    spine: { y: dip, rotation: dir * t.lean * drive },
+    head: { rotation: -dir * t.lean * 0.5 * drive },
+  }
+
+  if (s.legMode === 'ik' && s.legs) {
+    // IK legs: plant each foot (legs half a cycle out of phase) and solve the chain.
+    const l = ikLegPose(s.legs.L, phase, dir, t)
+    const r = ikLegPose(s.legs.R, phase + Math.PI, dir, t)
+    // Arms still counter-swing subtly, following the OPPOSITE thigh's fore/aft lean.
+    const armLSwing = legSwing(phase + Math.PI, amp) * t.armSwing
+    const armRSwing = legSwing(phase, amp) * t.armSwing
+    return {
+      thighL: { rotation: l.thigh },
+      shinL: { rotation: l.shin },
+      thighR: { rotation: r.thigh },
+      shinR: { rotation: r.shin },
+      armL: { rotation: -t.armDrop - armLSwing },
+      armR: { rotation: t.armDrop + armRSwing },
+      ...spineHead,
+    }
+  }
+
+  // Straight legs: swing the thighs opposed, knee inline (shins ride the thigh rigidly,
+  // no shin delta — looks like the pre-Phase-B one-piece leg).
+  const legLSwing = legSwing(phase, amp)
+  const legRSwing = legSwing(phase + Math.PI, amp)
   const armLSwing = legRSwing * t.armSwing
   const armRSwing = legLSwing * t.armSwing
   return {
-    legL: { rotation: legLSwing },
-    legR: { rotation: legRSwing },
+    thighL: { rotation: legLSwing },
+    thighR: { rotation: legRSwing },
     armL: { rotation: -t.armDrop - armLSwing },
     armR: { rotation: t.armDrop + armRSwing },
-    spine: { y: dip, rotation: dir * t.lean * drive },
-    head: { rotation: -dir * t.lean * 0.5 * drive },
+    ...spineHead,
   }
 }
 
@@ -201,8 +309,8 @@ function jumpPose(): Pose {
   return {
     armL: { rotation: -1.4 },
     armR: { rotation: 1.4 },
-    legL: { rotation: 0.5 },
-    legR: { rotation: -0.5 },
+    thighL: { rotation: 0.5 },
+    thighR: { rotation: -0.5 },
     spine: { scaleY: 1.08 },
   }
 }
@@ -236,8 +344,8 @@ function climbPose(s: WalkState, t: WalkTunables): Pose {
   return {
     armL: { rotation: armL },
     armR: { rotation: armR },
-    legL: { rotation: legKick - reach * legKick },
-    legR: { rotation: -legKick + reach * legKick },
+    thighL: { rotation: legKick - reach * legKick },
+    thighR: { rotation: -legKick + reach * legKick },
     // Lean the torso INTO the wall (toward toWall) + a slight stretch as it reaches up.
     spine: { rotation: toWall * t.lean * 1.5, scaleY: 1.04 },
     // Head tips toward the wall too, looking up the face.
@@ -250,8 +358,8 @@ function fallPose(): Pose {
   return {
     armL: { rotation: -0.6 },
     armR: { rotation: 0.6 },
-    legL: { rotation: -0.3 },
-    legR: { rotation: 0.3 },
+    thighL: { rotation: -0.3 },
+    thighR: { rotation: 0.3 },
     spine: { scaleY: 0.94 },
   }
 }

@@ -419,18 +419,35 @@ clips, no timeline UI (that's a later nicety; the data path exists, see below).
   `idle | walk | jump | fall | climb`, and `poseForState` dispatches to a per-state
   procedural `Pose` (sine/offset math, no keyframe data):
   - **idle** — arms drop to the sides (static) + a breathing bob (spine/head);
-  - **walk** — legs swing opposed, arms hang at the sides and swing *subtly* (countering
-    the legs), the spine bobs twice per stride and **leans into travel** (`vx` sign), head
-    counter-nods; amplitude scales with speed. The leg cycle is **driven by distance
-    travelled, not wall-clock** (`stridePhase` reads `strideDistance / strideLength`, not
-    `simTime`): the swing rate tracks the body's real speed and the legs **stop the instant
-    the body stops** — which removed the worst of the old "player slides" look (a `simTime`
-    cycle kept the legs waving while the body decelerated/stopped). The runtime accumulates
-    `strideDistance` from the player's GROUNDED horizontal travel each substep. *Limit:* the
-    foot is NOT fully world-pinned — the builder's legs are single un-splittable bones
-    (no knee to bend) and the hip bobs/leans, so true foot planting needs 2-bone IK with a
-    world foot target (a later art-split + IK pass); the distance-drive is the contained,
-    verified interim.
+  - **walk** — arms hang at the sides and swing *subtly*, the spine bobs twice per stride
+    and **leans into travel** (`vx` sign), head counter-nods; amplitude scales with speed.
+    The leg cycle is **driven by distance travelled, not wall-clock** (`stridePhase` reads
+    `strideDistance / strideLength`, not `simTime`): the swing rate tracks the body's real
+    speed and the legs **stop the instant the body stops** (a `simTime` cycle kept them
+    waving while the body decelerated — the old "player slides" tell). The runtime
+    accumulates `strideDistance` from the player's GROUNDED horizontal travel each substep.
+    - **Two leg modes** (`WalkState.legMode`, toggled live in the physics panel →
+      **Animation → IK / Straight**, `legModeAtom`, default **IK**): **straight** swings the
+      THIGHS opposed with the knee kept inline (reads like the old one-piece leg);
+      **IK** (Phase B) plants each foot at a **world target** (`footTarget`: distance-linear
+      fore/aft in stance so the planted foot holds still, a lifted arc in swing) and solves
+      the **two-bone leg chain** ([game/rig/ik.ts](game/rig/ik.ts), pure analytic
+      law-of-cosines) to reach it — so the **knee bends** and the feet carry the walk.
+    - **The legs are a two-bone chain now** (`thighL/shinL/thighR/shinR`, thigh child of the
+      spine, shin child of the thigh — see `builderRig.ts` `legChain` + `BUILDER_LEG_BONES`),
+      and the builder's single leg strokes are replaced by **generated thigh+shin segments**
+      ([builder.ts](game/builder.ts) `createLegSegment`, from the same `LEG_ANCHORS` the rig
+      uses so art and rig align by construction). The runtime measures the per-side leg
+      geometry (`legRigsFrom` → `LegRig`) from the rest rig once at start and passes it to the
+      pose. **Three IK gotchas learned the hard way:** (1) `WALK_DEFAULTS.footDrop` MUST
+      be inside the leg's full reach (thigh+shin ≈ 27px for the 120px builder) — beyond
+      it the solver clamps to a dead-straight leg and the knee never bends. (2) The leg
+      segments MUST be placed in the **same frame the rig is built in** (the rendered
+      group bounds `rigW/rigH`, NOT the tight art `figW/figH`) — `createBuilderPlayer`
+      generates them provisionally then RE-PLACES each on its bone in the rig frame after
+      grouping, or the leaf sits off its pivot (worse on the off-center left leg) and
+      rotates wrong. (3) `bendSign` is the SAME (−1) for both legs — an opposite sign per
+      leg makes one knee bend backward (the "wrong-way leg" bug).
   - **jump** — arms sweep **up and out** overhead, legs tuck, torso stretches;
   - **fall** — arms out for balance, legs trail, torso compresses;
   - **climb** — **wall-scramble**: triggered when airborne AND `kin.touchingWall`
@@ -449,11 +466,14 @@ clips, no timeline UI (that's a later nicety; the data path exists, see below).
   which `engine.ts` publishes via `rigDebugAtom` + `evaluateBoneWorlds`.
 
 **Tests:** `mat2d.test.ts`, `evaluate.test.ts`, `authoring.test.ts`,
-`rig.integration.test.ts` (R1 math), plus `builderRig.test.ts` (chain structure +
-whole-body propagation), `walk.test.ts` (state machine + per-state poses), and
-`clip.test.ts` (the sampler). End-to-end: `e2e/walk-e2e.mjs` drives real Play and asserts
-the default builder's limbs swing while walking and settle at rest. IK/physics constraints
-are R3; auto-rig (vision) R4; auto-animate (clips from Claude) R5; weighted skinning R6.
+`rig.integration.test.ts` (R1 math), `ik.test.ts` (2-bone solver: FK round-trip lands the
+foot on target, reach clamping, bend-side), plus `builderRig.test.ts` (chain structure incl.
+the two-bone leg chains + whole-body propagation), `walk.test.ts` (state machine, per-state
+poses, distance-driven stride, `footTarget` planner + IK FK round-trip), and `clip.test.ts`
+(the sampler). End-to-end: `e2e/walk-e2e.mjs` drives real Play and asserts the limbs swing
+while walking, settle at rest, and (IK mode) the **knee bends** over the stride. Physics
+constraints (spring/damped IK) are R3; auto-rig (vision) R4; auto-animate (clips) R5;
+weighted skinning R6.
 
 ## The sim
 

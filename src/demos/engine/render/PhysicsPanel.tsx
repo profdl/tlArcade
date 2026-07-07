@@ -18,11 +18,12 @@
 import { useState } from 'react'
 import { useValue } from 'tldraw'
 import { PHYSICS_DEFAULTS, TUNABLE_GROUPS, makeTunables } from '../game/physics'
-import { playingAtom, tunablesAtom } from '../game/state'
+import { legModeAtom, playingAtom, tunablesAtom } from '../game/state'
 
 export function PhysicsPanel() {
   const playing = useValue('physics panel: playing', () => playingAtom.get(), [])
   const tunables = useValue('physics panel: tunables', () => tunablesAtom.get(), [])
+  const legMode = useValue('physics panel: legMode', () => legModeAtom.get(), [])
   const [open, setOpen] = useState(true)
   const [copied, setCopied] = useState(false)
 
@@ -58,6 +59,28 @@ export function PhysicsPanel() {
       {open && (
         <>
           <div className="eng-physics-body">
+            <div className="eng-physics-group">
+              <div className="eng-physics-group-title">Animation</div>
+              <label className="eng-physics-row">
+                <span className="eng-physics-lbl">Legs</span>
+                <span className="eng-legmode">
+                  <button
+                    className={legMode === 'ik' ? 'eng-legmode-btn eng-legmode-on' : 'eng-legmode-btn'}
+                    onClick={() => legModeAtom.set('ik')}
+                    title="Bending-knee inverse kinematics: each foot plants at a world target"
+                  >
+                    IK
+                  </button>
+                  <button
+                    className={legMode === 'straight' ? 'eng-legmode-btn eng-legmode-on' : 'eng-legmode-btn'}
+                    onClick={() => legModeAtom.set('straight')}
+                    title="Straight legs: the thighs swing, the knee stays inline"
+                  >
+                    Straight
+                  </button>
+                </span>
+              </label>
+            </div>
             {TUNABLE_GROUPS.map((group) => (
               <div className="eng-physics-group" key={group.title}>
                 <div className="eng-physics-group-title">{group.title}</div>

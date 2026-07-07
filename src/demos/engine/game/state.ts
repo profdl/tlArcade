@@ -22,6 +22,15 @@ import type { GameState } from './engine'
 
 export const playingAtom = atom('engine:playing', false)
 
+/**
+ * Which leg animation the rigged player uses (Phase B toggle). `'ik'` = bending-knee
+ * inverse-kinematics legs that plant each foot at a world target (the default, the
+ * better-looking walk); `'straight'` = the simpler distance-driven thigh swing with the
+ * knee kept inline. The runtime reads this atom each substep so the physics panel can
+ * flip it live; the walk state machine (rig/walk.ts) branches on it.
+ */
+export const legModeAtom = atom<'ik' | 'straight'>('engine:legMode', 'ik')
+
 /** The live, editable physics tunables (seeded from the "tight & snappy" defaults). */
 export const tunablesAtom = atom<PhysicsTunables>('engine:tunables', makeTunables())
 

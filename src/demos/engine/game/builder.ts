@@ -19,7 +19,7 @@
  */
 import { createShapeId, type Editor, type TLShapeId, type TLShapePartial } from 'tldraw'
 import { PLAYER_ROLE } from './player'
-import { builderRig } from './rig/builderRig'
+import { builderRig, LEG_ANCHORS } from './rig/builderRig'
 
 /**
  * Capture-order indices of the LIMB shapes in BUILDER_ART.shapes, so the default rig
@@ -28,12 +28,18 @@ import { builderRig } from './rig/builderRig'
  * grabbed the SMILE, index 2, as an arm):
  *   0 = right arm  (wide/short, right, mid-body)
  *   3 = left arm   (wide/short, left,  mid-body)
- *   4 = right leg  (tall/narrow, right, bottom)
- *   5 = left leg   (tall/narrow, left,  bottom)
+ *   4 = right leg  (tall/narrow, right, bottom) — SKIPPED at create time (Phase B)
+ *   5 = left leg   (tall/narrow, left,  bottom) — SKIPPED at create time (Phase B)
  * The head(1), smile(2), torso(6), and eyes(7,8) are NOT rig-driven — they ride the
  * static torso root and stay put.
+ *
+ * Phase B: the two single-stroke legs (4,5) are NOT reproduced from the capture. Each
+ * leg is instead GENERATED as a thigh + shin segment (a two-bone chain so the knee can
+ * bend for IK); see LEG_SEGMENT_INDICES / createLegSegment below.
  */
-const LIMB_INDEX = { armR: 0, armL: 3, legR: 4, legL: 5 } as const
+const LIMB_INDEX = { armR: 0, armL: 3 } as const
+/** Capture indices of the single-stroke legs we SKIP (replaced by generated segments). */
+const SKIP_LEG_INDICES = new Set([4, 5])
 
 /**
  * Capture-order indices of the BODY + FACE shapes the rig's spine/head bones drive
@@ -131,6 +137,53 @@ export const BUILDER_WIDTH = BUILDER_ART.boundsW * (BUILDER_HEIGHT / BUILDER_ART
  * parts and stamps `meta.role = 'player'` — the marker "Set as Player" uses — so
  * the runtime treats it exactly like a user-drawn player.
  */
+/** Leg-segment thickness as a fraction of the figure height (a slim limb). */
+const LEG_SEGMENT_THICKNESS = 0.06
+
+/**
+ * The record (x,y,rotation) that lays a thin `thickness`-tall rectangle of length
+ * |a→b| ALONG the segment a→b, with the bone running down its CENTERLINE. tldraw's geo
+ * origin is its top-left corner and it rotates about that origin, so the origin is `a`
+ * shifted perpendicular by half-thickness: leaf-center then lands on the bone midpoint
+ * and the leaf's start edge sits at the joint `a`. Pure (no editor) so the caller can
+ * place OR reposition a segment to sit exactly on its bone.
+ */
+function legSegmentRecord(a: { x: number; y: number }, b: { x: number; y: number }, thickness: number) {
+  const len = Math.hypot(b.x - a.x, b.y - a.y)
+  const angle = Math.atan2(b.y - a.y, b.x - a.x)
+  // origin = a − R(angle)·(0, thickness/2)  ⇒  leaf centerline runs a→b.
+  return {
+    x: a.x + Math.sin(angle) * (thickness / 2),
+    y: a.y - Math.cos(angle) * (thickness / 2),
+    rotation: angle,
+    w: len,
+    h: thickness,
+  }
+}
+
+/** Create one leg SEGMENT (thigh or shin) laid along page points a→b. */
+function createLegSegment(editor: Editor, a: { x: number; y: number }, b: { x: number; y: number }, thickness: number): TLShapeId {
+  const id = createShapeId()
+  const r = legSegmentRecord(a, b, thickness)
+  editor.createShape({
+    id,
+    type: 'geo',
+    x: r.x,
+    y: r.y,
+    rotation: r.rotation,
+    props: {
+      w: r.w,
+      h: r.h,
+      geo: 'rectangle',
+      dash: 'draw',
+      color: 'black',
+      fill: 'solid',
+      size: 'm',
+    },
+  } as TLShapePartial)
+  return id
+}
+
 export function createBuilderPlayer(
   editor: Editor,
   x: number,
@@ -141,8 +194,15 @@ export function createBuilderPlayer(
   const figW = BUILDER_ART.boundsW * scale
   const figH = BUILDER_ART.boundsH * scale
 
-  const ids: TLShapeId[] = []
-  for (const shape of BUILDER_ART.shapes) {
+  // ids keyed by CAPTURE INDEX so the arm/body lookups stay valid even though we skip
+  // the leg strokes (their slots are left undefined and never read).
+  const ids: (TLShapeId | undefined)[] = []
+  for (let i = 0; i < BUILDER_ART.shapes.length; i++) {
+    if (SKIP_LEG_INDICES.has(i)) {
+      ids.push(undefined) // legs are generated below, not reproduced
+      continue
+    }
+    const shape = BUILDER_ART.shapes[i]
     const id = createShapeId()
     ids.push(id)
     const ox = x + shape.nx * figW
@@ -166,9 +226,22 @@ export function createBuilderPlayer(
     editor.createShape({ id, type: 'draw', x: ox, y: oy, props } as TLShapePartial)
   }
 
-  // Group the parts and mark the group as the player.
+  // Generate the four leg SEGMENTS (thigh + shin per side) from the SAME normalized
+  // anchors the rig's leg bones use, so art and rig align by construction. Page-space
+  // point for a normalized figure coord:
+  const pt = (n: { x: number; y: number }) => ({ x: x + n.x * figW, y: y + n.y * figH })
+  const thickness = LEG_SEGMENT_THICKNESS * figH
+  const thighL = createLegSegment(editor, pt(LEG_ANCHORS.L.joint), pt(LEG_ANCHORS.L.knee), thickness)
+  const shinL = createLegSegment(editor, pt(LEG_ANCHORS.L.knee), pt(LEG_ANCHORS.L.tip), thickness)
+  const thighR = createLegSegment(editor, pt(LEG_ANCHORS.R.joint), pt(LEG_ANCHORS.R.knee), thickness)
+  const shinR = createLegSegment(editor, pt(LEG_ANCHORS.R.knee), pt(LEG_ANCHORS.R.tip), thickness)
+  const legIds = [thighL, shinL, thighR, shinR]
+
+  // Group the parts (the reproduced shapes + the generated leg segments) and mark the
+  // group as the player.
+  const allIds = [...ids.filter((v): v is TLShapeId => v !== undefined), ...legIds]
   const groupId = createShapeId()
-  editor.groupShapes(ids, { groupId })
+  editor.groupShapes(allIds, { groupId })
   const group = editor.getShape(groupId)
 
   // The rig's entity-local frame is the group's REAL page bounds — the same frame
@@ -181,20 +254,42 @@ export function createBuilderPlayer(
   const rigW = groupBounds?.w ?? figW
   const rigH = groupBounds?.h ?? figH
 
+  // CRITICAL: the leg SEGMENTS were placed in the ART frame (figW/figH, top-left x,y),
+  // but the rig's leg bones are built in the RIG frame (rigW/rigH from the rendered
+  // group bounds — wider, because the arm strokes overflow the tight art bounds). Those
+  // two frames disagree, so a segment drawn in the art frame doesn't lie on its bone —
+  // the leaf drifts off the bone (worse on the more off-center left leg) and the knee
+  // reads wrong. Re-place each segment in the RIG frame so leaf and bone COINCIDE.
+  if (groupBounds) {
+    const rigPt = (n: { x: number; y: number }) => ({ x: groupBounds.minX + n.x * rigW, y: groupBounds.minY + n.y * rigH })
+    const place = (leafId: TLShapeId, a: { x: number; y: number }, b: { x: number; y: number }) => {
+      const r = legSegmentRecord(rigPt(a), rigPt(b), thickness)
+      // page origin → the leaf's own parent (group) space, since it's grouped now.
+      const local = editor.getShapeParentTransform(leafId).clone().invert().applyToPoint({ x: r.x, y: r.y })
+      editor.updateShape({ id: leafId, type: 'geo', x: local.x, y: local.y, rotation: r.rotation, props: { w: r.w, h: r.h } } as TLShapePartial)
+    }
+    place(thighL, LEG_ANCHORS.L.joint, LEG_ANCHORS.L.knee)
+    place(shinL, LEG_ANCHORS.L.knee, LEG_ANCHORS.L.tip)
+    place(thighR, LEG_ANCHORS.R.joint, LEG_ANCHORS.R.knee)
+    place(shinR, LEG_ANCHORS.R.knee, LEG_ANCHORS.R.tip)
+  }
+
   // Default rig (R2): a Tier-A skeleton — a pelvis→spine→head chain plus L/R arm+leg
   // bones — attached to the real leaf ids, so the default player's WHOLE BODY animates
   // on Play (the state machine in game/rig/walk.ts supplies the live pose). Entity-local
   // px = the rendered figure's page-bounds size.
   const rig = builderRig(rigW, rigH, {
-    armL: ids[LIMB_INDEX.armL],
-    armR: ids[LIMB_INDEX.armR],
-    legL: ids[LIMB_INDEX.legL],
-    legR: ids[LIMB_INDEX.legR],
-    torso: ids[BODY_INDEX.torso],
-    head: ids[BODY_INDEX.head],
-    smile: ids[BODY_INDEX.smile],
-    eyeL: ids[BODY_INDEX.eyeL],
-    eyeR: ids[BODY_INDEX.eyeR],
+    armL: ids[LIMB_INDEX.armL]!,
+    armR: ids[LIMB_INDEX.armR]!,
+    thighL,
+    shinL,
+    thighR,
+    shinR,
+    torso: ids[BODY_INDEX.torso]!,
+    head: ids[BODY_INDEX.head]!,
+    smile: ids[BODY_INDEX.smile]!,
+    eyeL: ids[BODY_INDEX.eyeL]!,
+    eyeR: ids[BODY_INDEX.eyeR]!,
   })
 
   editor.updateShape({

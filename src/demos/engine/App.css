@@ -367,6 +367,37 @@
   background: rgba(0, 0, 0, 0.05);
 }
 
+/* Leg-mode segmented toggle (Straight / IK) in the physics panel. */
+.eng-legmode {
+  display: inline-flex;
+  gap: 3px;
+  flex: 1;
+  justify-content: flex-end;
+}
+.eng-legmode-btn {
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  background: #fff;
+  color: #555;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.eng-legmode-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.eng-legmode-on {
+  background: #2d7dff;
+  border-color: #2d7dff;
+  color: #fff;
+}
+.eng-legmode-on:hover {
+  background: #2d7dff;
+}
+
 /* ── ✨ Generate: the single AI door (a dropdown from the custom top panel) ── */
 /* The ✨ Generate trigger is a plain topbar button (.eng-btn). Its form pops out
    below the topbar as an anchored dropdown, so the topbar row keeps its height. */

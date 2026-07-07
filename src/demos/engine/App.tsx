@@ -29,7 +29,7 @@ import { GeneratePanel } from './render/GeneratePanel'
 import { Hud } from './render/Hud'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
-import { playingAtom, tunablesAtom } from './game/state'
+import { legModeAtom, playingAtom, tunablesAtom } from './game/state'
 import { draftRigAtom, dragBoneAtom, rigDebugAtom, rigModeAtom, rigTargetAtom, showRigDebugAtom } from './game/rig/state'
 import { makeTunables } from './game/physics'
 import { TEMPLATE_LIST } from './game/templates'
@@ -109,6 +109,8 @@ export default function App() {
       // Expose the runtime so e2e can drive Play/Stop directly (headless can't rely
       // on the audio-gated Play click).
       ;(window as unknown as { __runtime?: unknown }).__runtime = runtimeRef.current
+      // Expose the leg-mode toggle so the IK-walk e2e can switch modes headlessly.
+      ;(window as unknown as { __legMode?: unknown }).__legMode = legModeAtom
     }
     return () => {
       runtimeRef.current?.stop()

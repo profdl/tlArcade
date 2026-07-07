@@ -42,13 +42,14 @@ import { roleForColor, shapeForRole, ROLES, TILE, type Role } from './roles'
 import type { PlacementMeta } from './level'
 import { collectPlayerBody, isPlayerMarked, type PlayerPart } from './player'
 import { evaluateRig, evaluateBoneWorlds } from './rig/evaluate'
-import { poseForState } from './rig/walk'
+import { poseForState, type LegRig } from './rig/walk'
+import { BUILDER_LEG_BONES } from './rig/builderRig'
 import { rigDebugAtom, showRigDebugAtom } from './rig/state'
 import type { Rig } from './rig/types'
 import { compose, fromTRS, type Mat2D } from './rig/mat2d'
 import { buildBody, type Body, type Pt } from './collision'
 import { SIM, type PhysicsTunables } from './physics'
-import { tunablesAtom, gameStateAtom } from './state'
+import { tunablesAtom, gameStateAtom, legModeAtom } from './state'
 import { makeKinematic, type Entity, type EntityInput } from './entities/types'
 import { stepEntity, touches, stompCheck, verticalBounds } from './entities/step'
 import {
@@ -142,6 +143,12 @@ export class GameRuntime {
    * aren't on the ground to plant). Reset at start().
    */
   private strideDistance = 0
+  /**
+   * Per-side leg geometry for the IK walk (Phase B), measured once from the player's
+   * REST rig at start(). Null when the player has no rig or no thigh/shin leg chain
+   * (the walk then uses the straight-thigh path). See rig/walk.ts → LegRig.
+   */
+  private legRigs: { L: LegRig; R: LegRig } | null = null
   private solids: Body[] = []
   /** Hittable blocks (T1b) — solid + bonk-trigger; also in `solids`. */
   private blocks: Block[] = []
@@ -369,6 +376,8 @@ export class GameRuntime {
     // ⇒ undefined ⇒ the rigid whole-body path (unchanged). Joint markers were
     // already excluded from the body by collectPlayerBody.
     const rig = this.readRig(player.id)
+    // Measure the leg-chain geometry from the REST rig for the IK walk (Phase B).
+    this.legRigs = rig ? legRigsFrom(rig) : null
     this.entities = [
       {
         id: player.id,
@@ -733,6 +742,11 @@ export class GameRuntime {
           wallNx: k.wallNx,
           simTime: this.simTime,
           strideDistance: this.strideDistance,
+          // Phase B: bending-knee IK legs when the toggle is on AND the rig has a leg
+          // chain; otherwise the straight-thigh swing. Read the atom each substep so the
+          // physics panel can flip it live.
+          legMode: this.legRigs && legModeAtom.get() === 'ik' ? 'ik' : 'straight',
+          legs: this.legRigs ?? undefined,
         })
       }
     }
@@ -1251,6 +1265,40 @@ function aabbOf(kin: { x: number; y: number }, samples: { x: number; y: number }
 /** True if two AABBs overlap (touching edges count as overlap). */
 function aabbOverlap(a: Aabb, b: Aabb): boolean {
   return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
+}
+
+/**
+ * Measure the IK-walk leg geometry (Phase B) from the player's REST rig, per side. Uses
+ * the rig bones (thigh/shin lengths + the shin's rest LOCAL rotation) and the rest bone
+ * worlds (the thigh's rest WORLD angle + the hip position). Returns null if the rig has
+ * no thigh/shin chain (a custom or pre-Phase-B rig) so the walk falls back to straight
+ * thighs. `bendSign` is fixed per side so the knee always buckles forward.
+ */
+function legRigsFrom(rig: Rig): { L: LegRig; R: LegRig } | null {
+  const worlds = new Map(evaluateBoneWorlds(rig, {}).map((w) => [w.id, w]))
+  const boneById = new Map(rig.bones.map((b) => [b.id, b]))
+  const build = (side: 'L' | 'R'): LegRig | null => {
+    const ids = BUILDER_LEG_BONES[side]
+    const thighW = worlds.get(ids.thigh)
+    const thighB = boneById.get(ids.thigh)
+    const shinB = boneById.get(ids.shin)
+    if (!thighW || !thighB || !shinB) return null
+    return {
+      hip: { x: thighW.pivot.x, y: thighW.pivot.y },
+      // Rest thigh WORLD angle: direction from its pivot to its tip.
+      restThighWorld: Math.atan2(thighW.tip.y - thighW.pivot.y, thighW.tip.x - thighW.pivot.x),
+      restShinLocal: shinB.rotation, // the shin's rest LOCAL bend (knee angle at rest)
+      thighLen: thighB.length,
+      shinLen: shinB.length,
+      // Knee buckles the SAME way on both legs (like a real pair of knees — the joint
+      // points forward and the calf swings back). Both use −1; an opposite sign per leg
+      // makes one knee bend backward (the "wrong-way" right leg bug).
+      bendSign: -1,
+    }
+  }
+  const L = build('L')
+  const R = build('R')
+  return L && R ? { L, R } : null
 }
 
 /**
