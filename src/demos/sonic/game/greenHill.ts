@@ -13,12 +13,19 @@
 // (tldraw renders and getShapeGeometry samples them as smooth curves, which the
 // collision extractor turns into segments) — no custom geometry.
 
-import { createShapeId, type Editor, type TLShapeId, type IndexKey } from 'tldraw'
+import { createShapeId, getIndices, type Editor, type TLShapeId, type IndexKey } from 'tldraw'
 import type { Segment, Vec2 } from './physics'
+import { RING_COLOR } from './geometry'
 import { sideGroundY } from './state'
 
-/** A tldraw v5 color name → a gameplay LineKind (see geometry.ts COLOR_TO_KIND). */
-type TrackColor = 'black' | 'red' | 'yellow' | 'grey'
+// On-canvas diameter of a ring (geo ellipse), page px. Small enough to read as a
+// Sonic ring you run through, big enough to be an easy catch target.
+const RING_SIZE = 44
+
+/** A tldraw v5 color name → a gameplay LineKind (see geometry.ts COLOR_TO_KIND).
+ * blue = oneway (flip:false) — used for the LOOP so the runner passes through the
+ * overhanging top from outside and rides the inside surface (see the loop notes). */
+type TrackColor = 'black' | 'red' | 'yellow' | 'grey' | 'blue'
 
 /** One authored track line: a polyline in course-local px (x right, y down), a
  * color (→ behavior), and whether tldraw should render/sample it as a smooth
@@ -37,87 +44,100 @@ interface Ring {
 
 // ── The course geometry, in course-local px relative to the start ──────────────
 // x increases to the right (down-course); y increases DOWNWARD (screen convention,
-// matching page space). y = 0 is the ground plane the character runs on; negative
-// y is UP (hills, the top of the loop). Tuned so a self-propelled sled (sideThrust
-// / sideCruiseSpeed in physics.ts) builds enough speed on the hills to carry the
-// loop.
+// matching page space). y = 0 is the GROUND the character runs on — the same plane
+// the side-mode auto-ground sits at (sideGroundY), so the course's flat parts
+// coincide with it. Terrain only ever bumps UP (negative y): a dip below y=0 would
+// duck under the flat auto-ground and be unreachable (the ground would cut across
+// it). Tuned so the runner builds enough speed (sideThrust / sideCruiseSpeed) to
+// carry the loop.
 
 // Where the course begins, px ahead of the spawn, so the character has a moment of
 // flat ground to accelerate before the first hill.
 const COURSE_AHEAD = 320
 
-// Rolling hills: a smooth cubic through a few crests/dips to build momentum. Down
-// a dip the sled accelerates (gravity along the slope); it carries that speed up
-// the next crest.
+// Rolling hills: a smooth cubic of gentle UP-only crests (never below y=0) that add
+// undulation and a little air-time without breaking the flat ground. The runner
+// keeps its speed over them (momentum) and they don't fight the auto-ground.
 const HILLS: Vec2[] = [
 	{ x: 0, y: 0 },
-	{ x: 220, y: 70 }, // dip (down 70)
-	{ x: 460, y: -40 }, // crest (up 40)
-	{ x: 700, y: 60 }, // dip
-	{ x: 900, y: 0 }, // back to ground level
+	{ x: 240, y: -28 }, // gentle crest
+	{ x: 480, y: 0 }, // back to ground
+	{ x: 720, y: -40 }, // slightly taller, still gentle
+	{ x: 900, y: 0 }, // back to ground (into the booster)
 ]
 
-// A red speed-booster stretch on the flat after the hills (accelerate lines push
-// the sled along its tangent — the Sonic speed strip).
-const BOOST_START = 900
-const BOOST_END = 1180
+// A red speed-booster stretch on the flat after the hills — the Sonic speed strip
+// (accelerate lines push the sled along its tangent). It tops the runner up, but
+// the REAL loop-entry speed comes from a long clean flat run: sideThrust plateaus
+// around ~2800 px/s and the loop needs ~2300+ at entry, which takes roughly
+// 1800px of clean running to build (measured against the real sim). So the loop is
+// placed far enough right that the booster + the flat before it deliver that.
+const BOOST_START = 950
+const BOOST_END = 1250
 
-// The loop: a full circle the momentum sim carries the sled around. Authored as a
-// closed cubic starting and ending at the ground (the entry/exit point), rising
-// over the top. The sled needs real speed to make it — the boosters before it
-// exist to guarantee that. Center is at the entry x + radius, sitting on the
-// ground so the bottom of the loop IS the ground line.
-const LOOP_ENTRY_X = 1180
+// The loop: a full vertical circle the momentum sim carries the runner around.
+// Drawn in BLUE = oneway (flip:false) so the runner passes through the overhanging
+// top from OUTSIDE and rides the INSIDE surface — a closed SOLID circle is just a
+// wall whose overhang blocks the approach (see physics.ts onLoopSegment + the
+// loopProbe test). The loop's bottom sits on the ground (y=0) at LOOP_ENTRY_X,
+// placed well down-course so the runner arrives at loop speed (~2300+).
+const LOOP_ENTRY_X = 1900
 const LOOP_R = 150
 
-// After the loop, a short run-up to an angled spring (a tilted yellow bounce line):
-// bounce launches along the surface normal, so a line tilted ~35° from horizontal
-// throws the character up-and-forward — Sonic's diagonal spring.
-const SPRING_X = 1720
+// After the loop, a run-up to an angled spring (a tilted yellow bounce line): bounce
+// launches along the surface normal, so a line tilted ~35° from horizontal throws
+// the runner up-and-forward — Sonic's diagonal spring.
+const SPRING_X = 2500
 const SPRING_LEN = 90
 const SPRING_TILT_DEG = 35 // from horizontal; the launch is along the normal (up-forward)
 
-// The landing hill after the spring, then a final flat to the goal.
-const LANDING_X = 2100
-const GOAL_X = 2500
+// A final flat run to the goal after the spring's arc.
+const GOAL_X = 3200
 
-// Rings scattered along the course (course-local; y is a bit above the surface so
-// they float where you'd run/jump through them).
+// Rings along the course (course-local; y negative = above the surface, where you
+// run/jump through them). Kept at/above y=0 so none hides under the ground.
 const RINGS: Ring[] = [
-	{ x: 220, y: 70 - 40 }, // in the first dip
-	{ x: 460, y: -40 - 40 }, // over the first crest
-	{ x: 700, y: 60 - 40 }, // in the second dip
-	{ x: 1030, y: -30 }, // along the booster strip
-	{ x: LOOP_ENTRY_X + LOOP_R, y: -LOOP_R * 2 + 30 }, // at the top of the loop
-	{ x: 1900, y: -120 }, // mid-air over the spring's arc
-	{ x: 2300, y: -30 }, // on the run to the goal
+	{ x: 240, y: -58 }, // over the first crest
+	{ x: 720, y: -70 }, // over the taller crest
+	{ x: 1050, y: -40 }, // along the booster strip
+	{ x: 1150, y: -40 },
+	{ x: LOOP_ENTRY_X, y: -LOOP_R * 2 - 30 }, // at the top of the loop
+	{ x: 2650, y: -160 }, // mid-air over the spring's arc
+	{ x: 2950, y: -40 }, // on the run to the goal
 ]
 
 /**
- * Build the loop as a closed circle of points (course-local), rising from the
- * ground at (entryX, 0) up and over and back down. Enough points that
- * getShapeGeometry samples it as a clean circle for collision.
+ * Build the loop as a full circle of points (course-local), traced from the BOTTOM
+ * (on the ground at (entryX, 0)) up the +x side, over the top, and back down to the
+ * bottom — the winding the one-way orientation (blue, flip:false) needs so each
+ * segment blocks from the inside. Enough points that getShapeGeometry samples it as
+ * a clean circle. Center one radius above the entry so the loop bottom is on y=0.
  */
 function loopPoints(entryX: number, r: number): Vec2[] {
-	const cx = entryX + r
-	const cy = -r // center one radius above the ground, so the loop bottom sits at y=0
+	const cx = entryX
+	const cy = -r
 	const pts: Vec2[] = []
-	const N = 24
-	// Start at the bottom (angle 90° in screen coords = straight down from center),
-	// go around a full turn so the ends meet at the entry/exit on the ground.
+	const N = 40
+	// Start at the bottom (angle +90° from center = straight down) and sweep a FULL
+	// turn the same way the loopProbe traces it (a = 90° - i·360°/N), so the winding
+	// — and thus each one-way segment's blocking side — matches the proven probe.
 	for (let i = 0; i <= N; i++) {
-		const a = Math.PI / 2 + (i / N) * Math.PI * 2
+		const a = Math.PI / 2 - (i / N) * Math.PI * 2
 		pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r })
 	}
 	return pts
 }
 
-/** All the track lines that make up the course, in draw order. */
+/** All the track lines that make up the course, in draw order. The flat GROUND
+ * itself is the side-mode auto-ground plane (RunController injects it at y=0), so
+ * these are only the features ON that ground: hills, the booster strip, the loop,
+ * and the spring. */
 function courseLines(): TrackLine[] {
 	const lines: TrackLine[] = []
-	// Rolling hills (curved, solid).
+	// Rolling UP-only hills (curved, solid) — never dip below the ground.
 	lines.push({ pts: HILLS, color: 'black', curved: true })
-	// Booster strip (straight, red = accelerate) on the flat.
+	// Booster strip (straight, red = accelerate): the long run-up that gets the
+	// runner to loop speed.
 	lines.push({
 		pts: [
 			{ x: BOOST_START, y: 0 },
@@ -126,18 +146,9 @@ function courseLines(): TrackLine[] {
 		color: 'red',
 		curved: false,
 	})
-	// The loop (curved, solid).
-	lines.push({ pts: loopPoints(LOOP_ENTRY_X, LOOP_R), color: 'black', curved: true })
-	// Flat run from the loop exit to the spring foot.
-	lines.push({
-		pts: [
-			{ x: LOOP_ENTRY_X + LOOP_R * 2, y: 0 },
-			{ x: SPRING_X, y: 0 },
-		],
-		color: 'black',
-		curved: false,
-	})
-	// The angled spring (yellow = bounce), tilted up-forward.
+	// The loop (curved, BLUE = oneway flip:false so the runner rides the inside).
+	lines.push({ pts: loopPoints(LOOP_ENTRY_X, LOOP_R), color: 'blue', curved: true })
+	// The angled spring (yellow = bounce), tilted up-forward, after the loop.
 	const rad = (SPRING_TILT_DEG * Math.PI) / 180
 	lines.push({
 		pts: [
@@ -145,15 +156,6 @@ function courseLines(): TrackLine[] {
 			{ x: SPRING_X + Math.cos(rad) * SPRING_LEN, y: -Math.sin(rad) * SPRING_LEN },
 		],
 		color: 'yellow',
-		curved: false,
-	})
-	// Landing hill + final flat to the goal.
-	lines.push({
-		pts: [
-			{ x: LANDING_X, y: 0 },
-			{ x: GOAL_X + 200, y: 0 },
-		],
-		color: 'black',
 		curved: false,
 	})
 	return lines
@@ -180,11 +182,15 @@ export function loadGreenHill(editor: Editor, start: Vec2): TLShapeId[] {
 		// A `line` shape stores its points LOCAL to the shape's (x,y). Anchor the
 		// shape at the first point's page position and store the rest as offsets.
 		const origin = toPage(line.pts[0])
+		// A line's points are keyed by a VALID fractional IndexKey — NOT `a1,a2,…a10`
+		// ("a10" is not a valid index key; the format is fractional-indexing, where
+		// a9 < aA, not a9 < a10). getIndices(n) mints n ordered, valid keys.
+		const indices = getIndices(line.pts.length)
 		const points: Record<string, { id: string; index: IndexKey; x: number; y: number }> = {}
 		line.pts.forEach((p, i) => {
 			const pg = toPage(p)
-			const key = `a${i + 1}`
-			points[key] = { id: key, index: key as IndexKey, x: pg.x - origin.x, y: pg.y - origin.y }
+			const index = indices[i]
+			points[index] = { id: index, index, x: pg.x - origin.x, y: pg.y - origin.y }
 		})
 		editor.createShape({
 			id,
@@ -201,20 +207,21 @@ export function loadGreenHill(editor: Editor, start: Vec2): TLShapeId[] {
 		})
 	}
 
-	// Rings — native note shapes (geometry.ts collects notes as ring checkpoints).
+	// Rings — small gold geo ELLIPSES (geometry.ts → isRingShape collects these as
+	// scoring rings and excludes them from collision, so the character passes
+	// through). A ring reads as a real Sonic ring, unlike an oversized sticky note.
 	for (const ring of RINGS) {
 		const id = createShapeId()
 		ids.push(id)
 		const pg = toPage(ring)
+		// A geo shape is placed by its top-left; offset by half the ring size so the
+		// ring's CENTER lands on the ring point (where it visually reads / is caught).
 		editor.createShape({
 			id,
-			type: 'note',
-			// Notes are placed by their top-left; nudge so the note's center lands on
-			// the ring point (a default note is ~200px; centering keeps the catch box
-			// where the ring reads). tldraw clamps/handles size, so this is approximate.
-			x: pg.x - 100,
-			y: pg.y - 100,
-			props: { color: 'yellow', richText: ringLabel() },
+			type: 'geo',
+			x: pg.x - RING_SIZE / 2,
+			y: pg.y - RING_SIZE / 2,
+			props: { geo: 'ellipse', w: RING_SIZE, h: RING_SIZE, color: RING_COLOR, fill: 'none' },
 		})
 	}
 
@@ -242,6 +249,7 @@ const KIND_OF: Record<TrackColor, Segment['kind']> = {
 	red: 'accelerate',
 	yellow: 'bounce',
 	grey: 'ice',
+	blue: 'oneway', // the loop; flip:false (set on the segment below) rides the inside
 }
 
 /** Catmull-Rom sample of a polyline into `perSeg` points per control interval, so a
@@ -287,8 +295,12 @@ export function greenHillSegments(start: Vec2): Segment[] {
 	const segs: Segment[] = []
 	for (const line of courseLines()) {
 		const pts = samplePolyline(line.pts, line.curved).map(toPage)
+		const kind = KIND_OF[line.color]
 		for (let i = 0; i < pts.length - 1; i++) {
-			segs.push({ a: pts[i], b: pts[i + 1], kind: KIND_OF[line.color], strength: 1 })
+			const seg: Segment = { a: pts[i], b: pts[i + 1], kind, strength: 1 }
+			// blue = oneway flip:false (COLOR_TO_KIND), matching the shape path — the
+			// loop blocks from the inside so the runner rides its inner surface.
+			segs.push(seg)
 		}
 	}
 	return segs
@@ -297,12 +309,4 @@ export function greenHillSegments(start: Vec2): Segment[] {
 /** The goal's page-space center X for a given start — where a winning run ends. */
 export function greenHillGoalX(start: Vec2): number {
 	return start.x + COURSE_AHEAD + GOAL_X
-}
-
-/** A minimal tldraw richText doc holding a ring glyph, for the note label. */
-function ringLabel() {
-	return {
-		type: 'doc',
-		content: [{ type: 'paragraph', content: [{ type: 'text', text: '◎' }] }],
-	}
 }

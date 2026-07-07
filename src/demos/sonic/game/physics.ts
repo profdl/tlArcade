@@ -106,10 +106,12 @@ export const PHYSICS = {
 	contactSkin: 0.75, // band beyond riderRadius still treated as "riding" the line
 	maxSpeed: 4000, // clamp to avoid tunneling/explosions
 	accelerateBoost: 2400, // px/s^2 tangential acceleration added along 'accelerate' lines
-	// px/s; accelerate lines stop boosting past this. Kept below the tunneling
-	// threshold (2*riderRadius / FIXED_DT = 4800 px/s here) so boosted sleds don't
-	// shoot through thin lines in a single step.
-	accelerateMaxSpeed: 1300,
+	// px/s; accelerate lines stop boosting past this. Raised for Sonic (was 1300) so
+	// a booster strip can bring the runner up to LOOP speed (~2300+), since sideThrust
+	// alone plateaus ~2800 only after a long flat run. Kept below the tunneling
+	// threshold (2*bodyRadius/FIXED_DT ≈ 4870 px/s) so a boosted runner doesn't shoot
+	// through a thin ramp/loop segment in one step.
+	accelerateMaxSpeed: 3200,
 	brakeDrag: 0.2, // fraction of tangential speed removed per step on 'brake' lines
 
 	// --- Side-rider mode (side-scroller) ------------------------------------
@@ -120,12 +122,13 @@ export const PHYSICS = {
 	// projectile and gravity owns the arc. The solver reconciles it before
 	// collisions, so it CLIMBS any drawn slope (no surface-tangent guessing).
 	sideThrust: 6000, // px/s^2 +x propulsion while grounded — strong, so ramp launches carry FAR
-	// px/s; thrust stops adding past this cruise speed. Raised so the character
-	// builds real speed and flies off ramps, but kept under the tunneling threshold
-	// (2*bodyRadius/FIXED_DT ≈ 4870 px/s here) so a running character never shoots
-	// through a thin ramp in a single step — same guard the accelerateMaxSpeed cap
-	// uses. 1600 reads as a fast, launchy run with margin to spare under the cap.
-	sideCruiseSpeed: 1600,
+	// px/s; thrust stops adding past this cruise speed. Raised for Sonic to 3500 so
+	// the runner carries a full vertical LOOP (a loop needs real centripetal speed on
+	// the inside — proven in loopProbe.test.ts: R150 completes at ≥3500, stalls near
+	// the top below it). Kept under the tunneling threshold (2*bodyRadius/FIXED_DT ≈
+	// 4870 px/s) so a fast runner never shoots through a thin ramp in a single step —
+	// the same guard the accelerateMaxSpeed cap uses.
+	sideCruiseSpeed: 3500,
 	bounceRestitution: 0.85, // restitution for 'bounce' lines (springy; 0=none, 1=elastic)
 	stickyFriction: 0.45, // tangential drag fraction on 'sticky' lines (strong grip)
 	iceFriction: 0.0, // tangential drag on 'ice' lines (perfectly frictionless glide)
@@ -936,6 +939,44 @@ function runnerGrounded(body: Body, segments: Segment[]): boolean {
 	return false
 }
 
+// How far ahead of the runner (px) to look for a loop segment. Loop mode must
+// engage a touch BEFORE the runner reaches the steep/inverted part, or the
+// flat→loop transition spikes the spin and trips a crash at the entry (the runner
+// contacts the loop's near-horizontal bottom first, then the curve sharpens). A
+// small lookahead over the whole loop is simpler and more robust than trying to
+// classify each segment: any one-way contact means "on the loop", so upright/crash
+// stay suppressed for the entire ride around.
+const LOOP_CONTACT_BAND = 12
+
+/**
+ * Whether a runner point is riding a LOOP this step — in contact with ANY `oneway`
+ * segment. A Sonic loop is built from one-way segments (so the runner passes
+ * through the overhanging top from outside and rides the inside surface — a closed
+ * SOLID circle is just a wall). While on the loop the sled must NOT try to stay
+ * upright or crash from tilt: the upright spring would peel it off the inside wall,
+ * and the tilt/spin crash would trip as it goes inverted over the top. So loop mode
+ * suppresses applyUpright + shouldCrash (see stepBody); centripetal contact from
+ * the runner's speed holds it on instead. We deliberately trigger on the WHOLE loop
+ * (not just its steep parts) — including the flat-ish entry/exit — so the flat→loop
+ * transition doesn't crash before loop mode engages. A flat one-way PLATFORM would
+ * also match, but suppressing upright/crash there is harmless: a platform never
+ * inverts the sled, so there's nothing to right or crash. Only meaningful when a
+ * one-way segment is present; a course with none never enters loop mode and is
+ * byte-identical to before.
+ */
+function onLoopSegment(body: Body, segments: Segment[]): boolean {
+	const contact = PHYSICS.bodyRadius + PHYSICS.contactSkin + LOOP_CONTACT_BAND
+	for (const i of [BACK, FRONT]) {
+		const p = body.points[i]
+		for (const seg of segments) {
+			if (seg.kind !== 'oneway') continue
+			const { point } = closestPointOnSegment(p.pos, seg.a, seg.b)
+			if (Math.hypot(p.pos.x - point.x, p.pos.y - point.y) < contact) return true
+		}
+	}
+	return false
+}
+
 /**
  * Advance a multi-point body by one fixed timestep. Integrates every point,
  * then interleaves constraint solving with collision resolution so the body
@@ -950,6 +991,13 @@ export function stepBody(
 ): Body {
 	const prevAngle = bodyAngle(body)
 	for (const p of body.points) integrate(p, dt)
+
+	// Loop mode: while a runner rides a STEEP one-way (loop) surface, suppress the
+	// upright spring and the tilt/spin crash so the sled can orient to the surface
+	// and go fully inverted over the top (centripetal contact from its speed holds
+	// it on). Off any steep loop segment, normal upright/crash behavior resumes.
+	// A course with no loops never sets this, so behavior there is unchanged.
+	const looping = onLoopSegment(body, segments)
 
 	// Bounce is a whole-body effect: sample the body's normal velocity into a
 	// bounce line BEFORE collisions flatten it, so we can re-launch the whole rig
@@ -972,8 +1020,9 @@ export function stepBody(
 	// once up front lets the iterations absorb its perturbation (collision re-seats
 	// contacting runner points), so the rig settles cleanly. uprightStiffness was
 	// re-tuned up to compensate for the lost compounding (see PHYSICS). A no-op once
-	// crashed, so a crashed sled ragdolls freely.
-	applyUpright(body)
+	// crashed, so a crashed sled ragdolls freely. Skipped in loop mode so the upright
+	// spring doesn't peel the sled off the inside of a loop.
+	if (!looping) applyUpright(body)
 
 	// Side-rider propulsion — "SIDEWAYS GRAVITY": a constant +x force on the runner
 	// points, exactly like gravity but rotated 90° to point right instead of down.
@@ -1032,8 +1081,10 @@ export function stepBody(
 	// Latch the crash state after the step settles: if the sled flipped past
 	// `crashTilt` or spun faster than `crashSpin`, switch off the upright spring
 	// for the rest of the run so it ragdolls. Checked last so it sees the resolved
-	// post-collision pose (a wall slam shows up as the induced spin/tilt).
-	if (!body.crashed && shouldCrash(body, prevAngle, dt)) body.crashed = true
+	// post-collision pose (a wall slam shows up as the induced spin/tilt). Skipped in
+	// loop mode: going inverted over the top of a loop is expected, not a wipeout, so
+	// the tilt/spin there must not latch a crash.
+	if (!looping && !body.crashed && shouldCrash(body, prevAngle, dt)) body.crashed = true
 	// Side mode: recover a settled, grounded ragdoll — stand it back upright in
 	// place (rightBody) and un-crash so propulsion resumes (self-recovering
 	// wipeout). Reset spinStreak so a fresh crash must re-accumulate its own streak

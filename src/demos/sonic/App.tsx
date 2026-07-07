@@ -291,8 +291,9 @@ function App() {
 						</div>
 					))}
 					<div className="sonic-legend-note">
-						Drop a sticky note as a <b>ring</b> to collect, and a <b>frame</b> as the
-						goal to reach. Yellow lines are springs; tilt one to launch at an angle.
+						Draw a small <b>yellow ellipse</b> as a <b>ring</b> to collect, and drop a{' '}
+						<b>frame</b> as the goal to reach. A yellow <i>line</i> is a spring — tilt
+						it to launch at an angle.
 					</div>
 				</div>
 			)}
