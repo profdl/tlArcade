@@ -142,22 +142,61 @@ export const BUILDER_WIDTH = BUILDER_ART.boundsW * (BUILDER_HEIGHT / BUILDER_ART
  * the runtime treats it exactly like a user-drawn player.
  */
 /**
- * The record (x,y,rotation,points) for a leg SEGMENT drawn as a native `draw` LINE
- * from page point `a` to `b`. The draw shape's origin is placed AT the joint `a` and
- * its single straight `free` segment runs to `b` in local space, so the origin IS the
- * bone pivot (a→b lies exactly on the bone). We keep rotation 0 and bake the direction
- * into the point (simplest — the stroke already goes a→b), so the leaf sits on its bone
- * with no perpendicular offset. Pure (no editor) so the caller can place OR reposition.
+ * How much the WHOLE leg bows — the perpendicular offset at the leg's midpoint (the
+ * knee) as a fraction of the hip→foot length. The leg is drawn as ONE arc from hip to
+ * foot broken at the knee (`legArcPaths`); the knee joint sits AT the break, so the
+ * thigh and shin are two halves of the same curve and read as one continuous hand-drawn
+ * line. Sign leans the bow one way; both legs share it so left and right match.
  */
-function legSegmentRecord(a: { x: number; y: number }, b: { x: number; y: number }) {
-  // Draw origin sits at the joint `a`; the stroke runs to `b` in local space. A draw
-  // segment stores its points as a delta-encoded base64 `path` (dim 2) — the same form
-  // the captured arm/torso strokes use — so we encode the two endpoints.
-  const path = b64Vecs.encodePoints2D([
-    { x: 0, y: 0 },
-    { x: b.x - a.x, y: b.y - a.y },
-  ])
-  return { x: a.x, y: a.y, rotation: 0, path }
+const LEG_CURVE = -0.14
+
+interface Pt2 { x: number; y: number }
+
+/** A quadratic Bézier point at t∈[0,1] for control points p0 (start), p1 (control), p2 (end). */
+function quadAt(p0: Pt2, p1: Pt2, p2: Pt2, t: number): Pt2 {
+  const u = 1 - t
+  return {
+    x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x,
+    y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y,
+  }
+}
+
+/**
+ * ONE curve from hip to foot, bowed by `curve`, BROKEN at its midpoint into two stroke
+ * paths (thigh = first half, shin = second half). The knee joint IS that midpoint. Both
+ * halves come from the SAME quadratic arc, so the thigh's exit tangent equals the shin's
+ * entry tangent at the knee — the two strokes read as one continuous curved line, no kink.
+ *
+ * Each returned path is LOCAL to its segment's start (thigh origin = hip; shin origin =
+ * knee), and `knee` is the page-space split point — the caller uses it BOTH as the shin
+ * leaf's origin AND as the shin bone's pivot, so leaf and bone stay perfectly aligned.
+ * The curve is cosmetic: the endpoints (hip, knee, foot) are exact, so IK is unaffected.
+ */
+function legArcPaths(hip: Pt2, foot: Pt2, curve: number): { thighPath: string; shinPath: string; knee: Pt2 } {
+  const dx = foot.x - hip.x
+  const dy = foot.y - hip.y
+  const len = Math.hypot(dx, dy)
+  const nx = len ? -dy / len : 0
+  const ny = len ? dx / len : 0
+  const bow = curve * len
+  // Control point pushed 2·bow off the straight midpoint ⇒ the arc's apex (t=½) is `bow`
+  // off the hip→foot line. That apex is the knee (the break point).
+  const ctrl = { x: hip.x + dx / 2 + nx * 2 * bow, y: hip.y + dy / 2 + ny * 2 * bow }
+  const knee = quadAt(hip, ctrl, foot, 0.5)
+  const N = 6
+  const sample = (t0: number, t1: number, origin: Pt2): Pt2[] => {
+    const pts: Pt2[] = []
+    for (let i = 0; i <= N; i++) {
+      const p = quadAt(hip, ctrl, foot, t0 + (t1 - t0) * (i / N))
+      pts.push({ x: p.x - origin.x, y: p.y - origin.y })
+    }
+    return pts
+  }
+  return {
+    thighPath: b64Vecs.encodePoints2D(sample(0, 0.5, hip)),
+    shinPath: b64Vecs.encodePoints2D(sample(0.5, 1, knee)),
+    knee,
+  }
 }
 
 /** A leg SEGMENT's single straight draw segment, from an encoded path. */
@@ -166,24 +205,30 @@ function legSegment(path: string) {
 }
 
 /**
- * Create one leg SEGMENT (thigh or shin) as a native `draw` straight line laid along
- * page points a→b, styled like the builder's arms (black, medium, draw dash).
+ * Create one leg SEGMENT as a native `draw` line, styled like the builder's arms
+ * (black, medium, draw dash). The draw origin is placed at page point `origin` (the
+ * segment's joint) and `path` is its pre-encoded local stroke. The exact geometry is
+ * fixed up later in the rig frame (see the reposition step in createBuilderPlayer); this
+ * just creates the leaf so it can be grouped.
  */
-function createLegSegment(editor: Editor, a: { x: number; y: number }, b: { x: number; y: number }): TLShapeId {
+function createLegSegment(editor: Editor, origin: Pt2, path: string): TLShapeId {
   const id = createShapeId()
-  const r = legSegmentRecord(a, b)
   editor.createShape({
     id,
     type: 'draw',
-    x: r.x,
-    y: r.y,
-    rotation: r.rotation,
+    x: origin.x,
+    y: origin.y,
+    rotation: 0,
     props: {
-      segments: legSegment(r.path),
+      segments: legSegment(path),
       color: 'black',
       fill: 'none',
       dash: 'draw',
-      size: 'm',
+      // 'l' (not 'm'): the captured ARM strokes are dense pen paths whose simulated
+      // pressure renders them fuller than a minimal straight line at the same size, so a
+      // size 'm' leg reads thinner than a size 'm' arm. Bumping the leg to 'l' matches
+      // the arms' visual thickness.
+      size: 'l',
       isComplete: true,
       isClosed: false,
       isPen: false,
@@ -235,14 +280,18 @@ export function createBuilderPlayer(
     editor.createShape({ id, type: 'draw', x: ox, y: oy, props } as TLShapePartial)
   }
 
-  // Generate the four leg SEGMENTS (thigh + shin per side) from the SAME normalized
-  // anchors the rig's leg bones use, so art and rig align by construction. Page-space
-  // point for a normalized figure coord:
+  // Generate the four leg SEGMENTS (thigh + shin per side). Each leg is ONE arc from
+  // hip to foot broken at its midpoint (the knee), so the thigh and shin are two halves
+  // of the same curve and read as one continuous line. Placeholder geometry here (art
+  // frame); the exact arc + knee are recomputed in the RIG frame below (where the rig
+  // bones live) so leaf, stroke, and bone all coincide. Page-space point for a coord:
   const pt = (n: { x: number; y: number }) => ({ x: x + n.x * figW, y: y + n.y * figH })
-  const thighL = createLegSegment(editor, pt(LEG_ANCHORS.L.joint), pt(LEG_ANCHORS.L.knee))
-  const shinL = createLegSegment(editor, pt(LEG_ANCHORS.L.knee), pt(LEG_ANCHORS.L.tip))
-  const thighR = createLegSegment(editor, pt(LEG_ANCHORS.R.joint), pt(LEG_ANCHORS.R.knee))
-  const shinR = createLegSegment(editor, pt(LEG_ANCHORS.R.knee), pt(LEG_ANCHORS.R.tip))
+  const arcL = legArcPaths(pt(LEG_ANCHORS.L.joint), pt(LEG_ANCHORS.L.tip), LEG_CURVE)
+  const arcR = legArcPaths(pt(LEG_ANCHORS.R.joint), pt(LEG_ANCHORS.R.tip), LEG_CURVE)
+  const thighL = createLegSegment(editor, pt(LEG_ANCHORS.L.joint), arcL.thighPath)
+  const shinL = createLegSegment(editor, arcL.knee, arcL.shinPath)
+  const thighR = createLegSegment(editor, pt(LEG_ANCHORS.R.joint), arcR.thighPath)
+  const shinR = createLegSegment(editor, arcR.knee, arcR.shinPath)
   const legIds = [thighL, shinL, thighR, shinR]
 
   // Group the parts (the reproduced shapes + the generated leg segments) and mark the
@@ -265,31 +314,32 @@ export function createBuilderPlayer(
   // CRITICAL: the leg SEGMENTS were placed in the ART frame (figW/figH, top-left x,y),
   // but the rig's leg bones are built in the RIG frame (rigW/rigH from the rendered
   // group bounds — wider, because the arm strokes overflow the tight art bounds). Those
-  // two frames disagree, so a segment drawn in the art frame doesn't lie on its bone —
-  // the leaf drifts off the bone (worse on the more off-center left leg) and the knee
-  // reads wrong. Re-place each segment in the RIG frame so leaf and bone COINCIDE.
+  // two frames disagree, so a segment drawn in the art frame doesn't lie on its bone.
+  // Recompute each leg's arc in the RIG frame, re-place both strokes, and capture the
+  // arc KNEE (its break point) — normalized — so the rig's shin bone pivots THERE and
+  // leaf, stroke, and bone all coincide. Knees default to the anchors if bounds are
+  // somehow unavailable.
+  let kneeL: Pt2 = LEG_ANCHORS.L.knee
+  let kneeR: Pt2 = LEG_ANCHORS.R.knee
   if (groupBounds) {
     const rigPt = (n: { x: number; y: number }) => ({ x: groupBounds.minX + n.x * rigW, y: groupBounds.minY + n.y * rigH })
-    const place = (leafId: TLShapeId, a: { x: number; y: number }, b: { x: number; y: number }) => {
-      const r = legSegmentRecord(rigPt(a), rigPt(b))
-      // page origin → the leaf's own parent (group) space, since it's grouped now.
-      const local = editor.getShapeParentTransform(leafId).clone().invert().applyToPoint({ x: r.x, y: r.y })
-      const shape = editor.getShape(leafId)
-      const props = shape?.props as Record<string, unknown> | undefined
-      editor.updateShape({
-        id: leafId,
-        type: 'draw',
-        x: local.x,
-        y: local.y,
-        rotation: r.rotation,
-        // Keep the captured draw style, only rewrite the straight segment's endpoints.
-        props: { ...props, segments: legSegment(r.path) },
-      } as TLShapePartial)
+    // Normalize a rig-frame page point back to figure coords (for the rig knee anchor).
+    const norm = (p: Pt2) => ({ x: (p.x - groupBounds.minX) / rigW, y: (p.y - groupBounds.minY) / rigH })
+    const placeArc = (thighId: TLShapeId, shinId: TLShapeId, joint: Pt2, tip: Pt2) => {
+      const hip = rigPt(joint)
+      const foot = rigPt(tip)
+      const arc = legArcPaths(hip, foot, LEG_CURVE)
+      const setLeaf = (leafId: TLShapeId, origin: Pt2, path: string) => {
+        const local = editor.getShapeParentTransform(leafId).clone().invert().applyToPoint(origin)
+        const props = editor.getShape(leafId)?.props as Record<string, unknown> | undefined
+        editor.updateShape({ id: leafId, type: 'draw', x: local.x, y: local.y, rotation: 0, props: { ...props, segments: legSegment(path) } } as TLShapePartial)
+      }
+      setLeaf(thighId, hip, arc.thighPath)
+      setLeaf(shinId, arc.knee, arc.shinPath)
+      return norm(arc.knee)
     }
-    place(thighL, LEG_ANCHORS.L.joint, LEG_ANCHORS.L.knee)
-    place(shinL, LEG_ANCHORS.L.knee, LEG_ANCHORS.L.tip)
-    place(thighR, LEG_ANCHORS.R.joint, LEG_ANCHORS.R.knee)
-    place(shinR, LEG_ANCHORS.R.knee, LEG_ANCHORS.R.tip)
+    kneeL = placeArc(thighL, shinL, LEG_ANCHORS.L.joint, LEG_ANCHORS.L.tip)
+    kneeR = placeArc(thighR, shinR, LEG_ANCHORS.R.joint, LEG_ANCHORS.R.tip)
   }
 
   // Default rig (R2): a Tier-A skeleton — a pelvis→spine→head chain plus L/R arm+leg
@@ -308,7 +358,7 @@ export function createBuilderPlayer(
     smile: ids[BODY_INDEX.smile]!,
     eyeL: ids[BODY_INDEX.eyeL]!,
     eyeR: ids[BODY_INDEX.eyeR]!,
-  })
+  }, { L: kneeL, R: kneeR })
 
   editor.updateShape({
     id: groupId,

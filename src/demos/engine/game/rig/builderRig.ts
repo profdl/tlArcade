@@ -194,9 +194,16 @@ function legChain(
  * Build the default builder rig. `figW`/`figH` are the figure's RENDERED page-bounds
  * px size (so the rig is in the same entity-local frame the runtime resolves leaves
  * in — NOT the art's tight boundsW/boundsH, which the draw strokes overflow); `ids`
- * are the real leaf ids of the shapes the rig drives.
+ * are the real leaf ids of the shapes the rig drives. `knees` optionally overrides the
+ * per-side knee anchor (normalized) — the builder passes the ARC break point so the
+ * shin bone pivots exactly where the drawn curve bends (leaf, stroke, and bone coincide).
  */
-export function builderRig(figW: number, figH: number, ids: BuilderLimbIds): Rig {
+export function builderRig(
+  figW: number,
+  figH: number,
+  ids: BuilderLimbIds,
+  knees?: { L: { x: number; y: number }; R: { x: number; y: number } },
+): Rig {
   // Body-chain pivots in entity-local px.
   const pelvisX = ANCHORS.pelvis.x * figW
   const pelvisY = ANCHORS.pelvis.y * figH
@@ -222,8 +229,12 @@ export function builderRig(figW: number, figH: number, ids: BuilderLimbIds): Rig
   const spine = structuralBone('spine', 'pelvis', neckX, neckY, pelvisX, pelvisY, Math.hypot(neckX - pelvisX, neckY - pelvisY))
   const head = structuralBone('head', 'spine', neckX, neckY, neckX, neckY, Math.hypot(headMidX - neckX, headMidY - neckY))
 
-  const [thighL, shinL] = legChain('L', ANCHORS.legL, figW, figH, neckX, neckY)
-  const [thighR, shinR] = legChain('R', ANCHORS.legR, figW, figH, neckX, neckY)
+  // Use the caller's arc-derived knee if given (so the shin bone bends where the drawn
+  // leg curve breaks), else the default anchor knee.
+  const legLSeg = knees ? { ...ANCHORS.legL, knee: knees.L } : ANCHORS.legL
+  const legRSeg = knees ? { ...ANCHORS.legR, knee: knees.R } : ANCHORS.legR
+  const [thighL, shinL] = legChain('L', legLSeg, figW, figH, neckX, neckY)
+  const [thighR, shinR] = legChain('R', legRSeg, figW, figH, neckX, neckY)
   const bones: Bone[] = [
     pelvis,
     spine,
