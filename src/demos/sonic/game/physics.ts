@@ -172,9 +172,13 @@ export const PHYSICS = {
 	// settle from a genuine multi-revolution tumble, so a fast jump-and-land doesn't
 	// crash (and ragdoll away ~20% of its speed). Raised from 4 for the faster runner.
 	crashSpinFrames: 10,
-	// How far past vertical (radians) the mast may tilt before it counts as
-	// "tipped over" and crashes. ~75deg: rides steep ramps, crashes on a flip.
-	crashTilt: 1.3,
+	// How far from upright (radians) the mast may tilt before it counts as "tipped
+	// over" → a roll-out (side mode) or crash (line mode). ~85deg: past horizontal the
+	// upright spring stalls and a fast body gets STUCK near-sideways, so we hand off to
+	// the roll (which force-rotates it upright while keeping momentum) at that point. A
+	// clean big-jump landing that briefly touches this just rolls harmlessly (the roll
+	// keeps its speed), so there's no downside to catching it a touch early.
+	crashTilt: 1.5,
 	// --- Side-mode crash recovery -------------------------------------------
 	// A crashed sled in SIDE mode recovers — stands back upright in place and
 	// resumes propulsion — once it has settled on the ground and stopped spinning,
@@ -183,6 +187,13 @@ export const PHYSICS = {
 	// recovery actively stands it up (rightBody). It only has to be grounded and
 	// spinning slower than this. Line mode never recovers.
 	recoverSpin: 5, // rad/s; angular speed must be below this (settled, not tumbling)
+	// --- Roll-out (Sonic-style bad-landing recovery) ------------------------
+	// How hard the roll rotates the body toward upright each substep (fraction of the
+	// way, like uprightStiffness but strong enough to complete a full inversion — the
+	// gentle upright spring stalls near horizontal, leaving a fast body stuck
+	// sideways). In side mode ANY grounded tipped-over landing (tilt > crashTilt)
+	// rolls, keeping momentum, so the runner is never stuck upside-down.
+	rollRightStiffness: 0.18,
 	// Below this |cos(bodyAngle)| the runner is near-vertical and its horizontal
 	// facing is degenerate (the art is nearly edge-on), so bodyFacing HOLDS rather
 	// than snapping on the tiny, jittery sign of cos. ~0.1 ≈ within ~6deg of
@@ -591,6 +602,15 @@ export interface Body {
 	 * for the same reason.
 	 */
 	loopRun: LoopRun | null
+	/**
+	 * True while the runner is ROLLING out of a bad landing (Sonic-style). A fast
+	 * landing on the head/back would otherwise crash+ragdoll (a stumble that bleeds
+	 * ~20% speed); instead the runner TUCKS AND ROLLS — it keeps its forward velocity
+	 * while being force-rotated toward upright in the travel direction, then pops
+	 * upright and resumes running. Set when a would-be crash happens with enough
+	 * forward speed; cleared once the body is upright again (see rollBody / stepBody).
+	 */
+	rolling: boolean
 }
 
 // Named indices into Body.points for the sled rig.
@@ -619,7 +639,7 @@ export function makeBody(center: Vec2): Body {
 		{ i: BACK, j: MAST, rest: dist(BACK, MAST), stiffness: arm },
 		{ i: FRONT, j: MAST, rest: dist(FRONT, MAST), stiffness: arm },
 	]
-	return { points, constraints, crashed: false, spinStreak: 0, loopRun: null }
+	return { points, constraints, crashed: false, spinStreak: 0, loopRun: null, rolling: false }
 }
 
 /**
@@ -714,8 +734,8 @@ function applyUpright(body: Body): void {
  * via the spin/tilt that the impact induces, so we don't need a separate
  * per-contact impact probe here.)
  */
-function shouldCrash(body: Body, prevAngle: number, dt: number): boolean {
-	if (body.crashed) return false
+function shouldCrash(body: Body, prevAngle: number, dt: number): 'tilt' | 'spin' | null {
+	if (body.crashed) return null
 	// Tilt: angle of the mast above the midpoint vs. true up. A genuine flip-over
 	// crashes immediately (no streak needed — you're upside down).
 	const back = body.points[BACK]
@@ -729,7 +749,7 @@ function shouldCrash(body: Body, prevAngle: number, dt: number): boolean {
 	if (mlen > EPSILON) {
 		// Angle between mast direction and straight up (0,-1).
 		const tilt = Math.acos(Math.max(-1, Math.min(1, -my / mlen)))
-		if (tilt > PHYSICS.crashTilt) return true
+		if (tilt > PHYSICS.crashTilt) return 'tilt'
 	}
 	// Angular speed from the change in runner facing this step. A hard LANDING
 	// spins the runner for a frame or two as it snaps onto the slope; only a
@@ -739,7 +759,7 @@ function shouldCrash(body: Body, prevAngle: number, dt: number): boolean {
 	while (dAng < -Math.PI) dAng += 2 * Math.PI
 	if (Math.abs(dAng / dt) > PHYSICS.crashSpin) body.spinStreak++
 	else body.spinStreak = 0
-	return body.spinStreak >= PHYSICS.crashSpinFrames
+	return body.spinStreak >= PHYSICS.crashSpinFrames ? 'spin' : null
 }
 
 /**
@@ -797,6 +817,54 @@ function rightBody(body: Body): void {
 		p.prev.x = p.pos.x
 		p.prev.y = p.pos.y
 	}
+}
+
+/**
+ * ROLL the rig toward upright about its center (Sonic-style roll-out), PRESERVING
+ * each point's velocity so forward momentum carries through — unlike rightBody,
+ * which zeroes velocity to stand up in place. We rotate every point (pos AND prev
+ * together, so the Verlet velocity is rotated, not destroyed) about the body center
+ * by a fraction of the angle from the current mast direction to straight-up, in the
+ * direction of travel. Called each substep while `body.rolling`; strong enough
+ * (rollRightStiffness) to climb a full inversion back through horizontal, which the
+ * gentle upright spring can't. Returns the remaining tilt (radians from upright) so
+ * the caller can end the roll once upright. Mutates `body`.
+ */
+function rollBody(body: Body, dt: number): number {
+	const c = bodyCenter(body)
+	const back = body.points[BACK]
+	const front = body.points[FRONT]
+	const m = body.points[MAST]
+	// Mast direction from the runner midpoint = the body's "up".
+	const midx = (back.pos.x + front.pos.x) * 0.5
+	const midy = (back.pos.y + front.pos.y) * 0.5
+	const mx = m.pos.x - midx
+	const my = m.pos.y - midy
+	const mlen = Math.hypot(mx, my)
+	if (mlen < EPSILON) return 0
+	// Tilt from straight-up (0,-1): angle whose cos is (-my/mlen).
+	const tilt = Math.acos(Math.max(-1, Math.min(1, -my / mlen)))
+	// Roll in the direction of travel: sign from the runner's horizontal velocity, so
+	// a forward-moving runner rolls forward (nose-over) rather than backward.
+	const vx = runnerHorizontalVelocity(body, dt)
+	const dir = vx >= 0 ? 1 : -1
+	// Rotate a fraction of the way toward upright this step.
+	const theta = dir * tilt * PHYSICS.rollRightStiffness
+	const cos = Math.cos(theta)
+	const sin = Math.sin(theta)
+	for (const p of body.points) {
+		// Rotate pos AND prev about the center by theta — rotating prev too carries the
+		// velocity (pos-prev) around with the body instead of zeroing it.
+		const dxp = p.pos.x - c.x
+		const dyp = p.pos.y - c.y
+		p.pos.x = c.x + dxp * cos - dyp * sin
+		p.pos.y = c.y + dxp * sin + dyp * cos
+		const dxv = p.prev.x - c.x
+		const dyv = p.prev.y - c.y
+		p.prev.x = c.x + dxv * cos - dyv * sin
+		p.prev.y = c.y + dxv * sin + dyv * cos
+	}
+	return tilt
 }
 
 /** The body's center of mass (average of its points). Used for camera/stats. */
@@ -1187,13 +1255,45 @@ export function stepBody(
 
 	for (const p of body.points) clampSpeed(p, dt)
 
-	// Latch the crash state after the step settles: if the sled flipped past
-	// `crashTilt` or spun faster than `crashSpin`, switch off the upright spring
-	// for the rest of the run so it ragdolls. Checked last so it sees the resolved
-	// post-collision pose (a wall slam shows up as the induced spin/tilt). Skipped in
-	// loop mode: going inverted over the top of a loop is expected, not a wipeout, so
-	// the tilt/spin there must not latch a crash.
-	if (!looping && !body.crashed && shouldCrash(body, prevAngle, dt)) body.crashed = true
+	// --- ROLL-OUT (Sonic-style) takes priority over crash while it's active -------
+	// A roll is a committed animation: once it STARTS (from a grounded tipped-over
+	// landing, see below) it rotates the rig all the way back to upright, keeping
+	// momentum — it does NOT abort if the rotation transiently lifts a runner point
+	// off the ground (that self-inflicted ground-loss is why an earlier version got
+	// stuck near-sideways: it ended the roll after one frame and the upright spring
+	// then stalled at ~90°). It ends only when actually upright. Entry is still
+	// grounded-gated so a mid-jump spin never starts a roll (that would wreck the arc).
+	const grounded = runnerGrounded(body, segments)
+	if (body.rolling) {
+		const tilt = rollBody(body, dt)
+		if (tilt < 0.15) {
+			body.rolling = false
+			body.spinStreak = 0
+		}
+	}
+	// Evaluate the crash cause after the step settles (sees the resolved post-collision
+	// pose). Skipped in loop mode (inversion over the top is expected) and while
+	// rolling. `shouldCrash` is ALWAYS called (even airborne) so its spin-streak
+	// bookkeeping stays live, but we only ACT on it when grounded — an airborne
+	// spinning body just keeps flying (rotating it mid-jump would wreck the arc).
+	else if (!looping && !body.crashed) {
+		const cause = shouldCrash(body, prevAngle, dt)
+		// Only a TILT (landed on the head/back, past ~125°) triggers anything. A
+		// `'spin'` is the normal landing settle — ignored, so a clean landing just
+		// lands (no crash, no roll, no momentum loss). A grounded tilt in side mode
+		// (opts.recover) ALWAYS ROLLS the runner back upright — even from fully
+		// upside-down and even slow — so it never gets stuck inverted; the roll keeps
+		// whatever forward momentum it has (Sonic roll-out). Only line mode (no
+		// recover) leaves it as a latched crash/ragdoll.
+		if (grounded && cause === 'tilt') {
+			if (opts?.recover) {
+				body.rolling = true
+				body.spinStreak = 0
+			} else {
+				body.crashed = true
+			}
+		}
+	}
 	// Side mode: recover a settled, grounded ragdoll — stand it back upright in
 	// place (rightBody) and un-crash so propulsion resumes (self-recovering
 	// wipeout). Reset spinStreak so a fresh crash must re-accumulate its own streak

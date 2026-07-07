@@ -835,20 +835,15 @@ describe('physics: sled rig (upright + crash)', () => {
 		expect(Math.abs(bodyAngle(body) - slopeAngle)).toBeLessThan(0.3)
 	})
 
-	it('crashes (ragdolls) when launched off a ramp and over-rotates', () => {
-		// A steep UPWARD ramp flings the sled into the air; with no track under it
-		// the rig over-rotates past the crash tilt and latches crashed (ragdoll).
-		// (A flat-wall slam no longer crashes a body this size — the broad contact
-		// radius arrests it without spinning it out — so we exercise the tilt path,
-		// which is the realistic Line-Rider wipeout: over-rotating off a jump.)
+	it('does NOT crash mid-air — a spinning airborne body just keeps flying', () => {
+		// A steep UPWARD ramp flings the sled into the air spinning. It must NOT crash
+		// while airborne (rotating/ragdolling a body mid-jump would wreck the arc and
+		// bleed its momentum). Only a GROUNDED bad hit matters — see the roll/crash
+		// tests below. (New Sonic behavior: airborne = keep flying.)
 		const ramp: Segment = { a: { x: -600, y: 0 }, b: { x: -200, y: -300 } }
 		const body = makeBody({ x: -580, y: -20 })
-		// Upright while still climbing the ramp (before it launches off the lip).
-		runBody(body, [ramp], 15)
+		runBody(body, [ramp], 100) // launches off the lip and tumbles in the air
 		expect(body.crashed).toBe(false)
-		// After launching and tipping past vertical in the air, it latches crashed.
-		runBody(body, [ramp], 100)
-		expect(body.crashed).toBe(true)
 	})
 
 	it('a hard landing on a slope does not crash (settling spike is not a tumble)', () => {
@@ -958,36 +953,52 @@ describe('physics: side-rider thrust', () => {
 		expect(body.crashed).toBe(false)
 	})
 
-	it('recovers from a crash once settled on the ground, standing upright and driving on (opts.recover)', () => {
-		// A steep ramp launches the body, it over-rotates and crashes (ragdolls),
-		// lands on the flat ground, then RECOVERS: un-crashes, stands upright, and
-		// resumes propulsion. Locks in the self-recovering side-mode wipeout.
-		const ground: Segment = { a: { x: -1e7, y: 120 }, b: { x: 1e7, y: 120 }, kind: 'solid' }
-		const ramp: Segment = { a: { x: 400, y: 120 }, b: { x: 560, y: -80 }, kind: 'solid' }
-		const opts = { ...thrust, recover: true }
-		const body = makeBody({ x: 0, y: 120 - PHYSICS.bodyRadius })
-		let everCrashed = false
-		for (let i = 0; i < 1200; i++) {
-			stepBody(body, [ground, ramp], DT, undefined, opts)
-			if (body.crashed) everCrashed = true
-		}
-		expect(everCrashed).toBe(true) // it really did crash off the steep ramp
-		expect(body.crashed).toBe(false) // ...and recovered by the end
-		// Stood back upright (mast above the runner) and driving forward at speed.
+	// The mast's tilt from upright (0 = upright, π = fully inverted), for the roll tests.
+	const tiltFromUpright = (body: Body): number => {
 		const midY = (body.points[BACK].pos.y + body.points[FRONT].pos.y) / 2
-		expect(body.points[MAST].pos.y).toBeLessThan(midY)
-		expect(bodyVelocity(body, DT).x).toBeGreaterThan(PHYSICS.sideCruiseSpeed * 0.5)
+		const midX = (body.points[BACK].pos.x + body.points[FRONT].pos.x) / 2
+		const mx = body.points[MAST].pos.x - midX
+		const my = body.points[MAST].pos.y - midY
+		const ml = Math.hypot(mx, my)
+		return ml < 1e-9 ? 0 : Math.acos(Math.max(-1, Math.min(1, -my / ml)))
+	}
+
+	it('ROLLS an upside-down fast landing back to upright (opts.recover), never stuck', () => {
+		// Sonic roll-out: a body that lands UPSIDE-DOWN while moving forward fast must
+		// ROLL back upright (not get stuck sideways, not ragdoll away its speed). We
+		// drop an inverted body (mast below the runner) onto the ground moving fast; it
+		// should enter the roll and end fully upright, still driving forward.
+		const ground: Segment = { a: { x: -1e7, y: 120 }, b: { x: 1e7, y: 120 }, kind: 'solid' }
+		const opts = { ...thrust, recover: true }
+		const body = makeBody({ x: 0, y: 120 - PHYSICS.bodyRadius - 60 }) // above ground → falls
+		body.points[MAST].pos.y = (body.points[BACK].pos.y + body.points[FRONT].pos.y) / 2 + PHYSICS.sledMast
+		body.points[MAST].prev.y = body.points[MAST].pos.y
+		for (const p of body.points) p.prev.x = p.pos.x - 1200 * DT // fast forward
+
+		let everRolled = false
+		for (let i = 0; i < 500; i++) {
+			stepBody(body, [ground], DT, undefined, opts)
+			if (body.rolling) everRolled = true
+		}
+		expect(everRolled).toBe(true) // it rolled to right itself
+		expect(body.crashed).toBe(false)
+		// Ended UPRIGHT (mast back above the runner, tilt small) — not stuck sideways.
+		expect(tiltFromUpright(body)).toBeLessThan(0.5)
+		// And still driving forward at speed (kept its momentum through the roll).
+		expect(bodyVelocity(body, DT).x).toBeGreaterThan(PHYSICS.sideCruiseSpeed * 0.4)
 	})
 
-	it('WITHOUT opts.recover a crash stays latched (line mode never self-recovers)', () => {
-		// Same crash, but no recover flag: it must stay crashed (ragdoll) forever,
-		// preserving classic line-mode behavior.
+	it('a slow/stationary upside-down body still self-rights on the ground (opts.recover)', () => {
+		// Even with no forward speed, an upside-down landing must end upright (via the
+		// upright spring / crash-recover), never stuck inverted.
 		const ground: Segment = { a: { x: -1e7, y: 120 }, b: { x: 1e7, y: 120 }, kind: 'solid' }
-		const ramp: Segment = { a: { x: 400, y: 120 }, b: { x: 560, y: -80 }, kind: 'solid' }
-		const body = makeBody({ x: 0, y: 120 - PHYSICS.bodyRadius })
-		// Drive it with thrust (so it reaches the ramp) but WITHOUT recover.
-		for (let i = 0; i < 1200; i++) stepBody(body, [ground, ramp], DT, undefined, thrust)
-		expect(body.crashed).toBe(true)
+		const opts = { ...thrust, recover: true }
+		const body = makeBody({ x: 0, y: 120 - PHYSICS.bodyRadius - 60 })
+		body.points[MAST].pos.y = (body.points[BACK].pos.y + body.points[FRONT].pos.y) / 2 + PHYSICS.sledMast
+		body.points[MAST].prev.y = body.points[MAST].pos.y
+		for (const p of body.points) { p.prev.x = p.pos.x; p.prev.y = p.pos.y } // ~stationary
+		for (let i = 0; i < 500; i++) stepBody(body, [ground], DT, undefined, opts)
+		expect(tiltFromUpright(body)).toBeLessThan(0.5) // ended upright
 	})
 })
 
