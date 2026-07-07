@@ -654,6 +654,27 @@ export function bodyAngle(body: Body): number {
 }
 
 /**
+ * The character's FULL orientation angle (radians) — how far the whole body has
+ * rotated from upright, INCLUDING flips. Unlike bodyAngle (the runner BACK→FRONT
+ * direction, which stays ~horizontal even when the body is upside-down), this reads
+ * the MAST direction — the character's true "up" — so the drawn character actually
+ * rotates through a flip and a roll-out. Returns the angle whose rotation carries
+ * screen-up (0,-1) onto the mast direction: 0 = upright, ±π = fully inverted. The
+ * caller rotates the art by this so an upside-down body renders upside-down (and the
+ * roll visibly spins it back upright). Runner-relative facing (left/right mirror) is
+ * still bodyFacing; this is the roll/flip rotation.
+ */
+export function bodyUpAngle(body: Body): number {
+	const midx = (body.points[BACK].pos.x + body.points[FRONT].pos.x) * 0.5
+	const midy = (body.points[BACK].pos.y + body.points[FRONT].pos.y) * 0.5
+	const mx = body.points[MAST].pos.x - midx
+	const my = body.points[MAST].pos.y - midy
+	// Angle of the mast vector, measured from screen-up (0,-1). atan2(mx, -my) gives
+	// 0 when the mast points straight up, +π/2 tilted right, ±π fully inverted.
+	return Math.atan2(mx, -my)
+}
+
+/**
  * The art's horizontal mirror so its head leads the direction of HORIZONTAL
  * travel: +1 draws it as-authored, -1 mirrors it. Returns `hold` (the previous
  * value) while horizontal speed is inside `deadband` so a slow/stationary sled
