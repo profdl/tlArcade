@@ -89,10 +89,15 @@ await page.evaluate(() => window.__editor.getContainer()?.focus?.())
 await page.keyboard.down('ArrowRight')
 
 const samples = []
+const thighDeltas = []
 for (let i = 0; i < 8; i++) {
   await page.waitForTimeout(90)
   const o = await limbOffsets()
   if (o) samples.push(o)
+  // The thigh's live pose ROTATION delta — the unambiguous swing signal, robust to
+  // leaf shape type (a thin draw line's bounding box is a poor swing proxy).
+  const d = await page.evaluate(() => window.__runtime.entities?.[0]?.pose?.thighL?.rotation ?? null)
+  if (d != null) thighDeltas.push(d)
 }
 await page.keyboard.up('ArrowRight')
 
@@ -107,10 +112,10 @@ function relSpread(samples, a, b) {
   return Math.max(...dys) - Math.min(...dys)
 }
 
-const legSpread = relSpread(samples, 'legL', 'legR')
+const thighSwing = thighDeltas.length ? Math.max(...thighDeltas) - Math.min(...thighDeltas) : 0
 const armSpread = relSpread(samples, 'armL', 'armR')
-log(`   legL-legR y-spread over walk: ${legSpread.toFixed(2)}px  |  armL-armR: ${armSpread.toFixed(2)}px`)
-check('legs swing while walking (relative offset varies)', legSpread > 3, `${legSpread.toFixed(2)}px`)
+log(`   thighL swing over walk: ${thighSwing.toFixed(2)} rad  |  armL-armR y-spread: ${armSpread.toFixed(2)}px`)
+check('legs swing while walking (thigh rotation varies)', thighSwing > 0.2, `${thighSwing.toFixed(2)} rad`)
 // Arms hang at the sides now and swing SUBTLY (by design — armSwing < leg swing), so
 // a smaller threshold than the legs. Still must visibly move.
 check('arms swing subtly while walking (relative offset varies)', armSpread > 1.5, `${armSpread.toFixed(2)}px`)

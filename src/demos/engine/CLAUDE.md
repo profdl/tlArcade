@@ -436,8 +436,10 @@ clips, no timeline UI (that's a later nicety; the data path exists, see below).
     - **The legs are a two-bone chain now** (`thighL/shinL/thighR/shinR`, thigh child of the
       spine, shin child of the thigh — see `builderRig.ts` `legChain` + `BUILDER_LEG_BONES`),
       and the builder's single leg strokes are replaced by **generated thigh+shin segments**
-      ([builder.ts](game/builder.ts) `createLegSegment`, from the same `LEG_ANCHORS` the rig
-      uses so art and rig align by construction). The runtime measures the per-side leg
+      — native `draw` straight lines styled like the arms (black, medium, draw dash;
+      [builder.ts](game/builder.ts) `createLegSegment`, points encoded to a `path` via
+      `b64Vecs`), from the same `LEG_ANCHORS` the rig uses so art and rig align by
+      construction. The runtime measures the per-side leg
       geometry (`legRigsFrom` → `LegRig`) from the rest rig once at start and passes it to the
       pose. **Three IK gotchas learned the hard way:** (1) `WALK_DEFAULTS.footDrop` MUST
       be inside the leg's full reach (thigh+shin ≈ 27px for the 120px builder) — beyond

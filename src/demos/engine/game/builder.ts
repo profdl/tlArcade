@@ -18,6 +18,10 @@
  * full-props export snippet, then paste the shapes' `{ type, nx, ny, props }` here.
  */
 import { createShapeId, type Editor, type TLShapeId, type TLShapePartial } from 'tldraw'
+// b64Vecs encodes draw points into the base64 `path` string a draw segment stores —
+// the same encoding the captured builder strokes (arms/torso) use. From tlschema (a
+// direct dep) since `tldraw` doesn't re-export it.
+import { b64Vecs } from '@tldraw/tlschema'
 import { PLAYER_ROLE } from './player'
 import { builderRig, LEG_ANCHORS } from './rig/builderRig'
 
@@ -137,48 +141,53 @@ export const BUILDER_WIDTH = BUILDER_ART.boundsW * (BUILDER_HEIGHT / BUILDER_ART
  * parts and stamps `meta.role = 'player'` — the marker "Set as Player" uses — so
  * the runtime treats it exactly like a user-drawn player.
  */
-/** Leg-segment thickness as a fraction of the figure height (a slim limb). */
-const LEG_SEGMENT_THICKNESS = 0.06
-
 /**
- * The record (x,y,rotation) that lays a thin `thickness`-tall rectangle of length
- * |a→b| ALONG the segment a→b, with the bone running down its CENTERLINE. tldraw's geo
- * origin is its top-left corner and it rotates about that origin, so the origin is `a`
- * shifted perpendicular by half-thickness: leaf-center then lands on the bone midpoint
- * and the leaf's start edge sits at the joint `a`. Pure (no editor) so the caller can
- * place OR reposition a segment to sit exactly on its bone.
+ * The record (x,y,rotation,points) for a leg SEGMENT drawn as a native `draw` LINE
+ * from page point `a` to `b`. The draw shape's origin is placed AT the joint `a` and
+ * its single straight `free` segment runs to `b` in local space, so the origin IS the
+ * bone pivot (a→b lies exactly on the bone). We keep rotation 0 and bake the direction
+ * into the point (simplest — the stroke already goes a→b), so the leaf sits on its bone
+ * with no perpendicular offset. Pure (no editor) so the caller can place OR reposition.
  */
-function legSegmentRecord(a: { x: number; y: number }, b: { x: number; y: number }, thickness: number) {
-  const len = Math.hypot(b.x - a.x, b.y - a.y)
-  const angle = Math.atan2(b.y - a.y, b.x - a.x)
-  // origin = a − R(angle)·(0, thickness/2)  ⇒  leaf centerline runs a→b.
-  return {
-    x: a.x + Math.sin(angle) * (thickness / 2),
-    y: a.y - Math.cos(angle) * (thickness / 2),
-    rotation: angle,
-    w: len,
-    h: thickness,
-  }
+function legSegmentRecord(a: { x: number; y: number }, b: { x: number; y: number }) {
+  // Draw origin sits at the joint `a`; the stroke runs to `b` in local space. A draw
+  // segment stores its points as a delta-encoded base64 `path` (dim 2) — the same form
+  // the captured arm/torso strokes use — so we encode the two endpoints.
+  const path = b64Vecs.encodePoints2D([
+    { x: 0, y: 0 },
+    { x: b.x - a.x, y: b.y - a.y },
+  ])
+  return { x: a.x, y: a.y, rotation: 0, path }
 }
 
-/** Create one leg SEGMENT (thigh or shin) laid along page points a→b. */
-function createLegSegment(editor: Editor, a: { x: number; y: number }, b: { x: number; y: number }, thickness: number): TLShapeId {
+/** A leg SEGMENT's single straight draw segment, from an encoded path. */
+function legSegment(path: string) {
+  return [{ type: 'free', path, dim: 2 }]
+}
+
+/**
+ * Create one leg SEGMENT (thigh or shin) as a native `draw` straight line laid along
+ * page points a→b, styled like the builder's arms (black, medium, draw dash).
+ */
+function createLegSegment(editor: Editor, a: { x: number; y: number }, b: { x: number; y: number }): TLShapeId {
   const id = createShapeId()
-  const r = legSegmentRecord(a, b, thickness)
+  const r = legSegmentRecord(a, b)
   editor.createShape({
     id,
-    type: 'geo',
+    type: 'draw',
     x: r.x,
     y: r.y,
     rotation: r.rotation,
     props: {
-      w: r.w,
-      h: r.h,
-      geo: 'rectangle',
-      dash: 'draw',
+      segments: legSegment(r.path),
       color: 'black',
-      fill: 'solid',
+      fill: 'none',
+      dash: 'draw',
       size: 'm',
+      isComplete: true,
+      isClosed: false,
+      isPen: false,
+      scale: 1,
     },
   } as TLShapePartial)
   return id
@@ -230,11 +239,10 @@ export function createBuilderPlayer(
   // anchors the rig's leg bones use, so art and rig align by construction. Page-space
   // point for a normalized figure coord:
   const pt = (n: { x: number; y: number }) => ({ x: x + n.x * figW, y: y + n.y * figH })
-  const thickness = LEG_SEGMENT_THICKNESS * figH
-  const thighL = createLegSegment(editor, pt(LEG_ANCHORS.L.joint), pt(LEG_ANCHORS.L.knee), thickness)
-  const shinL = createLegSegment(editor, pt(LEG_ANCHORS.L.knee), pt(LEG_ANCHORS.L.tip), thickness)
-  const thighR = createLegSegment(editor, pt(LEG_ANCHORS.R.joint), pt(LEG_ANCHORS.R.knee), thickness)
-  const shinR = createLegSegment(editor, pt(LEG_ANCHORS.R.knee), pt(LEG_ANCHORS.R.tip), thickness)
+  const thighL = createLegSegment(editor, pt(LEG_ANCHORS.L.joint), pt(LEG_ANCHORS.L.knee))
+  const shinL = createLegSegment(editor, pt(LEG_ANCHORS.L.knee), pt(LEG_ANCHORS.L.tip))
+  const thighR = createLegSegment(editor, pt(LEG_ANCHORS.R.joint), pt(LEG_ANCHORS.R.knee))
+  const shinR = createLegSegment(editor, pt(LEG_ANCHORS.R.knee), pt(LEG_ANCHORS.R.tip))
   const legIds = [thighL, shinL, thighR, shinR]
 
   // Group the parts (the reproduced shapes + the generated leg segments) and mark the
@@ -263,10 +271,20 @@ export function createBuilderPlayer(
   if (groupBounds) {
     const rigPt = (n: { x: number; y: number }) => ({ x: groupBounds.minX + n.x * rigW, y: groupBounds.minY + n.y * rigH })
     const place = (leafId: TLShapeId, a: { x: number; y: number }, b: { x: number; y: number }) => {
-      const r = legSegmentRecord(rigPt(a), rigPt(b), thickness)
+      const r = legSegmentRecord(rigPt(a), rigPt(b))
       // page origin → the leaf's own parent (group) space, since it's grouped now.
       const local = editor.getShapeParentTransform(leafId).clone().invert().applyToPoint({ x: r.x, y: r.y })
-      editor.updateShape({ id: leafId, type: 'geo', x: local.x, y: local.y, rotation: r.rotation, props: { w: r.w, h: r.h } } as TLShapePartial)
+      const shape = editor.getShape(leafId)
+      const props = shape?.props as Record<string, unknown> | undefined
+      editor.updateShape({
+        id: leafId,
+        type: 'draw',
+        x: local.x,
+        y: local.y,
+        rotation: r.rotation,
+        // Keep the captured draw style, only rewrite the straight segment's endpoints.
+        props: { ...props, segments: legSegment(r.path) },
+      } as TLShapePartial)
     }
     place(thighL, LEG_ANCHORS.L.joint, LEG_ANCHORS.L.knee)
     place(shinL, LEG_ANCHORS.L.knee, LEG_ANCHORS.L.tip)
