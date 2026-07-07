@@ -39,6 +39,8 @@ export interface PlayerPart {
   offY: number
   /** page→parent-local transform, to write the leaf's x/y back in its own space. */
   toLocal: Mat
+  /** The leaf's PAGE rotation (radians) at start — the rig delta rotation adds to it. */
+  restRotation: number
   /** Authored { x, y, opacity } for non-destructive restore on stop. */
   snap: { x: number; y: number; opacity: number }
 }
@@ -127,7 +129,8 @@ export function collectPlayerBody(
     // origin is local (0,0)), and the page→parent-local transform to write it
     // back. For a top-level shape the parent transform is identity, so this
     // reduces to the plain (x,y) offset the single-shape path already used.
-    const pageOrigin = editor.getShapePageTransform(id).point()
+    const pageTransform = editor.getShapePageTransform(id)
+    const pageOrigin = pageTransform.point()
     const toLocal = editor.getShapeParentTransform(id).clone().invert()
     parts.push({
       id,
@@ -135,6 +138,7 @@ export function collectPlayerBody(
       offX: pageOrigin.x - bounds.minX,
       offY: pageOrigin.y - bounds.minY,
       toLocal,
+      restRotation: pageTransform.rotation(),
       snap: { x: shape.x, y: shape.y, opacity: shape.opacity },
     })
   }

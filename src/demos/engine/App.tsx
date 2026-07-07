@@ -22,12 +22,15 @@ import {
 import 'tldraw/tldraw.css'
 import { Tray } from './render/Tray'
 import { PlayerToolbar } from './render/PlayerToolbar'
+import { RigOverlay } from './render/RigOverlay'
+import { RigTool } from './render/RigTool'
 import { PhysicsPanel } from './render/PhysicsPanel'
 import { GeneratePanel } from './render/GeneratePanel'
 import { Hud } from './render/Hud'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
 import { playingAtom, tunablesAtom } from './game/state'
+import { draftRigAtom, dragBoneAtom, rigModeAtom, rigTargetAtom } from './game/rig/state'
 import { makeTunables } from './game/physics'
 import { TEMPLATE_LIST } from './game/templates'
 import './App.css'
@@ -40,6 +43,7 @@ function InFront() {
     <>
       <Tray />
       <PlayerToolbar />
+      <RigOverlay />
       <PhysicsPanel />
       <Hud />
     </>
@@ -59,6 +63,11 @@ const components: TLComponents = {
   InFrontOfTheCanvas: InFront,
   StylePanel,
 }
+
+// The bone-drawing rig tool (R1). A custom StateNode so bone-drawing owns the
+// pointer while active (tldraw-v5-native-ui: full editors are tools, not overlays).
+// Module-level for stable identity, like `components`.
+const tools = [RigTool]
 
 const IDLE: GameState = {
   status: 'playing',
@@ -95,6 +104,8 @@ export default function App() {
     }
     if (import.meta.env.DEV) {
       ;(window as unknown as { __editor?: Editor }).__editor = editor
+      // Expose rig-authoring atoms for the Playwright bone-drawing e2e check.
+      ;(window as unknown as { __rig?: unknown }).__rig = { draftRigAtom, rigModeAtom, rigTargetAtom, dragBoneAtom }
     }
     return () => {
       runtimeRef.current?.stop()
@@ -181,7 +192,12 @@ export default function App() {
 
   return (
     <div className="eng-root">
-      <Tldraw persistenceKey="tlArcade-engine-native" components={components} onMount={handleMount} />
+      <Tldraw
+        persistenceKey="tlArcade-engine-native"
+        components={components}
+        tools={tools}
+        onMount={handleMount}
+      />
 
       <div className="eng-topbar">
         <button

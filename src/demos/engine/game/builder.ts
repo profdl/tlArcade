@@ -19,6 +19,21 @@
  */
 import { createShapeId, type Editor, type TLShapeId, type TLShapePartial } from 'tldraw'
 import { PLAYER_ROLE } from './player'
+import { builderRig } from './rig/builderRig'
+
+/**
+ * Capture-order indices of the LIMB shapes in BUILDER_ART.shapes, so the default rig
+ * attaches each limb bone to its real leaf id. Verified against the shapes' actual
+ * geometric centers (NOT the comment labels, which were unreliable — the old mapping
+ * grabbed the SMILE, index 2, as an arm):
+ *   0 = right arm  (wide/short, right, mid-body)
+ *   3 = left arm   (wide/short, left,  mid-body)
+ *   4 = right leg  (tall/narrow, right, bottom)
+ *   5 = left leg   (tall/narrow, left,  bottom)
+ * The head(1), smile(2), torso(6), and eyes(7,8) are NOT rig-driven — they ride the
+ * static torso root and stay put.
+ */
+const LIMB_INDEX = { armR: 0, armL: 3, legR: 4, legL: 5 } as const
 
 /** One captured shape: type, normalized origin, and its COMPLETE props (with the
  *  original `segments` for draw shapes). */
@@ -147,10 +162,23 @@ export function createBuilderPlayer(
   const groupId = createShapeId()
   editor.groupShapes(ids, { groupId })
   const group = editor.getShape(groupId)
+
+  // Default rig (R2): a Tier-A skeleton with L/R arm + leg bones attached to the
+  // real limb leaf ids, so the default player's limbs animate on Play (the walk
+  // cycle in game/rig/walk.ts supplies the live pose). Entity-local px = figure size.
+  const rig = builderRig(figW, figH, {
+    armL: ids[LIMB_INDEX.armL],
+    armR: ids[LIMB_INDEX.armR],
+    legL: ids[LIMB_INDEX.legL],
+    legR: ids[LIMB_INDEX.legR],
+  })
+
   editor.updateShape({
     id: groupId,
     type: group?.type ?? 'group',
-    meta: { ...(group?.meta ?? {}), role: PLAYER_ROLE },
+    // Rig is plain data; cast through unknown to tldraw's JsonObject meta (an
+    // interface has no index signature — the shell CLAUDE.md pattern).
+    meta: { ...(group?.meta ?? {}), role: PLAYER_ROLE, rig: rig as unknown as Record<string, never> },
   } as TLShapePartial)
 
   return groupId

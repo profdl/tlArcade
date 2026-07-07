@@ -334,6 +334,73 @@ regression fixture: `templates.test.ts` checks structure (one player, a goal, va
 roles); `tier1.test.ts` checks the Underground/Factory templates actually use their
 intended Tier-1 primitives with working meta configs.
 
+## Rigging — Tier A rigid (R1, PLAN §3)
+
+The first "character comes alive" converter: a **bone rig** on the player whose leaf
+shapes rotate/translate rigidly with their bones (cut-out puppet, Tier A of §6). The
+authoring model is **draw bones** (the Spine/Rive/DragonBones convention), split from
+play: the editor AUTHORS a skeleton → bakes it to data → a pure evaluator PLAYS it.
+
+**Authoring = drawing bones (pivot → tip).** You draw each bone as a click-drag over
+the figure, FROM the joint (shoulder, hip, base of neck) TO the far end (elbow, knee).
+The **start point IS the pivot**, so a limb swings about its joint, not its center —
+this was the whole point of the redesign. Starting a bone near an existing bone's TIP
+**snaps** to it and makes it that bone's **child**, so `shoulder → elbow → wrist` is a
+real FK chain (rotating the shoulder carries the whole arm). Parts **auto-attach** to
+the nearest bone segment. Pieces:
+
+- **Pure authoring core** — [game/rig/authoring.ts](game/rig/authoring.ts): a
+  `DraftRig` (bones as `pivot→tip` segments, entity-local) + `snapParentForStart` /
+  `snappedStart` (tip-snap chaining), `nearestBone` (proximity auto-attach), and
+  `bakeDraft` (draft → immutable `Rig`: pivot→origin relative to the parent's pivot,
+  drawn direction → rest angle, |pivot→tip| → `length`, attachments → `rigid` slots).
+  Editor-free, unit-tested (`authoring.test.ts` proves a shoulder swing orbits the
+  whole arm about the shoulder; an elbow swing only the forearm about the elbow).
+- **Entry** — the **"Rig"** button on the single selection toolbar
+  ([render/PlayerToolbar.tsx](render/PlayerToolbar.tsx), which holds BOTH "Set as
+  Player" and "Rig" so the contextual toolbars never stack) → `enterRigMode`.
+- **The tool** — [render/RigTool.ts](render/RigTool.ts): a custom **`StateNode`**
+  (id **`rig`** — a SIMPLE id, no dot: `setCurrentTool` treats a dotted id as a state
+  path, so a root tool must be unqualified; registered via `tools` on `<Tldraw>`) so
+  bone-drawing OWNS the pointer while active (Escape/cursor for free — the native-UI
+  decision, §7.5). Pointer down = pivot (tip-snapped), move = rubber-band preview
+  (`dragBoneAtom`), up = tip → commits a bone to `draftRigAtom`.
+- **The overlay + panel** — [render/RigOverlay.tsx](render/RigOverlay.tsx)
+  (`InFrontOfTheCanvas`): renders the draft (bone lines + pivot/tip dots) tracking the
+  camera via `pageToScreen`, plus a panel — **Rig** (enter, from the contextual
+  toolbar), **Auto-attach parts**, **Bake to player**, **Done**. Shared state
+  (`rigModeAtom` / `rigTargetAtom` / `draftRigAtom`) lives in
+  [game/rig/state.ts](game/rig/state.ts) (atoms, like game/state.ts).
+
+**Play = a pure evaluator.** [game/rig/evaluate.ts](game/rig/evaluate.ts) is editor-free
+and unit-tested (like physics.ts): given the immutable `Rig` + a live `Pose`, it runs
+the §3.4 Tier-A slice — **FK** (walk the bone tree in dependency order → each bone's
+world transform, for rest and pose) then **rigid deform** (per rigid leaf, delta
+`D = W_pose·W_rest⁻¹`). Returns leafId → `Mat2D` delta. Its 2D affine is
+[game/rig/mat2d.ts](game/rig/mat2d.ts) (no tldraw import — the rig stays pure).
+
+**Why the split (§8 ownership rule):** the evaluator owns each child transform during
+play; `writeEntities` writes only the body's base translation and then applies each
+leaf's rig delta (`writeRigPart`). Collision stays the merged **rest** outline (§6) —
+the rig is cosmetic, the body doesn't deform.
+
+- **Data model** — [game/rig/types.ts](game/rig/types.ts): `Bone` (strict tree, single
+  root; `x,y` = pivot relative to the parent's pivot, `rotation` = rest angle, `length`
+  = |pivot→tip| descriptive), `Slot`, `Attachment` (R1 ships only `rigid`; `skinnedPath`
+  is R6), `Constraint` (declared, solved in R3), `Rig` (`version: 1`, stored in the
+  character's **`meta.rig`**, entity-local coords). Faithful to §3.1; only Tier-A is LIVE.
+- **Runtime** — `start()` reads `meta.rig` (`readRig`) and stores the `Rig` on entity 0.
+  No rig ⇒ the rigid whole-body path, unchanged. (Bones live in `meta`, not as shapes,
+  so there are no markers to hide or exclude from the body.)
+
+**R1 scope / what's next:** the pose that drives the rig during play is **empty in R1**
+(no clips yet), so a baked rig plays AT REST — byte-identical to an unrigged player
+(behavior-preserving; the whole existing suite stays green). Live animation during play
+is **R2** (a state→clip selector sets `entity.pose` from sim state). IK/physics
+constraints are R3; weighted skinning (a custom shape) is R6. Tests: `mat2d.test.ts`,
+`evaluate.test.ts`, `authoring.test.ts` (the bone-drawing/chain math), and
+`rig.integration.test.ts` (the runtime's delta-to-leaf math).
+
 ## The sim
 
 Per fixed substep (`SIM.FIXED_DT`): read input + jump edges → accelerate `vx`
@@ -406,9 +473,12 @@ avoid the overlap. Slider layout is data-driven from `TUNABLE_GROUPS`.
   (or lone shape), top-level and unrotated. Moving the group carries its parts;
   but don't rotate the player record, or re-parent it under something else, and
   expect the sim to track it.
-- **A group player is a rigid body.** Parts are merged into one outline at
-  `start()` and never move relative to each other during play — no articulated
-  limbs/walk cycles yet.
+- **A group player's COLLISION body is rigid.** Parts are merged into one outline
+  at `start()` and the collision body never deforms. With a **rig** (R1) the leaves
+  *can* move relative to each other visually (the evaluator drives each), but that's
+  cosmetic — collision still uses the merged rest outline (§6). Without a rig, the
+  parts ride rigidly as before. Articulated motion DURING PLAY needs R2 clips (R1's
+  play pose is empty ⇒ rest).
 - **`persistenceKey="tlArcade-engine-native"`** — unique per demo (the shell's
   CLAUDE.md explains why this must never be shared). Levels persist in
   localStorage.

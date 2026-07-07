@@ -40,7 +40,11 @@ import { createShapeId } from 'tldraw'
 import type { Editor, TLDrawShape, TLGeoShape, TLShapeId, TLShapePartial } from 'tldraw'
 import { roleForColor, shapeForRole, ROLES, TILE, type Role } from './roles'
 import type { PlacementMeta } from './level'
-import { collectPlayerBody, isPlayerMarked } from './player'
+import { collectPlayerBody, isPlayerMarked, type PlayerPart } from './player'
+import { evaluateRig } from './rig/evaluate'
+import { poseForState } from './rig/walk'
+import type { Rig } from './rig/types'
+import { compose, fromTRS, type Mat2D } from './rig/mat2d'
 import { buildBody, type Body, type Pt } from './collision'
 import { SIM, type PhysicsTunables } from './physics'
 import { tunablesAtom, gameStateAtom } from './state'
@@ -246,6 +250,17 @@ export class GameRuntime {
     return (shape.meta ?? {}) as PlacementMeta
   }
 
+  /**
+   * The rig driving the player (R1), or undefined for a rigid whole-body player.
+   * Read from the character's baked `meta.rig` (authored by the RigOverlay's "Bake
+   * to player" — game/rig/authoring.ts). No rig ⇒ the rigid whole-body path.
+   */
+  private readRig(playerId: TLShapeId): Rig | undefined {
+    const shape = this.editor.getShape(playerId)
+    const baked = (shape?.meta as { rig?: Rig } | undefined)?.rig
+    return baked && baked.version === 1 ? baked : undefined
+  }
+
   /** Begin play. Returns false (and does nothing) if there's no player on the page. */
   start(): boolean {
     const editor = this.editor
@@ -340,6 +355,11 @@ export class GameRuntime {
       x: p.x - playerBounds.minX,
       y: p.y - playerBounds.minY,
     }))
+    // Rig (R1): a baked meta.rig, else bake it from the live joints/bindings. Build
+    // leafId → part so writeEntities can apply each bone's delta to its leaf. No rig
+    // ⇒ undefined ⇒ the rigid whole-body path (unchanged). Joint markers were
+    // already excluded from the body by collectPlayerBody.
+    const rig = this.readRig(player.id)
     this.entities = [
       {
         id: player.id,
@@ -350,6 +370,7 @@ export class GameRuntime {
         kin,
         samples,
         parts: playerBody.parts,
+        rig,
       },
     ]
 
@@ -678,6 +699,12 @@ export class GameRuntime {
       else if (!wasGrounded && k.grounded && fallSpeedIn > 0) {
         this.audio.play('land', Math.min(1, fallSpeedIn / t.jumpSpeed))
       }
+      // R2: if the player is rigged, drive its pose from the walk cycle (grounded +
+      // moving → swing arms/legs; else rest). writeEntities evaluates the rig with
+      // this pose. Unrigged players carry no rig, so this is a cheap no-op for them.
+      if (playerEntity.rig) {
+        playerEntity.pose = poseForState({ grounded: k.grounded, vx: k.vx, simTime: this.simTime })
+      }
     }
   }
 
@@ -719,14 +746,29 @@ export class GameRuntime {
           const rx = entity.kin.prevX + (entity.kin.x - entity.kin.prevX) * alpha
           const ry = entity.kin.prevY + (entity.kin.y - entity.kin.prevY) * alpha
           if (entity.motion === 'platformer') playerRender = { x: rx, y: ry }
+
+          // Rig (R1): evaluate the pose → per-leaf delta transforms (entity-local).
+          // Absent for an unrigged entity, so the loop below stays the pure
+          // translation path (byte-identical to before).
+          const deltas = entity.rig ? evaluateRig(entity.rig, entity.pose) : null
+
           for (const part of entity.parts) {
-            const local = part.toLocal.applyToPoint({ x: rx + part.offX, y: ry + part.offY })
-            this.editor.updateShape({
-              id: part.id,
-              type: part.type,
-              x: local.x,
-              y: local.y,
-            } as TLShapePartial)
+            const delta = deltas?.get(part.id as string)
+            if (delta) {
+              // Rig-driven leaf: the rig delta D (entity-local rest→posed) moves the
+              // leaf's rest origin and rotates it. Posed origin (entity-local) →
+              // +（rx,ry) page → parent-local; rotation adds D's rotation to rest.
+              this.writeRigPart(part, delta, rx, ry)
+            } else {
+              // Rigid whole-body (or a non-rig leaf): translation only, as before.
+              const local = part.toLocal.applyToPoint({ x: rx + part.offX, y: ry + part.offY })
+              this.editor.updateShape({
+                id: part.id,
+                type: part.type,
+                x: local.x,
+                y: local.y,
+              } as TLShapePartial)
+            }
           }
         }
         // Follow the interpolated player, in the same batch as its move.
@@ -734,6 +776,28 @@ export class GameRuntime {
       },
       { history: 'ignore', ignoreShapeLock: true },
     )
+  }
+
+  /**
+   * Write one rig-driven leaf: apply the rig delta `D` (entity-local rest→posed) to
+   * the leaf's rest origin and rotation, then map the posed page position back into
+   * the leaf's own parent space. `D` is a rigid-body transform of entity-local space
+   * (evaluate.ts), so applying it to the leaf origin moves it correctly whether the
+   * leaf sits at its bone's origin or is offset from it (the orbit is baked into D).
+   */
+  private writeRigPart(part: PlayerPart, delta: Mat2D, rx: number, ry: number) {
+    // Leaf rest origin in entity-local → posed origin (still entity-local).
+    const posed = compose(delta, fromTRS(part.offX, part.offY, 0))
+    // + interpolated body top-left → page, then page→parent-local.
+    const local = part.toLocal.applyToPoint({ x: posed.tx + rx, y: posed.ty + ry })
+    const rotation = part.restRotation + Math.atan2(delta.b, delta.a)
+    this.editor.updateShape({
+      id: part.id,
+      type: part.type,
+      x: local.x,
+      y: local.y,
+      rotation,
+    } as TLShapePartial)
   }
 
   /**

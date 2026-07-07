@@ -1,15 +1,16 @@
 /**
- * Engine — the "Set as Player" contextual toolbar.
+ * Engine — the selection contextual toolbar ("Set as Player" + "Rig").
  *
- * Adapted from tldraw's official "Contextual toolbar" example: a
- * `TldrawUiContextualToolbar` (mounted via components.InFrontOfTheCanvas) that
- * floats above the current selection and positions itself from the selection's
- * screen bounds. It shows a single action — make the selected shapes the player
- * (groups them if >1, marks the group; see game/player.ts → markAsPlayer).
+ * Adapted from tldraw's official "Contextual toolbar" example: ONE
+ * `TldrawUiContextualToolbar` (mounted via components.InFrontOfTheCanvas) floating
+ * above the current selection. It is the single selection toolbar (PLAN §7.5's
+ * role-aware `ElementToolbar`) — every per-selection action lives here so the
+ * toolbars never stack. Today: "Set as Player" (mark the selection as the player;
+ * game/player.ts → markAsPlayer) and "Rig" (enter bone-drawing rig mode on the
+ * character; game/rig/state.ts → enterRigMode).
  *
- * It appears only when the editor is idle in the select tool with something
- * selected, and hides entirely while a game is running (game/state.ts →
- * playingAtom). Replaces the old tray button.
+ * Shows only when idle-selecting with a selection, and hides during play
+ * (playingAtom) and while in rig mode (rigModeAtom, which has its own overlay).
  */
 import {
   Box,
@@ -20,15 +21,17 @@ import {
 } from 'tldraw'
 import { markAsPlayer } from '../game/player'
 import { playingAtom } from '../game/state'
+import { enterRigMode, rigModeAtom } from '../game/rig/state'
 
 export function PlayerToolbar() {
   const editor = useEditor()
 
-  // Show only when idle-selecting with a selection, and never during play.
+  // Idle-selecting with a selection; never during play or rig mode.
   const show = useValue(
-    'show player toolbar',
+    'show selection toolbar',
     () =>
       !playingAtom.get() &&
+      !rigModeAtom.get() &&
       editor.isIn('select.idle') &&
       editor.getSelectedShapeIds().length > 0,
     [editor],
@@ -45,7 +48,7 @@ export function PlayerToolbar() {
   }
 
   return (
-    <TldrawUiContextualToolbar label="Player" getSelectionBounds={getSelectionBounds}>
+    <TldrawUiContextualToolbar label="Selection" getSelectionBounds={getSelectionBounds}>
       <TldrawUiToolbarButton
         type="tool"
         className="eng-player-btn"
@@ -53,6 +56,13 @@ export function PlayerToolbar() {
         onClick={() => markAsPlayer(editor, editor.getSelectedShapeIds())}
       >
         Set as Player
+      </TldrawUiToolbarButton>
+      <TldrawUiToolbarButton
+        type="tool"
+        title="Draw a skeleton on this character"
+        onClick={() => enterRigMode(editor)}
+      >
+        Rig
       </TldrawUiToolbarButton>
     </TldrawUiContextualToolbar>
   )

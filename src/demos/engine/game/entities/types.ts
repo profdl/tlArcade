@@ -20,6 +20,8 @@
 import type { TLShapeId } from 'tldraw'
 import type { Pt } from '../collision'
 import type { PlayerPart } from '../player'
+import type { Rig } from '../rig/types'
+import type { Pose } from '../rig/evaluate'
 import type { Motion, Collision, Effect } from '../roles'
 
 export type { Motion, Collision, Effect } from '../roles'
@@ -181,6 +183,20 @@ export interface Entity {
    * `params.crumbleMs`. NOT persisted; cleared on start().
    */
   crumbleStandMs?: number | null
+  /**
+   * The baked rig (R1, from meta.rig / bakeRig) driving this entity's leaf parts,
+   * or undefined for a rigid whole-body entity (today's default). Present ⇒ the
+   * runtime evaluates it each frame and applies per-leaf transforms on top of the
+   * base translation (see engine.ts writeEntities). Collision still uses the merged
+   * rest outline (§6) — the rig is cosmetic. Maps a rig leafId → the part it drives.
+   */
+  rig?: Rig
+  /**
+   * The live pose driving the rig this frame (R2 clips will set this; R1 leaves it
+   * empty ⇒ rest ⇒ identity deltas ⇒ byte-identical to an unrigged player). The
+   * editor sets it for scrub-preview.
+   */
+  pose?: Pose
 }
 
 /** Per-substep input for the platformer entity (edges consumed once, see stepEntity). */
