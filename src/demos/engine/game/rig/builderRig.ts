@@ -33,42 +33,48 @@ export interface BuilderLimbIds {
 }
 
 /**
- * Joint pivots in NORMALIZED figure coords (0..1), tuned to the builder art's REAL
- * geometry (limb centers measured via the editor). A limb pivots at its ATTACHMENT
- * end (shoulder/hip), inward toward the torso from the limb's own center:
- *   arms:  centers ~(0.17, 0.5) L / (0.86, 0.46) R → shoulders pulled in + up
- *   legs:  centers ~(0.36, 0.89) L / (0.60, 0.88) R → hips pulled in + up (top of leg)
+ * Each limb as a NORMALIZED (0..1 figure) segment from its JOINT (where it attaches
+ * to the body — the shoulder/hip) to its free TIP. Measured from the builder art's
+ * REAL per-limb bounding boxes (via the editor), so the bone's pivot sits at the
+ * body attachment and the bone LIES OVER the limb:
+ *   armR bbox x[.72,1] y[.43,.50] → shoulder at the LEFT (inner) end, tip out-right
+ *   armL bbox x[0,.34] y[.46,.54] → shoulder at the RIGHT (inner) end, tip out-left
+ *   legR bbox x[.54,.65] y[.77,.99] → hip at the TOP, tip down
+ *   legL bbox x[.31,.42] y[.78,1] → hip at the TOP, tip down
  */
-const JOINTS = {
-  armL: { x: 0.4, y: 0.44 },
-  armR: { x: 0.6, y: 0.44 },
-  legL: { x: 0.44, y: 0.72 },
-  legR: { x: 0.56, y: 0.72 },
+const LIMBS = {
+  armR: { joint: { x: 0.73, y: 0.45 }, tip: { x: 1.0, y: 0.5 } },
+  armL: { joint: { x: 0.34, y: 0.47 }, tip: { x: 0.02, y: 0.53 } },
+  legR: { joint: { x: 0.6, y: 0.77 }, tip: { x: 0.6, y: 0.99 } },
+  legL: { joint: { x: 0.36, y: 0.78 }, tip: { x: 0.36, y: 1.0 } },
 } as const
-
-/** Rough limb LENGTHS in normalized figure-height units (descriptive; for IK later). */
-const LIMB_LEN = { arm: 0.28, leg: 0.3 } as const
 
 function limbBone(
   id: string,
-  joint: { x: number; y: number },
+  seg: { joint: { x: number; y: number }; tip: { x: number; y: number } },
   figW: number,
   figH: number,
-  lengthNorm: number,
 ): Bone {
+  // Pivot = the joint, in entity-local px, relative to the torso root (at 0,0).
+  const jx = seg.joint.x * figW
+  const jy = seg.joint.y * figH
+  const tx = seg.tip.x * figW
+  const ty = seg.tip.y * figH
+  // Rest angle = the joint→tip direction, so the bone lies along the limb and the
+  // walk swing rotates about the joint in the limb's own frame.
+  const rotation = Math.atan2(ty - jy, tx - jx)
+  const length = Math.hypot(tx - jx, ty - jy)
   return {
     id,
     parentId: 'torso',
-    // Pivot relative to the torso root (which is at the figure origin, 0/0), so the
-    // limb's local x,y IS its joint position in entity-local px.
-    x: joint.x * figW,
-    y: joint.y * figH,
-    rotation: 0, // rest = as-drawn; the walk pose adds a swing on top
+    x: jx,
+    y: jy,
+    rotation,
     scaleX: 1,
     scaleY: 1,
     shearX: 0,
     shearY: 0,
-    length: lengthNorm * figH,
+    length,
     inherit: 'normal',
   }
 }
@@ -93,10 +99,10 @@ export function builderRig(figW: number, figH: number, limbs: BuilderLimbIds): R
   }
   const bones: Bone[] = [
     torso,
-    limbBone('armL', JOINTS.armL, figW, figH, LIMB_LEN.arm),
-    limbBone('armR', JOINTS.armR, figW, figH, LIMB_LEN.arm),
-    limbBone('legL', JOINTS.legL, figW, figH, LIMB_LEN.leg),
-    limbBone('legR', JOINTS.legR, figW, figH, LIMB_LEN.leg),
+    limbBone('armL', LIMBS.armL, figW, figH),
+    limbBone('armR', LIMBS.armR, figW, figH),
+    limbBone('legL', LIMBS.legL, figW, figH),
+    limbBone('legR', LIMBS.legR, figW, figH),
   ]
 
   // One rigid slot per limb bone → its draw shape. (Head/torso/eyes are NOT slotted,

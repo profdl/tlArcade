@@ -27,6 +27,19 @@ export const dragBoneAtom = atom<{ pivot: { x: number; y: number }; tip: { x: nu
   null,
 )
 
+/**
+ * DEBUG: the player's live skeleton during play — each bone as a PAGE-space
+ * pivot→tip segment, set by the runtime each frame (game/engine.ts) when
+ * `showRigDebugAtom` is on. The overlay draws it so you can SEE the rig evaluating.
+ * Null when not playing / no rig.
+ */
+export const rigDebugAtom = atom<
+  { bones: { pivot: { x: number; y: number }; tip: { x: number; y: number } }[] } | null
+>('engine:rigDebug', null)
+
+/** Toggle the play-time skeleton overlay (debug). */
+export const showRigDebugAtom = atom('engine:showRigDebug', true)
+
 /** A monotonic counter to name new draft bones without Date.now()/random. */
 export const boneCounterAtom = atom('engine:boneCounter', 0)
 

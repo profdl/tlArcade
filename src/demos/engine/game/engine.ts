@@ -41,8 +41,9 @@ import type { Editor, TLDrawShape, TLGeoShape, TLShapeId, TLShapePartial } from 
 import { roleForColor, shapeForRole, ROLES, TILE, type Role } from './roles'
 import type { PlacementMeta } from './level'
 import { collectPlayerBody, isPlayerMarked, type PlayerPart } from './player'
-import { evaluateRig } from './rig/evaluate'
+import { evaluateRig, evaluateBoneWorlds } from './rig/evaluate'
 import { poseForState } from './rig/walk'
+import { rigDebugAtom, showRigDebugAtom } from './rig/state'
 import type { Rig } from './rig/types'
 import { compose, fromTRS, type Mat2D } from './rig/mat2d'
 import { buildBody, type Body, type Pt } from './collision'
@@ -536,6 +537,7 @@ export class GameRuntime {
       editor.setCamera(this.authoredCamera)
       this.authoredCamera = null
     }
+    rigDebugAtom.set(null) // clear the debug skeleton
   }
 
   private frame = (now: number) => {
@@ -751,6 +753,16 @@ export class GameRuntime {
           // Absent for an unrigged entity, so the loop below stays the pure
           // translation path (byte-identical to before).
           const deltas = entity.rig ? evaluateRig(entity.rig, entity.pose) : null
+
+          // DEBUG: publish the live skeleton (page-space bone segments) so the
+          // overlay can draw it during play.
+          if (entity.motion === 'platformer' && entity.rig && showRigDebugAtom.get()) {
+            const segs = evaluateBoneWorlds(entity.rig, entity.pose).map((s) => ({
+              pivot: { x: s.pivot.x + rx, y: s.pivot.y + ry },
+              tip: { x: s.tip.x + rx, y: s.tip.y + ry },
+            }))
+            rigDebugAtom.set({ bones: segs })
+          }
 
           for (const part of entity.parts) {
             const delta = deltas?.get(part.id as string)

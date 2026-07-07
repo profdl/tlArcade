@@ -19,7 +19,7 @@ import {
   type TLShapePartial,
 } from 'tldraw'
 import { bakeDraft, nearestBone, type DraftRig, type Vec2 } from '../game/rig/authoring'
-import { draftRigAtom, dragBoneAtom, rigModeAtom, rigTargetAtom } from '../game/rig/state'
+import { draftRigAtom, dragBoneAtom, rigDebugAtom, rigModeAtom, rigTargetAtom, showRigDebugAtom } from '../game/rig/state'
 import { playingAtom } from '../game/state'
 
 /** Entity-local origin (target bounds top-left) for page↔local conversion. */
@@ -58,6 +58,10 @@ export function RigOverlay() {
   const targetId = useValue('rig target', () => rigTargetAtom.get(), [])
   // Recompute screen positions whenever the camera or draft changes.
   const camera = useValue('camera', () => editor.getCamera(), [editor])
+  // DEBUG: the live play-time skeleton (page-space bone segments) + its toggle.
+  const playing = useValue('playing', () => playingAtom.get(), [])
+  const rigDebug = useValue('rig debug', () => rigDebugAtom.get(), [])
+  const showDebug = useValue('show rig debug', () => showRigDebugAtom.get(), [])
 
   const exit = () => {
     rigModeAtom.set(false)
@@ -105,6 +109,29 @@ export function RigOverlay() {
 
   return (
     <>
+      {/* DEBUG: the live skeleton during play — proves the rig is evaluating. */}
+      {playing && showDebug && rigDebug && (
+        <svg
+          data-cam={`${camera.x},${camera.y},${camera.z}`}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 350 }}
+        >
+          {rigDebug.bones.map((b, i) => {
+            // pageToViewport (container-relative + zoom-correct), NOT pageToScreen —
+            // the SVG fills the editor container, not the window (see the authoring
+            // overlay below for the same fix).
+            const p = editor.pageToViewport(b.pivot)
+            const t = editor.pageToViewport(b.tip)
+            return (
+              <g key={i}>
+                <line x1={p.x} y1={p.y} x2={t.x} y2={t.y} stroke="#12b886" strokeWidth={3} strokeLinecap="round" />
+                <circle cx={p.x} cy={p.y} r={5} fill="#e03131" stroke="#fff" strokeWidth={1.5} />
+                <circle cx={t.x} cy={t.y} r={3} fill="#fff" stroke="#12b886" strokeWidth={1.5} />
+              </g>
+            )
+          })}
+        </svg>
+      )}
+
       {active && origin && (
         <svg
           data-cam={`${camera.x},${camera.y},${camera.z}`}

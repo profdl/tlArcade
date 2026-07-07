@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { builderRig, BUILDER_LIMB_BONES } from './builderRig'
-import { evaluateRig } from './evaluate'
+import { evaluateRig, evaluateBoneWorlds } from './evaluate'
 
 const LIMBS = { armL: 'aL', armR: 'aR', legL: 'lL', legR: 'lR' }
 
@@ -42,6 +42,37 @@ describe('builderRig', () => {
     // Scales with figure size (200-tall figure → pivots in that px range).
     expect(b.armL.y).toBeGreaterThan(0)
     expect(b.armL.y).toBeLessThan(200)
+  })
+
+  it('places each limb pivot at its ATTACHMENT joint (measured from the art)', () => {
+    // Figure 100×200 → pivots in px. Joints are normalized·size (builderRig LIMBS).
+    const rig = builderRig(100, 200, LIMBS)
+    const b = Object.fromEntries(rig.bones.map((x) => [x.id, x]))
+    // Shoulders: near the top of the torso (~0.45·200 = 90px), inboard.
+    expect(b.armR.y).toBeCloseTo(0.45 * 200, 0) // ~90
+    expect(b.armL.y).toBeCloseTo(0.47 * 200, 0)
+    // Right shoulder inboard-left of the right arm (joint x < the arm's right edge).
+    expect(b.armR.x).toBeCloseTo(0.73 * 100, 0)
+    expect(b.armL.x).toBeCloseTo(0.34 * 100, 0)
+    // Hips: near the bottom of the torso (~0.77·200 = 154px), at the TOP of each leg.
+    expect(b.legR.y).toBeCloseTo(0.77 * 200, 0)
+    expect(b.legL.y).toBeCloseTo(0.78 * 200, 0)
+  })
+
+  it('each bone lies ALONG its limb (rest tip points down/out, not criss-cross)', () => {
+    const rig = builderRig(100, 200, LIMBS)
+    const segs = evaluateBoneWorlds(rig, {})
+    // 4 limb bones only (the zero-length torso root is skipped).
+    expect(segs.length).toBe(4)
+    // Order: armL, armR, legL, legR (rig.bones order minus torso).
+    const [armL, armR, legL, legR] = segs
+    // Arms extend OUTWARD horizontally: left arm tip further LEFT than its pivot;
+    // right arm tip further RIGHT than its pivot.
+    expect(armL.tip.x).toBeLessThan(armL.pivot.x)
+    expect(armR.tip.x).toBeGreaterThan(armR.pivot.x)
+    // Legs extend DOWNWARD: tip y below the pivot (hip).
+    expect(legL.tip.y).toBeGreaterThan(legL.pivot.y)
+    expect(legR.tip.y).toBeGreaterThan(legR.pivot.y)
   })
 
   it('at rest evaluates to identity deltas (figure looks as drawn)', () => {

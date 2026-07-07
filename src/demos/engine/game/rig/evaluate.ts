@@ -129,3 +129,27 @@ export function evaluateRig(rig: Rig, pose: Pose = {}): Map<string, Mat2D> {
   }
   return deltas
 }
+
+/**
+ * DEBUG: each bone's POSED world segment (pivot → tip) in entity-local coords, for
+ * visualizing the live skeleton. The pivot is the bone's world origin; the tip is
+ * `length` along the bone's world +x. Pure; the runtime converts to page space.
+ */
+export function evaluateBoneWorlds(
+  rig: Rig,
+  pose: Pose = {},
+): { pivot: { x: number; y: number }; tip: { x: number; y: number } }[] {
+  const world = forwardKinematics(rig, (b) => posedLocal(b, pose))
+  const out: { pivot: { x: number; y: number }; tip: { x: number; y: number } }[] = []
+  for (const b of rig.bones) {
+    const w = world.get(b.id)
+    if (!w) continue
+    // Skip zero-length bones (e.g. a static root) — they'd render as a stray stub.
+    if (b.length <= 0) continue
+    const pivot = { x: w.tx, y: w.ty }
+    // Tip = pivot + length along the bone's world +x axis (its (a,b) column).
+    const tip = { x: w.tx + w.a * b.length, y: w.ty + w.b * b.length }
+    out.push({ pivot, tip })
+  }
+  return out
+}

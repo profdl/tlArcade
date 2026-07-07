@@ -30,7 +30,7 @@ import { Hud } from './render/Hud'
 import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
 import { playingAtom, tunablesAtom } from './game/state'
-import { draftRigAtom, dragBoneAtom, rigModeAtom, rigTargetAtom } from './game/rig/state'
+import { draftRigAtom, dragBoneAtom, rigDebugAtom, rigModeAtom, rigTargetAtom } from './game/rig/state'
 import { makeTunables } from './game/physics'
 import { TEMPLATE_LIST } from './game/templates'
 import './App.css'
@@ -105,7 +105,10 @@ export default function App() {
     if (import.meta.env.DEV) {
       ;(window as unknown as { __editor?: Editor }).__editor = editor
       // Expose rig-authoring atoms for the Playwright bone-drawing e2e check.
-      ;(window as unknown as { __rig?: unknown }).__rig = { draftRigAtom, rigModeAtom, rigTargetAtom, dragBoneAtom }
+      ;(window as unknown as { __rig?: unknown }).__rig = { draftRigAtom, rigModeAtom, rigTargetAtom, dragBoneAtom, rigDebugAtom }
+      // Expose the runtime so e2e can drive Play/Stop directly (headless can't rely
+      // on the audio-gated Play click).
+      ;(window as unknown as { __runtime?: unknown }).__runtime = runtimeRef.current
     }
     return () => {
       runtimeRef.current?.stop()
