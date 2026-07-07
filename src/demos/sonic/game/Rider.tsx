@@ -3,7 +3,7 @@ import { useEditor, toDomPrecision } from "tldraw";
 import {
   bodyCenter,
   bodyVelocity,
-  bodyAngle,
+  bodyUpAngle,
   type ContactEvent,
 } from "./physics";
 import { SnailArt, SNAIL_CENTER_OFFSET } from "./SnailArt";
@@ -293,7 +293,11 @@ export function Rider() {
       if (snail) {
         const body = run.currentBody;
         const center = editor.pageToViewport(bodyCenter(body));
-        const angle = bodyAngle(body);
+        // Rotate by the FULL body orientation (bodyUpAngle, from the mast), NOT
+        // bodyAngle (the runner direction, which stays ~horizontal even upside-down).
+        // This is what makes a flip / roll-out actually VISIBLE: an inverted body
+        // renders inverted, and the roll spins it back upright on screen.
+        const angle = bodyUpAngle(body);
         const angleDeg = (angle * 180) / Math.PI;
         const zoom = editor.getZoomLevel();
 
