@@ -80,8 +80,10 @@ function limbBone(
 }
 
 /**
- * Build the default builder rig. `figW`/`figH` are the figure's px size (so the rig
- * is in entity-local px); `limbs` are the real leaf ids of the four limb shapes.
+ * Build the default builder rig. `figW`/`figH` are the figure's RENDERED page-bounds
+ * px size (so the rig is in the same entity-local frame the runtime resolves leaves
+ * in — NOT the art's tight boundsW/boundsH, which the draw strokes overflow); `limbs`
+ * are the real leaf ids of the four limb shapes.
  */
 export function builderRig(figW: number, figH: number, limbs: BuilderLimbIds): Rig {
   const torso: Bone = {

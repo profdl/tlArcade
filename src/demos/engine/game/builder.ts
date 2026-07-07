@@ -163,10 +163,21 @@ export function createBuilderPlayer(
   editor.groupShapes(ids, { groupId })
   const group = editor.getShape(groupId)
 
+  // The rig's entity-local frame is the group's REAL page bounds — the same frame
+  // the runtime resolves leaves in (player.ts stores each part's offset relative to
+  // the merged page-bounds top-left). The draw strokes extend PAST the art's tight
+  // boundsW/boundsH (the arms reach out), so those tight dims are ~30% too narrow;
+  // building the rig against them cramps the bones toward center-x (the bones drift
+  // off the limbs). Measure the rendered bounds and build the rig against THOSE.
+  const groupBounds = editor.getShapePageBounds(groupId)
+  const rigW = groupBounds?.w ?? figW
+  const rigH = groupBounds?.h ?? figH
+
   // Default rig (R2): a Tier-A skeleton with L/R arm + leg bones attached to the
   // real limb leaf ids, so the default player's limbs animate on Play (the walk
-  // cycle in game/rig/walk.ts supplies the live pose). Entity-local px = figure size.
-  const rig = builderRig(figW, figH, {
+  // cycle in game/rig/walk.ts supplies the live pose). Entity-local px = the
+  // rendered figure's page-bounds size.
+  const rig = builderRig(rigW, rigH, {
     armL: ids[LIMB_INDEX.armL],
     armR: ids[LIMB_INDEX.armR],
     legL: ids[LIMB_INDEX.legL],
