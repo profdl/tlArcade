@@ -73,6 +73,12 @@ export interface WalkState {
   vy: number
   /** Pressed against a wall this substep (drives the climb/scramble pose). */
   touchingWall: boolean
+  /**
+   * Outward horizontal normal of the wall contact (sign = the way OFF the wall), so
+   * the climb pose can face/reach TOWARD the wall. < 0 ⇒ wall is to the RIGHT (normal
+   * points left), > 0 ⇒ wall is to the LEFT. 0 when not touching a wall.
+   */
+  wallNx: number
   /** The runtime's fixed-substep clock, seconds. */
   simTime: number
 }
@@ -151,21 +157,40 @@ function jumpPose(): Pose {
 }
 
 /**
- * Climb (wall-scramble): the figure hugs a wall and reaches hand-over-hand, legs
- * pushing in alternation. Arms reach UP overhead (one higher than the other, phased);
- * legs alternate a push. Cycled by simTime so it animates while pressed to the wall.
+ * Climb (wall-scramble): the figure FACES the wall it's gripping and hauls itself up
+ * hand-over-hand. Unlike the old symmetric "arms overhead" pose (which read as a cheer),
+ * this leans the torso INTO the wall and drives the two arms in OPPOSITION — the
+ * wall-side pair reaching high to grab while the other pulls down, the legs kicking in
+ * counter-phase to push off the face. `wallNx` tells us which side the wall is on so
+ * the whole figure orients toward it; with no wall side known (wallNx 0) it falls back
+ * to a wall-on-the-right lean so the pose still reads as climbing.
  */
 function climbPose(s: WalkState, t: WalkTunables): Pose {
-  const phase = s.simTime * t.cadence * 0.7 // a touch slower than a run
+  const phase = s.simTime * t.cadence * 0.75 // a touch slower than a run
   const reach = Math.sin(phase)
-  // Both arms up overhead; hand-over-hand — one reaches higher as the other pulls
-  // down (OPPOSED via ±reach), the legs pushing in counter-alternation.
+  // toWall: +1 ⇒ wall is to the RIGHT, −1 ⇒ to the LEFT. The outward normal points
+  // AWAY from the wall, so the wall is on the opposite side (−sign(wallNx)). Default
+  // to +1 (wall on the right) when the side is unknown.
+  const toWall = s.wallNx !== 0 ? -Math.sign(s.wallNx) : 1
+  // Arm angles: the bone rotations that make an arm reach UP overhead differ by side
+  // (armL rests reaching left, armR reaching right — see builderRig). Reach the
+  // wall-side arm high and the off-side arm low, swapping hand-over-hand each cycle.
+  const grabHigh = 1.5 // magnitude that brings an arm up overhead
+  const pullLow = 0.4 // how far the pulling arm drops from overhead
+  // Per side, +reach lifts and −reach drops so the two arms alternate.
+  const armL = -grabHigh + (toWall < 0 ? reach : -reach) * pullLow // wall-side (left) grabs on +reach
+  const armR = grabHigh + (toWall > 0 ? reach : -reach) * -pullLow // wall-side (right) grabs on +reach
+  // Legs kick against the face in counter-alternation to the arms (opposite phase).
+  const legKick = 0.35
   return {
-    armL: { rotation: -1.5 + reach * 0.4 },
-    armR: { rotation: 1.5 - reach * 0.4 },
-    legL: { rotation: 0.35 - reach * 0.35 },
-    legR: { rotation: -0.35 + reach * 0.35 },
-    spine: { scaleY: 1.04 },
+    armL: { rotation: armL },
+    armR: { rotation: armR },
+    legL: { rotation: legKick - reach * legKick },
+    legR: { rotation: -legKick + reach * legKick },
+    // Lean the torso INTO the wall (toward toWall) + a slight stretch as it reaches up.
+    spine: { rotation: toWall * t.lean * 1.5, scaleY: 1.04 },
+    // Head tips toward the wall too, looking up the face.
+    head: { rotation: toWall * t.lean * 0.5 },
   }
 }
 

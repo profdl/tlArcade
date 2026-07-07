@@ -5,9 +5,11 @@ import { describe, expect, it } from 'vitest'
 import { poseForState, selectState, WALK_DEFAULTS } from './walk'
 
 const T = WALK_DEFAULTS
-const grounded = (vx: number, simTime = 0.3) => ({ grounded: true, vx, vy: 0, touchingWall: false, simTime })
-const airborne = (vy: number, vx = 0, simTime = 0.3) => ({ grounded: false, vx, vy, touchingWall: false, simTime })
-const onWall = (simTime = 0.3) => ({ grounded: false, vx: 0, vy: 100, touchingWall: true, simTime })
+const grounded = (vx: number, simTime = 0.3) => ({ grounded: true, vx, vy: 0, touchingWall: false, wallNx: 0, simTime })
+const airborne = (vy: number, vx = 0, simTime = 0.3) => ({ grounded: false, vx, vy, touchingWall: false, wallNx: 0, simTime })
+// onWall: airborne + touching a wall. `wallNx` is the outward normal; default −1 (wall
+// to the RIGHT) so the climb pose has a side to face. Pass +1 for a wall on the left.
+const onWall = (simTime = 0.3, wallNx = -1) => ({ grounded: false, vx: 0, vy: 100, touchingWall: true, wallNx, simTime })
 
 describe('selectState', () => {
   it('idle when grounded and slow', () => {
@@ -26,7 +28,7 @@ describe('selectState', () => {
   it('climb when airborne AND pressed against a wall (wins over jump/fall)', () => {
     expect(selectState(onWall())).toBe('climb')
     // Even rising: touching a wall ⇒ climb, not jump.
-    expect(selectState({ grounded: false, vx: 0, vy: -100, touchingWall: true, simTime: 0 })).toBe('climb')
+    expect(selectState({ grounded: false, vx: 0, vy: -100, touchingWall: true, wallNx: -1, simTime: 0 })).toBe('climb')
   })
 })
 
@@ -131,23 +133,38 @@ describe('poseForState — idle / jump / fall', () => {
 })
 
 describe('poseForState — climb (wall-scramble)', () => {
-  it('reaches both arms overhead while pressed to a wall', () => {
+  it('reaches both arms up to grip the wall while pressed to it', () => {
     const pose = poseForState(onWall(), T)
     // Arms up overhead (opposite outward signs, large magnitude).
     expect(pose.armL!.rotation!).toBeLessThan(-1)
     expect(pose.armR!.rotation!).toBeGreaterThan(1)
   })
 
-  it('cycles over time (the reach oscillates)', () => {
-    // Quarter period apart: sin goes 0 → 1, so the reach clearly differs.
+  it('leans the torso INTO the wall (faces the side it grips)', () => {
+    // Wall to the RIGHT (wallNx −1) ⇒ lean right (spine rotation > 0); to the LEFT ⇒
+    // lean left (< 0). The figure orients toward the wall it's climbing, not upright.
+    const wallRight = poseForState(onWall(0.3, -1), T)
+    const wallLeft = poseForState(onWall(0.3, 1), T)
+    expect(wallRight.spine!.rotation!).toBeGreaterThan(0) // leans right, into the wall
+    expect(wallLeft.spine!.rotation!).toBeLessThan(0) // leans left, into the wall
+    expect(wallRight.head!.rotation!).toBeGreaterThan(0) // head tips toward the wall too
+  })
+
+  it('drives the arms hand-over-hand: they alternate high/low over the cycle', () => {
+    // Quarter cycle apart (sin 0 → 1), the wall-side arm swaps between reaching high
+    // and pulling low — the hallmark of a climb, not a static reach.
     const a = poseForState(onWall(0.0), T)
-    const b = poseForState(onWall(Math.PI / 2 / (T.cadence * 0.7)), T)
-    expect(a.armL!.rotation).not.toBeCloseTo(b.armL!.rotation!, 3)
+    const b = poseForState(onWall(Math.PI / 2 / (T.cadence * 0.75)), T)
+    expect(a.armR!.rotation).not.toBeCloseTo(b.armR!.rotation!, 3)
+    expect(a.legL!.rotation).not.toBeCloseTo(b.legL!.rotation!, 3) // legs kick too
   })
 
   it('is distinct from the jump pose (climb ≠ jump)', () => {
     const climb = poseForState(onWall(), T)
     const jump = poseForState(airborne(-300), T)
     expect(climb.legL!.rotation).not.toBeCloseTo(jump.legL!.rotation!, 3)
+    // The lean/head orientation is climb-only — jump doesn't touch the spine rotation.
+    expect(climb.spine!.rotation).toBeDefined()
+    expect(jump.spine!.rotation).toBeUndefined()
   })
 })

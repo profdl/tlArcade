@@ -153,21 +153,38 @@ function nearestOnSegment(p: Pt, a: Pt, b: Pt): Pt {
   return { x: a.x + dx * t, y: a.y + dy * t }
 }
 
-/** Closest point on a path (polygon if `closed`) to p, plus the distance to it. */
-export function nearestOnPath(p: Pt, pts: Pt[], closed: boolean): { pt: Pt; dist: number } {
+/**
+ * Closest point on a path (polygon if `closed`) to p, plus the distance to it and
+ * the DIRECTION of the governing edge (`ex,ey`, un-normalized a→b). The edge vector
+ * lets a caller derive an outward normal (perpendicular to the edge) even when p sits
+ * exactly ON the boundary (dist ≈ 0), where the "p − nearest" direction is undefined
+ * — the case that used to fall back to a hardcoded "push up" and let a point flush
+ * against a vertical wall face creep upward each frame.
+ */
+export function nearestOnPath(
+  p: Pt,
+  pts: Pt[],
+  closed: boolean,
+): { pt: Pt; dist: number; ex: number; ey: number } {
   const n = pts.length
   const edges = closed ? n : n - 1
   let best = pts[0]
   let bestD = Infinity
+  let ex = 0
+  let ey = 0
   for (let i = 0; i < edges; i++) {
-    const q = nearestOnSegment(p, pts[i], pts[(i + 1) % n])
+    const a = pts[i]
+    const b = pts[(i + 1) % n]
+    const q = nearestOnSegment(p, a, b)
     const d = Math.hypot(p.x - q.x, p.y - q.y)
     if (d < bestD) {
       bestD = d
       best = q
+      ex = b.x - a.x
+      ey = b.y - a.y
     }
   }
-  return { pt: best, dist: bestD }
+  return { pt: best, dist: bestD, ex, ey }
 }
 
 /**
@@ -203,8 +220,26 @@ export function penetration(p: Pt, body: Body): { nx: number; ny: number; depth:
     // Inside: the shallowest way out is to the nearest edge point `pt`. The
     // OUTWARD normal points from the interior point toward that boundary point
     // (pt - p), and the point must travel `dist` to reach the surface.
-    const { pt, dist } = nearestOnPath(p, body.pts, true)
-    if (dist < 1e-9) return { nx: 0, ny: -1, depth: 0.5 } // dead on an edge; nudge up
+    const { pt, dist, ex, ey } = nearestOnPath(p, body.pts, true)
+    if (dist < 1e-9) {
+      // Dead on the boundary — (pt − p) is degenerate. Push out PERPENDICULAR to
+      // the governing edge instead of a hardcoded "up": a point flush against a
+      // wall's vertical face gets a horizontal push OUT of the wall (its true
+      // shallowest exit), not a 0.5px upward nudge that ratcheted the player up the
+      // face each frame (the "auto-slide up walls" glitch). Perp of edge (ex,ey) is
+      // (ey,−ex) or (−ey,ex); pick the one pointing toward the polygon exterior by
+      // sampling a hair along it.
+      const el = Math.hypot(ex, ey)
+      if (el < 1e-9) return { nx: 0, ny: -1, depth: 0.5 } // degenerate edge; old fallback
+      let nx = ey / el
+      let ny = -ex / el
+      // Orient outward: if stepping along (nx,ny) lands us back INSIDE, flip it.
+      if (pointInPolygon({ x: p.x + nx * 0.5, y: p.y + ny * 0.5 }, body.pts)) {
+        nx = -nx
+        ny = -ny
+      }
+      return { nx, ny, depth: 0.5 }
+    }
     return { nx: (pt.x - p.x) / dist, ny: (pt.y - p.y) / dist, depth: dist }
   }
 

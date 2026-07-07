@@ -710,6 +710,7 @@ export class GameRuntime {
           vx: k.vx,
           vy: k.vy,
           touchingWall: k.touchingWall,
+          wallNx: k.wallNx,
           simTime: this.simTime,
         })
       }

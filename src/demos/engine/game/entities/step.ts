@@ -288,6 +288,15 @@ export function deepestShift(
       // (normal mostly vertical) shouldn't block sideways motion — the Y pass
       // lifts you up it instead. Only a near-vertical WALL normal stops you here.
       if (axis === 'x' && Math.abs(hit.nx) < SIM.WALL_NX) continue
+      // On the Y pass, ignore near-vertical WALL contacts (the symmetric guard).
+      // A sample jammed into a wall's SIDE resolves to that wall's nearest edge —
+      // often its top corner — giving a wall-ish (near-horizontal) normal. Turning
+      // that into a Y shift divides depth by a tiny |ny|, flinging the entity UP the
+      // wall face (the "auto-slide up walls" glitch). A wall is the X pass's job; the
+      // Y pass handles only floors/ceilings and walkable slopes (normal mostly
+      // vertical). Steep-but-not-vertical slopes still pass (|nx| < WALL_NX) so the
+      // slope-jump machinery in resolveAxis keeps working.
+      if (axis === 'y' && Math.abs(hit.nx) >= SIM.WALL_NX) continue
       const comp = axis === 'x' ? hit.nx : hit.ny
       if (Math.abs(comp) < 1e-3) continue
       const axisShift = (hit.depth / Math.abs(comp)) * Math.sign(comp)

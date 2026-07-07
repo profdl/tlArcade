@@ -53,6 +53,20 @@ describe('penetration — closed polygon (filled wall)', () => {
     expect(Math.abs(hit!.ny)).toBeLessThan(1e-6)
     expect(hit!.depth).toBeCloseTo(4, 5)
   })
+
+  it('a point flush on a tall wall\'s vertical edge pushes SIDEWAYS, not up (regression)', () => {
+    // A tall wall (taller than wide), so its nearest edge to a mid-height point is a
+    // VERTICAL face. A sample sitting exactly on that face is dead-on-the-boundary:
+    // the old fallback returned a hardcoded "push up 0.5px", which ratcheted a player
+    // pressed into the wall UP its face each frame. It must instead push horizontally
+    // OUT of the wall (perpendicular to the vertical edge).
+    const tallWall = rectBody(40, 200) // vertical faces at x=0 and x=40
+    const hit = penetration({ x: 0, y: 100 }, tallWall) // exactly on the left face
+    expect(hit).not.toBeNull()
+    expect(Math.abs(hit!.nx)).toBeGreaterThan(0.9) // horizontal push...
+    expect(Math.abs(hit!.ny)).toBeLessThan(0.1) // ...not up
+    expect(hit!.nx).toBeLessThan(0) // and OUTWARD (to the left, off the wall)
+  })
 })
 
 describe('penetration — open band (drawn hill)', () => {

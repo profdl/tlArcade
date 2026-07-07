@@ -161,6 +161,27 @@ describe('stepEntity — walls & slopes', () => {
     expect(kin.wallNx).toBeLessThan(0) // outward normal points left (away from wall)
   })
 
+  it('walking into a wall does NOT slide the player up its face (regression)', () => {
+    // A grounded player holding INTO a tall wall must stay pinned at its start
+    // height — not ratchet up the wall face. Two failure modes this pins: (1) the
+    // Y pass turning a wall-ish (near-horizontal) contact into a huge upward shift,
+    // and (2) a sample flush on the wall's vertical edge getting a hardcoded 0.5px
+    // "nudge up" from penetration()'s dead-on-edge fallback. Both let the player
+    // creep up the wall each frame (the "auto-slide up walls" glitch).
+    const samples = boxSamples(20, 24)
+    const floor = rect(-200, 200, 800, 40) // floor top at y=200
+    const wall = rect(120, 60, 40, 140) // wall y=60..200, sitting on the floor
+    const kin = makeKinematic(60, 176) // player resting on the floor (176+24=200)
+    let minY = kin.y
+    for (let i = 0; i < 600; i++) {
+      stepEntity(kin, samples, [floor, wall], { dir: 1, jumpPressed: false, jumpReleased: false }, 'platformer', {}, dt, makeTunables())
+      if (kin.y < minY) minY = kin.y
+    }
+    expect(minY).toBeGreaterThanOrEqual(175) // never rose above the start height
+    expect(kin.x + 20).toBeLessThanOrEqual(121) // blocked flat at the wall face
+    expect(kin.touchingWall).toBe(true) // still records the wall (enables wall-jump)
+  })
+
   it('input does nothing on a non-platformer entity (vx stays 0)', () => {
     const t = makeTunables()
     const kin = makeKinematic(0, 0)

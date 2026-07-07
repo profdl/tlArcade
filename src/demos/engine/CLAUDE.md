@@ -489,6 +489,21 @@ Non-feel constants (substep, ground/wall normal thresholds) are `SIM` in
 physics.ts; add new feel knobs to `PhysicsTunables` + `PHYSICS_DEFAULTS`, never
 as inline literals.
 
+- **Walls block, they don't lift (no "slide up walls").** Each axis pass ignores
+  the OTHER axis's surfaces symmetrically: the X pass skips floor-ish/slope
+  contacts (`|nx| < WALL_NX`), and the Y pass skips near-vertical WALL contacts
+  (`|nx| >= WALL_NX`). Without the Y-pass guard, a sample jammed into a wall's SIDE
+  resolves to the wall's nearest edge — often its top corner — and dividing the
+  push depth by that near-zero `|ny|` flings the player UP the face. A second,
+  sneakier path fed the same glitch: a sample landing exactly on a wall's vertical
+  edge is dead-on-the-boundary in `collision.ts` → `penetration`, which used to
+  return a hardcoded "nudge up 0.5px"; it now pushes PERPENDICULAR to the governing
+  edge (horizontal, out of the wall). Together these keep a grounded player pinned
+  flat against a wall (which then reads as `idle`, and airborne-into-a-wall as
+  `climb` — the walk.ts wall states line up for free). Pinned in `step.test.ts`
+  ("does NOT slide the player up its face"), `collision.test.ts` (the vertical-edge
+  normal), and `e2e/wall-e2e.mjs` (the real running app).
+
 ### Live tuning
 
 `PHYSICS_DEFAULTS` is the shipped "tight & snappy" baseline. A **live debug
