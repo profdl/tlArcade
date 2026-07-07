@@ -415,20 +415,29 @@ clips, no timeline UI (that's a later nicety; the data path exists, see below).
   *those* dims. **Limbs are single un-splittable outline loops**, so each limb is ONE
   bone driving ONE leaf (no knee/elbow bend — a later art pass would split each limb).
 - **The state machine** — [game/rig/walk.ts](game/rig/walk.ts): pure, editor-free (like
-  physics.ts). `selectState({grounded, vx, vy, touchingWall, simTime})` →
+  physics.ts). `selectState({grounded, vx, vy, touchingWall, simTime, strideDistance})` →
   `idle | walk | jump | fall | climb`, and `poseForState` dispatches to a per-state
   procedural `Pose` (sine/offset math, no keyframe data):
   - **idle** — arms drop to the sides (static) + a breathing bob (spine/head);
   - **walk** — legs swing opposed, arms hang at the sides and swing *subtly* (countering
     the legs), the spine bobs twice per stride and **leans into travel** (`vx` sign), head
-    counter-nods; amplitude scales with speed;
+    counter-nods; amplitude scales with speed. The leg cycle is **driven by distance
+    travelled, not wall-clock** (`stridePhase` reads `strideDistance / strideLength`, not
+    `simTime`): the swing rate tracks the body's real speed and the legs **stop the instant
+    the body stops** — which removed the worst of the old "player slides" look (a `simTime`
+    cycle kept the legs waving while the body decelerated/stopped). The runtime accumulates
+    `strideDistance` from the player's GROUNDED horizontal travel each substep. *Limit:* the
+    foot is NOT fully world-pinned — the builder's legs are single un-splittable bones
+    (no knee to bend) and the hip bobs/leans, so true foot planting needs 2-bone IK with a
+    world foot target (a later art-split + IK pass); the distance-drive is the contained,
+    verified interim.
   - **jump** — arms sweep **up and out** overhead, legs tuck, torso stretches;
   - **fall** — arms out for balance, legs trail, torso compresses;
   - **climb** — **wall-scramble**: triggered when airborne AND `kin.touchingWall`
     (reuses the slope-jump contact machinery — no new mechanic), hand-over-hand arm reach
     with alternating leg pushes.
-  All tunables live in `WALK_DEFAULTS` (`amplitude`, `cadence`, `bob`, `lean`, `armDrop`,
-  `idleBob`, …). `engine.ts` sets `playerEntity.pose = poseForState(...)` each substep;
+  All tunables live in `WALK_DEFAULTS` (`amplitude`, `cadence`, `strideLength`, `bob`,
+  `lean`, `armDrop`, `idleBob`, …). `engine.ts` sets `playerEntity.pose = poseForState(...)` each substep;
   an empty pose ⇒ identity ⇒ rest is byte-identical to as-drawn.
 - **Clip scaffold (data path, no UI yet)** — [game/rig/clip.ts](game/rig/clip.ts): a
   keyframed `Clip` type + `sampleClip`/`mergePose`, so data/AI-authored clips (R5) drop

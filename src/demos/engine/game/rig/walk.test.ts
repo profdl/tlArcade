@@ -2,10 +2,12 @@
  * Engine — procedural animation state-machine unit tests.
  */
 import { describe, expect, it } from 'vitest'
-import { poseForState, selectState, WALK_DEFAULTS } from './walk'
+import { legSwing, poseForState, selectState, stridePhase, WALK_DEFAULTS } from './walk'
 
 const T = WALK_DEFAULTS
 const grounded = (vx: number, simTime = 0.3) => ({ grounded: true, vx, vy: 0, touchingWall: false, wallNx: 0, simTime })
+// A grounded state at a given distance travelled (the real driver of the walk cycle).
+const walking = (vx: number, strideDistance: number) => ({ grounded: true, vx, vy: 0, touchingWall: false, wallNx: 0, simTime: 0, strideDistance })
 const airborne = (vy: number, vx = 0, simTime = 0.3) => ({ grounded: false, vx, vy, touchingWall: false, wallNx: 0, simTime })
 // onWall: airborne + touching a wall. `wallNx` is the outward normal; default −1 (wall
 // to the RIGHT) so the climb pose has a side to face. Pass +1 for a wall on the left.
@@ -39,9 +41,9 @@ describe('poseForState — walk', () => {
     for (const b of ['legL', 'legR', 'armL', 'armR']) expect(pose[b]).toBeDefined()
   })
 
-  it('legs swing OPPOSED', () => {
-    const t = Math.PI / 2 / T.cadence
-    const pose = poseForState(grounded(T.fullSpeed, t), T)
+  it('legs swing OPPOSED (exact negation — half a cycle apart on a sine)', () => {
+    const d = T.strideLength * 0.2
+    const pose = poseForState(walking(T.fullSpeed, d), T)
     expect(pose.legL!.rotation).toBeCloseTo(-pose.legR!.rotation!, 9)
   })
 
@@ -75,19 +77,52 @@ describe('poseForState — walk', () => {
   })
 
   it('amplitude scales with speed (slower ⇒ smaller swing)', () => {
-    const t = Math.PI / 2 / T.cadence
-    const fast = poseForState(grounded(T.fullSpeed, t), T)
-    const slow = poseForState(grounded(T.fullSpeed / 2, t), T)
+    // At a quarter stride the sine peaks (sin = 1) ⇒ the leg is at +amp — a clean
+    // amplitude probe. Drive by DISTANCE.
+    const quarter = T.strideLength / 4
+    const fast = poseForState(walking(T.fullSpeed, quarter), T)
+    const slow = poseForState(walking(T.fullSpeed / 2, quarter), T)
     expect(Math.abs(slow.legL!.rotation!)).toBeLessThan(Math.abs(fast.legL!.rotation!))
     expect(Math.abs(fast.legL!.rotation!)).toBeCloseTo(T.amplitude, 6)
   })
 
-  it('the cycle oscillates over time (sign flips half a period later)', () => {
-    const t1 = Math.PI / 2 / T.cadence
-    const t2 = (Math.PI / 2 + Math.PI) / T.cadence
-    const a = poseForState(grounded(T.fullSpeed, t1), T)
-    const b = poseForState(grounded(T.fullSpeed, t2), T)
+  it('the cycle oscillates over distance (sign flips half a stride later)', () => {
+    const a = poseForState(walking(T.fullSpeed, T.strideLength / 4), T)
+    const b = poseForState(walking(T.fullSpeed, (3 * T.strideLength) / 4), T)
     expect(Math.sign(a.legL!.rotation!)).toBe(-Math.sign(b.legL!.rotation!))
+  })
+})
+
+describe('distance-driven stride (the anti-slide mechanism)', () => {
+  it('drives the leg phase by DISTANCE travelled, not wall-clock time', () => {
+    // With a strideDistance supplied, simTime is irrelevant to the leg phase — so the
+    // legs no longer swing on a clock that keeps ticking when the body has stopped.
+    const p1 = stridePhase({ ...walking(T.fullSpeed, T.strideLength / 4), simTime: 0 }, T)
+    const p2 = stridePhase({ ...walking(T.fullSpeed, T.strideLength / 4), simTime: 999 }, T)
+    expect(p1).toBeCloseTo(p2, 9)
+    // One full stride length = one full 2π cycle.
+    expect(stridePhase(walking(T.fullSpeed, T.strideLength), T)).toBeCloseTo(2 * Math.PI, 9)
+  })
+
+  it('advances the cycle in lockstep with distance (same distance ⇒ same phase)', () => {
+    // Same distance covered ⇒ same point in the stride, regardless of speed. This is
+    // what couples the swing rate to the actual body speed (fast and slow walks both
+    // step once per stride length).
+    const slowFar = stridePhase(walking(T.fullSpeed / 3, T.strideLength / 2), T)
+    const fastFar = stridePhase(walking(T.fullSpeed, T.strideLength / 2), T)
+    expect(slowFar).toBeCloseTo(fastFar, 9)
+  })
+
+  it('falls back to the simTime clock when no distance is supplied', () => {
+    expect(stridePhase(grounded(T.fullSpeed, 0.5), T)).toBeCloseTo(0.5 * T.cadence, 9)
+  })
+
+  it('legSwing is a plain sine of the phase, scaled by amplitude', () => {
+    expect(legSwing(0, 0.5)).toBeCloseTo(0, 9)
+    expect(legSwing(Math.PI / 2, 0.5)).toBeCloseTo(0.5, 9)
+    expect(legSwing(Math.PI, 0.5)).toBeCloseTo(0, 9)
+    // Opposed legs (π apart) are exact negatives.
+    expect(legSwing(1.2 + Math.PI, 0.5)).toBeCloseTo(-legSwing(1.2, 0.5), 9)
   })
 })
 

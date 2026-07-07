@@ -49,6 +49,19 @@ export interface WalkTunables {
   armDrop: number
   /** Fraction of the leg swing the (lowered) arms swing by. Arms swing less. */
   armSwing: number
+  /**
+   * The forward distance (px) the body travels per FULL leg cycle — one stride length.
+   * The leg phase is driven by DISTANCE TRAVELLED, not wall-clock (see `stridePhase`),
+   * so `strideLength` px of travel = one 2π swing. This is what removes the worst of
+   * the "player slides" look: the swing rate now tracks actual speed, and the legs
+   * STOP swinging the instant the body stops (a wall-clock cycle kept them waving).
+   * Roughly one leg-reach of travel per step; tuned for the 1×2 builder.
+   *
+   * Note: this does NOT fully pin the foot to the world — the builder's single-bone
+   * legs can't travel a full stride along the ground, and the hip bobs/leans each
+   * frame. True foot planting needs 2-bone IK with a world foot target (Phase B).
+   */
+  strideLength: number
 }
 
 export const WALK_DEFAULTS: WalkTunables = {
@@ -62,6 +75,7 @@ export const WALK_DEFAULTS: WalkTunables = {
   idleRate: 2.2,
   armDrop: 1.2, // ~70°: from ~horizontal rest down to the sides
   armSwing: 0.55,
+  strideLength: 55, // ~one leg-reach of travel per step (distance-driven cadence)
 }
 
 /** Live inputs from the player's kinematic state. */
@@ -81,6 +95,14 @@ export interface WalkState {
   wallNx: number
   /** The runtime's fixed-substep clock, seconds. */
   simTime: number
+  /**
+   * Signed horizontal distance the body has travelled while grounded (px), accumulated
+   * by the runtime. This — NOT `simTime` — drives the leg cycle during a walk, so the
+   * stride advances with actual travel and the planted foot stays fixed in the world
+   * (no slide). Defaults to 0 for callers/tests that don't set it (falls back to a
+   * `simTime`-driven cycle so those callers behave as before).
+   */
+  strideDistance?: number
 }
 
 export type AnimState = 'idle' | 'walk' | 'jump' | 'fall' | 'climb'
@@ -116,30 +138,59 @@ function idlePose(s: WalkState, t: WalkTunables): Pose {
 }
 
 /**
- * Walk: legs swing opposed, arms counter them; the spine bobs twice per stride (a
- * gait dips on each footfall) and leans into travel; the head counter-nods. The rig
- * faces travel via a lean sign flip — a light "mirror" without rebuilding the rig
- * (true left/right art mirroring is a follow-up; the lean+swing already reads as
- * direction).
+ * The stride phase (radians) that drives the walk cycle. Driven by DISTANCE
+ * TRAVELLED (`strideDistance / strideLength · 2π`) so the swing advances with actual
+ * travel — the swing rate tracks the body's speed and the legs stop the instant the
+ * body stops (the fix for the worst of the "player slides" look). Falls back to the
+ * old `simTime · cadence` clock when the runtime hasn't supplied a distance (tests,
+ * unrigged callers), so those paths are unchanged.
+ */
+export function stridePhase(s: WalkState, t: WalkTunables): number {
+  if (s.strideDistance === undefined) return s.simTime * t.cadence
+  return (s.strideDistance / t.strideLength) * 2 * Math.PI
+}
+
+/**
+ * The leg swing angle (radians about the hip) at cycle position `phase` and amplitude
+ * `amp`. A plain sine sweep — but `phase` is DISTANCE-driven (see `stridePhase`), so
+ * the swing advances with real travel: it speeds up with the body, and stops the
+ * instant the body stops (a wall-clock cycle kept the legs waving in place — the main
+ * "slide" tell). True world-fixed foot planting needs 2-bone IK (Phase B); this is the
+ * distance-coupled cycle that removes the worst of the skating.
+ */
+export function legSwing(phase: number, amp: number): number {
+  return Math.sin(phase) * amp
+}
+
+/**
+ * Walk: legs swing opposed on a DISTANCE-DRIVEN cycle (see `legSwing`/`stridePhase` —
+ * the fix for the worst of the "player slides" look); arms counter them; the spine
+ * bobs on each footfall and leans into travel; the head counter-nods. The rig faces
+ * travel via a lean sign flip — a light "mirror" without rebuilding the rig (true
+ * left/right art mirroring is a follow-up; the lean+swing already reads as direction).
  */
 function walkPose(s: WalkState, t: WalkTunables): Pose {
   const speed = Math.abs(s.vx)
   const drive = Math.min(1, speed / t.fullSpeed)
   const amp = t.amplitude * drive
-  const phase = s.simTime * t.cadence
-  const swing = Math.sin(phase) * amp
+  const phase = stridePhase(s, t)
   const dir = Math.sign(s.vx) || 1
-  // The body dips twice per stride (|sin| at 2× phase) and leans forward.
+  // Legs are half a cycle out of phase (opposed): one swings forward as the other back.
+  const legLSwing = legSwing(phase, amp)
+  const legRSwing = legSwing(phase + Math.PI, amp)
+  // The body dips on each footfall (twice per stride) and leans forward — |sin| peaks
+  // as weight transfers between the feet.
   const dip = Math.abs(Math.sin(phase)) * t.bob * drive
   // Arms hang at the sides (dropped from their outstretched rest) and swing subtly,
-  // countering the legs. armR drops with +armDrop, armL with −armDrop (mirror), and
-  // each swings by armSwing·swing around that lowered position.
-  const armSwing = swing * t.armSwing
+  // countering the legs (arm follows the OPPOSITE leg, as in a real gait). armR drops
+  // with +armDrop, armL with −armDrop (mirror), each swinging by armSwing around it.
+  const armLSwing = legRSwing * t.armSwing
+  const armRSwing = legLSwing * t.armSwing
   return {
-    legL: { rotation: swing },
-    legR: { rotation: -swing },
-    armL: { rotation: -t.armDrop - armSwing },
-    armR: { rotation: t.armDrop + armSwing },
+    legL: { rotation: legLSwing },
+    legR: { rotation: legRSwing },
+    armL: { rotation: -t.armDrop - armLSwing },
+    armR: { rotation: t.armDrop + armRSwing },
     spine: { y: dip, rotation: dir * t.lean * drive },
     head: { rotation: -dir * t.lean * 0.5 * drive },
   }

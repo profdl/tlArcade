@@ -134,6 +134,14 @@ export class GameRuntime {
    * is reproducible. Threaded into each mover entity's params before stepEntity.
    */
   private simTime = 0
+  /**
+   * Signed horizontal distance the player has travelled WHILE GROUNDED (px). Drives
+   * the walk cycle's stride phase (see rig/walk.ts) so the legs advance with real
+   * travel and the feet plant instead of sliding. Accumulated per substep from the
+   * player's grounded horizontal displacement; airborne travel doesn't count (feet
+   * aren't on the ground to plant). Reset at start().
+   */
+  private strideDistance = 0
   private solids: Body[] = []
   /** Hittable blocks (T1b) — solid + bonk-trigger; also in `solids`. */
   private blocks: Block[] = []
@@ -463,6 +471,7 @@ export class GameRuntime {
     this.jumpPressed = false
     this.jumpReleased = false
     this.simTime = 0
+    this.strideDistance = 0
     this.collected.clear()
     this.checkpoints.clear()
     this.deaths = 0
@@ -648,6 +657,9 @@ export class GameRuntime {
     const player = this.player
     const wasGrounded = player?.kin.grounded ?? false
     const fallSpeedIn = player && player.kin.vy > 0 ? player.kin.vy : 0
+    // Player X before the step, to accumulate GROUNDED horizontal travel for the walk
+    // cycle's stride phase (planted feet — see strideDistance / rig/walk.ts).
+    const playerXBefore = player?.kin.x ?? 0
 
     // Advance the deterministic sim clock, then hand it to every entity that reads
     // it (sine/mover). Set it on params up front so stepEntity's time-driven
@@ -705,6 +717,10 @@ export class GameRuntime {
       else if (!wasGrounded && k.grounded && fallSpeedIn > 0) {
         this.audio.play('land', Math.min(1, fallSpeedIn / t.jumpSpeed))
       }
+      // Accumulate GROUNDED horizontal travel — this drives the walk cycle's stride
+      // phase so the legs advance with real distance and the feet PLANT (no slide).
+      // Only while grounded: airborne travel has no foot to pin to the ground.
+      if (k.grounded) this.strideDistance += k.x - playerXBefore
       // R2: if the player is rigged, drive its pose from the animation state machine
       // (idle/walk/jump/fall → whole-body pose). writeEntities evaluates the rig with
       // this pose. Unrigged players carry no rig, so this is a cheap no-op for them.
@@ -716,6 +732,7 @@ export class GameRuntime {
           touchingWall: k.touchingWall,
           wallNx: k.wallNx,
           simTime: this.simTime,
+          strideDistance: this.strideDistance,
         })
       }
     }
