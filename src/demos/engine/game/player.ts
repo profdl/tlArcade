@@ -41,8 +41,14 @@ export interface PlayerPart {
   toLocal: Mat
   /** The leaf's PAGE rotation (radians) at start — the rig delta rotation adds to it. */
   restRotation: number
-  /** Authored { x, y, opacity } for non-destructive restore on stop. */
-  snap: { x: number; y: number; opacity: number }
+  /**
+   * Authored { x, y, rotation, opacity } for non-destructive restore on stop. Includes
+   * `rotation` because a RIGGED leaf gets its record rotation overwritten every frame
+   * by writeRigPart; without restoring it, stop() leaves the leaf at its last POSED
+   * rotation, and the next start() bakes the rig from that broken rest → the skeleton
+   * breaks (seen most reliably after a win, which freezes the player mid-pose).
+   */
+  snap: { x: number; y: number; rotation: number; opacity: number }
 }
 
 /** The meta key + value that marks a shape (or group) as the player. */
@@ -139,7 +145,7 @@ export function collectPlayerBody(
       offY: pageOrigin.y - bounds.minY,
       toLocal,
       restRotation: pageTransform.rotation(),
-      snap: { x: shape.x, y: shape.y, opacity: shape.opacity },
+      snap: { x: shape.x, y: shape.y, rotation: shape.rotation, opacity: shape.opacity },
     })
   }
 

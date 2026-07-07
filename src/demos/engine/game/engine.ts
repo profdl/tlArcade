@@ -524,6 +524,10 @@ export class GameRuntime {
               type: part.type,
               x: part.snap.x,
               y: part.snap.y,
+              // Restore rotation too: a rigged leaf's record rotation is overwritten
+              // each frame by writeRigPart, so without this the leaf stays at its last
+              // POSED rotation and the next start() bakes a broken rest rig from it.
+              rotation: part.snap.rotation,
               opacity: part.snap.opacity,
             } as TLShapePartial)
           }

@@ -540,6 +540,15 @@ avoid the overlap. Slider layout is data-driven from `TUNABLE_GROUPS`.
   parts ride rigidly as before. The default builder IS rigged and articulated during
   play (R2 — the walk.ts state machine drives it); collision still uses its merged
   rest outline, so the moving limbs don't change what the body collides by.
+- **`stop()` must restore each part's ROTATION, not just x/y/opacity.** A rigged
+  leaf's record `rotation` is overwritten every frame by `writeRigPart`
+  (`restRotation + rig delta`). The part snapshot (`PlayerPart.snap`, captured in
+  `player.ts` → `collectPlayerBody`) therefore carries `rotation` too, and `stop()`
+  restores it. WITHOUT this, a play session that ends mid-pose (most reliably a WIN,
+  which freezes the player rotated) leaves each leaf at its last posed rotation; the
+  next `start()` reads THAT as the new rest (`restRotation = pageTransform.rotation()`)
+  and re-applies the rig delta on top — the rig misaligns to the character and the
+  drift COMPOUNDS every replay (limbs fly off). Pinned in `e2e/replay-e2e.mjs`.
 - **`persistenceKey="tlArcade-engine-native"`** — unique per demo (the shell's
   CLAUDE.md explains why this must never be shared). Levels persist in
   localStorage.
