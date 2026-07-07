@@ -166,10 +166,12 @@ export const PHYSICS = {
 	//  - the body's angular speed exceeds this (rad/s): spun out / over-rotated
 	crashSpin: 16,
 	// ...but only after it has spun that fast for this many CONSECUTIVE substeps.
-	// A hard landing snaps the runner from flat to slope-aligned in one frame (a
-	// brief spin spike); requiring a streak distinguishes that transient settle
-	// from a genuine tumble, so the rig doesn't "crash" just from landing.
-	crashSpinFrames: 4,
+	// A hard landing snaps the runner from airborne-tilt to flat over a few frames,
+	// which at Sonic speeds spins the runner fast (~30-40 rad/s) for ~5-6 substeps —
+	// a landing transient, NOT a tumble. Requiring a longer streak distinguishes that
+	// settle from a genuine multi-revolution tumble, so a fast jump-and-land doesn't
+	// crash (and ragdoll away ~20% of its speed). Raised from 4 for the faster runner.
+	crashSpinFrames: 10,
 	// How far past vertical (radians) the mast may tilt before it counts as
 	// "tipped over" and crashes. ~75deg: rides steep ramps, crashes on a flip.
 	crashTilt: 1.3,
