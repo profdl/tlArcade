@@ -580,6 +580,15 @@ export interface Body {
 	constraints: Constraint[]
 	crashed: boolean
 	spinStreak: number
+	/**
+	 * When non-null, the runner is being SCRIPTED around a loop this frame (see
+	 * driveLoop / LoopRun): normal sled physics is bypassed and the body is placed
+	 * kinematically on the loop circle. Null when the runner is free (normal sled).
+	 * Loops are scripted because the emergent sled loses surface contact at the
+	 * tight loop apex (~92% up) and can't reliably crest — real Sonic scripts loops
+	 * for the same reason.
+	 */
+	loopRun: LoopRun | null
 }
 
 // Named indices into Body.points for the sled rig.
@@ -608,7 +617,7 @@ export function makeBody(center: Vec2): Body {
 		{ i: BACK, j: MAST, rest: dist(BACK, MAST), stiffness: arm },
 		{ i: FRONT, j: MAST, rest: dist(FRONT, MAST), stiffness: arm },
 	]
-	return { points, constraints, crashed: false, spinStreak: 0 }
+	return { points, constraints, crashed: false, spinStreak: 0, loopRun: null }
 }
 
 /**
@@ -908,6 +917,39 @@ export interface StepBodyOpts {
 	cruise?: number
 	/** When true, a crashed sled un-crashes once it settles upright on the ground (side mode). */
 	recover?: boolean
+	/** Loop zones the runner is SCRIPTED around (see LoopZone / driveLoop). Emergent
+	 * physics can't reliably crest a loop (it loses surface contact at the tight
+	 * apex, ~92% up), so a loop is kinematic — as real Sonic games do it. */
+	loops?: LoopZone[]
+}
+
+/**
+ * A SCRIPTED loop the runner is driven around kinematically. Authored as a circle:
+ * `center` + `radius`. When the runner reaches the loop's base (bottom of the
+ * circle) moving forward at ≥ `minSpeed`, it's captured and swept around the full
+ * circle at its entry speed, then released at the base moving forward again — so a
+ * loop always completes cleanly regardless of the collision model's apex limit.
+ * `dir` is the sweep direction: +1 = the runner goes up the FAR (+x) side first
+ * (a rightward-running loop), matching the drawn loop's winding.
+ */
+export interface LoopZone {
+	center: Vec2
+	radius: number
+	/** Minimum forward speed (px/s) at the base to trigger the loop. Slower ⇒ the
+	 * runner just passes the base on the ground (no loop). */
+	minSpeed: number
+}
+
+/** Live state while the runner is being scripted around a loop. Null when free. */
+export interface LoopRun {
+	zone: LoopZone
+	/** Current angle around the circle center (radians), screen coords (y down). The
+	 * base (bottom) is +π/2; the sweep decreases the angle for a rightward loop. */
+	angle: number
+	/** Angle swept so far (radians); the loop ends at ~2π. */
+	swept: number
+	/** Tangential speed (px/s) carried into and around the loop (constant). */
+	speed: number
 }
 
 /** Mean horizontal velocity of the runner points (BACK+FRONT), px/s. */
@@ -939,40 +981,101 @@ function runnerGrounded(body: Body, segments: Segment[]): boolean {
 	return false
 }
 
-// How far ahead of the runner (px) to look for a loop segment. Loop mode must
-// engage a touch BEFORE the runner reaches the steep/inverted part, or the
-// flat→loop transition spikes the spin and trips a crash at the entry (the runner
-// contacts the loop's near-horizontal bottom first, then the curve sharpens). A
-// small lookahead over the whole loop is simpler and more robust than trying to
-// classify each segment: any one-way contact means "on the loop", so upright/crash
-// stay suppressed for the entire ride around.
-const LOOP_CONTACT_BAND = 12
+
+// How close (px) the runner's center must be to a loop's base entry point to be
+// captured into the loop. A band, not an exact point, since it's tested per substep.
+const LOOP_ENTRY_BAND = 40
 
 /**
- * Whether a runner point is riding a LOOP this step — in contact with ANY `oneway`
- * segment. A Sonic loop is built from one-way segments (so the runner passes
- * through the overhanging top from outside and rides the inside surface — a closed
- * SOLID circle is just a wall). While on the loop the sled must NOT try to stay
- * upright or crash from tilt: the upright spring would peel it off the inside wall,
- * and the tilt/spin crash would trip as it goes inverted over the top. So loop mode
- * suppresses applyUpright + shouldCrash (see stepBody); centripetal contact from
- * the runner's speed holds it on instead. We deliberately trigger on the WHOLE loop
- * (not just its steep parts) — including the flat-ish entry/exit — so the flat→loop
- * transition doesn't crash before loop mode engages. A flat one-way PLATFORM would
- * also match, but suppressing upright/crash there is harmless: a platform never
- * inverts the sled, so there's nothing to right or crash. Only meaningful when a
- * one-way segment is present; a course with none never enters loop mode and is
- * byte-identical to before.
+ * Place the whole sled rig rigidly so its CENTER sits at `center` and its runner
+ * (BACK->FRONT) points along `tangent` (radians). Zeroes velocity encoding (prev =
+ * pos) so the kinematic placement injects no spurious sled velocity; driveLoop owns
+ * motion while looping. The mast is placed perpendicular to the runner on the side
+ * AWAY from the loop center (outward), so the character reads as standing on the
+ * inside of the loop (feet toward center, head outward) all the way around.
  */
-function onLoopSegment(body: Body, segments: Segment[]): boolean {
-	const contact = PHYSICS.bodyRadius + PHYSICS.contactSkin + LOOP_CONTACT_BAND
-	for (const i of [BACK, FRONT]) {
-		const p = body.points[i]
-		for (const seg of segments) {
-			if (seg.kind !== 'oneway') continue
-			const { point } = closestPointOnSegment(p.pos, seg.a, seg.b)
-			if (Math.hypot(p.pos.x - point.x, p.pos.y - point.y) < contact) return true
+function placeRigOnLoop(body: Body, center: Vec2, tangent: number, outward: Vec2): void {
+	const half = PHYSICS.sledRunner
+	const tx = Math.cos(tangent)
+	const ty = Math.sin(tangent)
+	const back = body.points[BACK]
+	const front = body.points[FRONT]
+	const mast = body.points[MAST]
+	back.pos.x = center.x - tx * half
+	back.pos.y = center.y - ty * half
+	front.pos.x = center.x + tx * half
+	front.pos.y = center.y + ty * half
+	mast.pos.x = center.x + outward.x * PHYSICS.sledMast
+	mast.pos.y = center.y + outward.y * PHYSICS.sledMast
+	for (const p of body.points) {
+		p.prev.x = p.pos.x
+		p.prev.y = p.pos.y
+	}
+}
+
+/**
+ * Scripted loop driver. If the body is already looping, advance it around the
+ * circle this substep and place the rig; when it completes ~360°, release it back
+ * to free physics moving forward (+x) at its loop speed. If it's NOT looping, test
+ * whether it should ENTER a loop this substep (runner center near a loop's base,
+ * moving forward at >= minSpeed) and if so capture it. Returns true when the body
+ * is under loop control this substep (caller returns early, bypassing sled physics)
+ * — false when the runner is free (normal sled runs). Pure; mutates `body`.
+ */
+function driveLoop(body: Body, dt: number, loops?: LoopZone[]): boolean {
+	// --- already looping: sweep around the circle ---
+	const run = body.loopRun
+	if (run) {
+		const { zone } = run
+		const omega = run.speed / zone.radius // angular speed (rad/s) = v / r
+		// Rightward loop: sweep by DECREASING angle (up the +x side from the base).
+		run.angle -= omega * dt
+		run.swept += omega * dt
+		const cx = zone.center.x
+		const cy = zone.center.y
+		const r = zone.radius - PHYSICS.bodyRadius // ride the INSIDE surface
+		const px = cx + Math.cos(run.angle) * r
+		const py = cy + Math.sin(run.angle) * r
+		// Outward = from loop center toward the body (so the mast/head points outward).
+		const outward = { x: Math.cos(run.angle), y: Math.sin(run.angle) }
+		// Runner tangent is perpendicular to the radius; for a decreasing angle the
+		// direction of travel is (sin, -cos).
+		const tangent = Math.atan2(-Math.cos(run.angle), Math.sin(run.angle))
+		placeRigOnLoop(body, { x: px, y: py }, tangent, outward)
+		// Complete after a full turn: RELEASE. Place the runner flat on the ground a
+		// little PAST the loop base — beyond the entry band — moving forward at loop
+		// speed, so it exits cleanly and driveLoop's entry test can't immediately
+		// re-capture it (which made it loop forever). Seat the rig upright on the
+		// ground and encode +x velocity via prev.
+		if (run.swept >= Math.PI * 2) {
+			body.loopRun = null
+			const baseX = zone.center.x
+			const baseY = zone.center.y + zone.radius // bottom of the circle = ground
+			const exitX = baseX + LOOP_ENTRY_BAND + PHYSICS.sledRunner + 4 // clear of the band
+			// Runner flat (tangent 0 = +x), mast straight up (outward = -y).
+			placeRigOnLoop(body, { x: exitX, y: baseY - PHYSICS.bodyRadius }, 0, { x: 0, y: -1 })
+			const vx = run.speed * dt
+			for (const p of body.points) p.prev.x = p.pos.x - vx
 		}
+		return true
+	}
+
+	// --- not looping: should we ENTER a loop this substep? ---
+	if (!loops || loops.length === 0) return false
+	const c = bodyCenter(body)
+	const vx = runnerHorizontalVelocity(body, dt)
+	if (vx <= 0) return false
+	for (const zone of loops) {
+		// Base (entry) point = bottom of the circle.
+		const baseX = zone.center.x
+		const baseY = zone.center.y + zone.radius
+		if (Math.hypot(c.x - baseX, c.y - baseY) > LOOP_ENTRY_BAND) continue
+		const speed = Math.hypot(vx, (c.y - baseY) / dt)
+		if (speed < zone.minSpeed) continue
+		// Capture: start at the base (angle +pi/2 = straight down from center) and
+		// sweep up the +x side. Speed carried around is the entry forward speed.
+		body.loopRun = { zone, angle: Math.PI / 2, swept: 0, speed: Math.max(vx, zone.minSpeed) }
+		return true
 	}
 	return false
 }
@@ -989,15 +1092,19 @@ export function stepBody(
 	contacts?: ContactEvent[],
 	opts?: StepBodyOpts
 ): Body {
+	// SCRIPTED LOOP: if the runner is in (or should enter) a loop this substep, it's
+	// driven kinematically around the circle (driveLoop) and we return early — normal
+	// sled physics is bypassed while looping. Loops are scripted because the emergent
+	// sled can't reliably crest a loop's tight apex (see LoopZone). No loops present
+	// (opts.loops empty) ⇒ this is a no-op and the classic sled runs unchanged.
+	if (driveLoop(body, dt, opts?.loops)) return body
+
 	const prevAngle = bodyAngle(body)
 	for (const p of body.points) integrate(p, dt)
 
-	// Loop mode: while a runner rides a STEEP one-way (loop) surface, suppress the
-	// upright spring and the tilt/spin crash so the sled can orient to the surface
-	// and go fully inverted over the top (centripetal contact from its speed holds
-	// it on). Off any steep loop segment, normal upright/crash behavior resumes.
-	// A course with no loops never sets this, so behavior there is unchanged.
-	const looping = onLoopSegment(body, segments)
+	// `looping` is always false on the normal (non-scripted) path; kept as a local so
+	// the downstream upright/crash guards read uniformly.
+	const looping = false
 
 	// Bounce is a whole-body effect: sample the body's normal velocity into a
 	// bounce line BEFORE collisions flatten it, so we can re-launch the whole rig

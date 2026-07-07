@@ -24,7 +24,7 @@ import {
 import { collectCheckpointHits, type Checkpoint } from './checkpoints'
 import { reachedGoal } from './goal'
 import type { TrackSegment } from './geometry'
-import type { Vec2 } from './physics'
+import type { LoopZone, Vec2 } from './physics'
 import { sideGroundY, type GameMode } from './state'
 
 // Half-width of the implicit ground plane injected in side mode, page px. Wide
@@ -43,6 +43,8 @@ export interface TrackSource {
 	checkpoints(): Checkpoint[]
 	/** The goal box (the `frame` shape), or null when the level has no goal. */
 	goal(): Checkpoint | null
+	/** The scripted loop zones (blue geo ellipses); empty when the level has none. */
+	loops(): LoopZone[]
 }
 
 /** Inputs the rAF loop reads from atoms and hands to the controller each frame. */
@@ -82,6 +84,9 @@ export class RunController {
 	// The goal box frozen for this run (null = no goal on the page). Tested each
 	// substep; a hit latches `won`.
 	private goalBox: Checkpoint | null = null
+	// The loop zones frozen for this run — passed to stepBody so the runner is
+	// scripted around them (driveLoop). Frozen with the rest of the snapshot.
+	private loopZones: LoopZone[] = []
 	// Latched true once the character reaches the goal this run, so the win fires
 	// exactly once (later substeps don't re-emit it). Cleared when a run begins.
 	private won = false
@@ -235,6 +240,7 @@ export class RunController {
 	private snapshotTrack(): void {
 		this.checkpoints = this.track.checkpoints()
 		this.goalBox = this.track.goal()
+		this.loopZones = this.track.loops()
 		this.segments = this.withSideGround(this.track.segments())
 	}
 
@@ -284,7 +290,12 @@ export class RunController {
 		// byte-identical.
 		const opts =
 			this.runMode === 'side'
-				? { thrust: PHYSICS.sideThrust, cruise: PHYSICS.sideCruiseSpeed, recover: true }
+				? {
+						thrust: PHYSICS.sideThrust,
+						cruise: PHYSICS.sideCruiseSpeed,
+						recover: true,
+						loops: this.loopZones,
+					}
 				: undefined
 		stepBody(this.body, this.segments, dt, contacts, opts)
 

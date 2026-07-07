@@ -24,6 +24,7 @@ function stubTrack(
 		segments: () => segs,
 		checkpoints: () => cps,
 		goal: () => goal,
+		loops: () => [],
 		setSegments: (s) => { segs = s },
 		setCheckpoints: (c) => { cps = c },
 		setGoal: (g) => { goal = g },

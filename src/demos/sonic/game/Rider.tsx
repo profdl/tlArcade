@@ -11,6 +11,7 @@ import {
   makeSegmentsComputed,
   makeCheckpointsComputed,
   makeGoalComputed,
+  makeLoopsComputed,
   type TrackSegment,
 } from "./geometry";
 import { RunController, type TrackSource } from "./runController";
@@ -109,10 +110,12 @@ export function Rider() {
     const trackSegments = makeSegmentsComputed(editor);
     const trackCheckpoints = makeCheckpointsComputed(editor);
     const trackGoal = makeGoalComputed(editor);
+    const trackLoops = makeLoopsComputed(editor);
     const track: TrackSource = {
       segments: () => trackSegments.get(),
       checkpoints: () => trackCheckpoints.get(),
       goal: () => trackGoal.get(),
+      loops: () => trackLoops.get(),
     };
 
     const readInputs = () => ({
