@@ -53,7 +53,7 @@ tray/panels never remount. Consequences you must honor:
 | Live tuning panel | `InFrontOfTheCanvas`, play-only (exists) |
 | Add elements (roles/props) | the existing **sectioned** Tray in `InFrontOfTheCanvas` |
 | Per-element edit (rig/behavior/link) | role-aware buttons on the contextual toolbar |
-| Full editors (rig / timeline / weight-paint) | a custom `StateNode` **tool**, entered via `editor.setCurrentTool('engine.rig')`, rendering handles through `InFrontOfTheCanvas` while active — NOT a floating overlay. This gets Escape-to-exit, pointer capture, and tool-scoped shortcuts for free. |
+| Full editors (rig / timeline / weight-paint) | a custom `StateNode` **tool**, entered via `editor.setCurrentTool('rig')` — a **SIMPLE, un-dotted id** (`setCurrentTool` treats a dotted id like `'engine.rig'` as a state PATH and silently fails to activate a root tool), rendering handles through `InFrontOfTheCanvas` while active — NOT a floating overlay. This gets Escape-to-exit, pointer capture, and tool-scoped shortcuts for free. |
 | AI generate | one **`HelperButtons`** entry ("✨ Generate") → a native **`Dialogs`** modal. One AI door, not one button per converter. |
 | Game-flow screens (title/win/lose) | full-screen React over the canvas (canvas hidden), reusing the `eng-banner` pattern |
 | New-from-template / global rules / mutators | `MainMenu` submenu items → `Dialogs` forms |

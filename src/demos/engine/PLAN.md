@@ -301,13 +301,31 @@ No rig present → the current rigid whole-body path runs unchanged.
 
 ### 3.5 Rigging phases (each shippable)
 
-- **R1 — Rig model + manual editor, Tier A (rigid).** `game/rig/` types +
-  `evaluate.ts` (FK + rigid deform) + tests. Rig-edit overlay: draggable joint
-  handles, bones as lines, assign leaf shapes to slots, scrub-preview. Write to
-  `meta.rig` (normal, undoable history — like `markAsPlayer`). **Keystone; no AI.**
-- **R2 — Manual animation, Tier A.** `game/anim/` timelines + evaluator +
-  state→clip selector wired to the sim. Timeline UI reuses the R1 overlay with a
-  time axis. Ship: hand-authored walk/idle/jump auto-selected from sim state.
+- **R1 — Rig model + manual editor, Tier A (rigid). ✅ SHIPPED.** `game/rig/` types +
+  `evaluate.ts` (FK + rigid deform) + tests. Authoring is **draw-bones** (pivot→tip,
+  Spine/Rive model), not draggable joint handles: a custom `StateNode` (`RigTool`)
+  owns the pointer, tip-snap chains bones, parts auto-attach; `bakeDraft` writes
+  `meta.rig` (normal, undoable — like `markAsPlayer`). Overlay + panel in
+  `render/RigOverlay.tsx`. **Keystone; no AI.** *(The play pose was empty in R1, so a
+  baked rig played AT REST — byte-identical to unrigged.)*
+- **R2 — Live animation, Tier A. ✅ SHIPPED (procedural, not a timeline UI).** The
+  default builder is **pre-rigged** (`game/rig/builderRig.ts` — a pelvis→spine→head
+  chain + four limb bones, built against the figure's rendered bounds and baked in
+  `builder.ts`) and its **whole body animates the moment you Play**. The live pose
+  comes from a **pure procedural state machine** (`game/rig/walk.ts`): `selectState`
+  → `idle | walk | jump | fall | climb`, each a small sine/offset `Pose` fed the
+  sim's `{grounded, vx, vy, touchingWall, simTime}` in `engine.ts`. This is the
+  minimal sim-state→pose selector the §3.3 de-risk note called for — grown, not into
+  the full Rive state machine, but into a clean per-state dispatch. A **keyframed
+  `Clip` type + `sampleClip`/`mergePose`** (`game/rig/clip.ts`) is scaffolded so
+  data/AI-authored clips (R5) drop in beside the procedural path without rework
+  (both just return a `Pose`). A **play-time 🦴 Bones toggle** (RigOverlay, default
+  off) shows/hides the live skeleton overlay. *Deferred within R2:* true knee/elbow
+  bend (the captured limbs are single un-splittable outline loops — needs an art
+  pass to split each limb into two shapes); left/right art mirroring (facing is
+  conveyed by spine lean today); a land-squash transient (needs a runtime timer);
+  and the hand-authored timeline/keyframe **UI** (the `Clip` data path exists, an
+  editor for it does not). Rest stays byte-identical (empty pose ⇒ identity).
 - **R3 — IK + physics constraints (Tier B).** Analytic two-bone IK (foot-plant,
   reach) + spring/physics constraint (tail/hair/cape). Slots into the §3.4
   dependency cache. Constraint-editing UI. Still native shapes.

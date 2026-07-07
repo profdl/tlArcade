@@ -334,12 +334,13 @@ regression fixture: `templates.test.ts` checks structure (one player, a goal, va
 roles); `tier1.test.ts` checks the Underground/Factory templates actually use their
 intended Tier-1 primitives with working meta configs.
 
-## Rigging — Tier A rigid (R1, PLAN §3)
+## Rigging — Tier A rigid + live animation (R1 + R2, PLAN §3)
 
 The first "character comes alive" converter: a **bone rig** on the player whose leaf
 shapes rotate/translate rigidly with their bones (cut-out puppet, Tier A of §6). The
 authoring model is **draw bones** (the Spine/Rive/DragonBones convention), split from
-play: the editor AUTHORS a skeleton → bakes it to data → a pure evaluator PLAYS it.
+play: the editor AUTHORS a skeleton → bakes it to data → a pure evaluator PLAYS it. The
+**default builder player is pre-rigged and its whole body animates on Play** (R2, below).
 
 **Authoring = drawing bones (pivot → tip).** You draw each bone as a click-drag over
 the figure, FROM the joint (shoulder, hip, base of neck) TO the far end (elbow, knee).
@@ -393,13 +394,57 @@ the rig is cosmetic, the body doesn't deform.
   No rig ⇒ the rigid whole-body path, unchanged. (Bones live in `meta`, not as shapes,
   so there are no markers to hide or exclude from the body.)
 
-**R1 scope / what's next:** the pose that drives the rig during play is **empty in R1**
-(no clips yet), so a baked rig plays AT REST — byte-identical to an unrigged player
-(behavior-preserving; the whole existing suite stays green). Live animation during play
-is **R2** (a state→clip selector sets `entity.pose` from sim state). IK/physics
-constraints are R3; weighted skinning (a custom shape) is R6. Tests: `mat2d.test.ts`,
-`evaluate.test.ts`, `authoring.test.ts` (the bone-drawing/chain math), and
-`rig.integration.test.ts` (the runtime's delta-to-leaf math).
+### R2 — live animation (the default builder walks/jumps/climbs)
+
+R1's play pose was empty (a baked rig played at rest). **R2 makes the default builder
+come alive**: it's pre-rigged and animated by a pure procedural state machine — no
+clips, no timeline UI (that's a later nicety; the data path exists, see below).
+
+- **Default rig** — [game/rig/builderRig.ts](game/rig/builderRig.ts): a pure function
+  that builds a Tier-A `Rig` for the hand-drawn builder — a **`pelvis → spine → head`
+  chain** with the four limb bones (`armL/armR/legL/legR`) **hanging off the spine**, so
+  when the body bobs/leans the limbs follow (the whole figure moves as a body). The
+  spine drives the torso; the head bone drives the head + smile + both eyes (they nod as
+  one). [builder.ts](game/builder.ts) bakes it into `meta.rig` on the player group at
+  create time. **Critical frame gotcha:** the rig is built against the group's **rendered
+  page bounds**, NOT the art's tight `BUILDER_ART.boundsW/boundsH` — the draw strokes
+  overflow those tight bounds (the arms reach out), and the runtime resolves each leaf
+  relative to the **merged page-bounds top-left** ([player.ts](game/player.ts) `offX/offY`);
+  building the rig in the tight frame cramps every bone toward center-x (bones drift off
+  the limbs). `createBuilderPlayer` measures `getShapePageBounds(groupId)` and passes
+  *those* dims. **Limbs are single un-splittable outline loops**, so each limb is ONE
+  bone driving ONE leaf (no knee/elbow bend — a later art pass would split each limb).
+- **The state machine** — [game/rig/walk.ts](game/rig/walk.ts): pure, editor-free (like
+  physics.ts). `selectState({grounded, vx, vy, touchingWall, simTime})` →
+  `idle | walk | jump | fall | climb`, and `poseForState` dispatches to a per-state
+  procedural `Pose` (sine/offset math, no keyframe data):
+  - **idle** — arms drop to the sides (static) + a breathing bob (spine/head);
+  - **walk** — legs swing opposed, arms hang at the sides and swing *subtly* (countering
+    the legs), the spine bobs twice per stride and **leans into travel** (`vx` sign), head
+    counter-nods; amplitude scales with speed;
+  - **jump** — arms sweep **up and out** overhead, legs tuck, torso stretches;
+  - **fall** — arms out for balance, legs trail, torso compresses;
+  - **climb** — **wall-scramble**: triggered when airborne AND `kin.touchingWall`
+    (reuses the slope-jump contact machinery — no new mechanic), hand-over-hand arm reach
+    with alternating leg pushes.
+  All tunables live in `WALK_DEFAULTS` (`amplitude`, `cadence`, `bob`, `lean`, `armDrop`,
+  `idleBob`, …). `engine.ts` sets `playerEntity.pose = poseForState(...)` each substep;
+  an empty pose ⇒ identity ⇒ rest is byte-identical to as-drawn.
+- **Clip scaffold (data path, no UI yet)** — [game/rig/clip.ts](game/rig/clip.ts): a
+  keyframed `Clip` type + `sampleClip`/`mergePose`, so data/AI-authored clips (R5) drop
+  in beside the procedural path *without rework* — both just return a `Pose`. Unit-tested;
+  nothing drives it live yet.
+- **Bones toggle** — `showRigDebugAtom` (default **off** so the figure shows clean); a
+  play-time **🦴 Bones** button in [render/RigOverlay.tsx](render/RigOverlay.tsx)
+  (bottom-right, clear of the native minimap) shows/hides the live skeleton overlay,
+  which `engine.ts` publishes via `rigDebugAtom` + `evaluateBoneWorlds`.
+
+**Tests:** `mat2d.test.ts`, `evaluate.test.ts`, `authoring.test.ts`,
+`rig.integration.test.ts` (R1 math), plus `builderRig.test.ts` (chain structure +
+whole-body propagation), `walk.test.ts` (state machine + per-state poses), and
+`clip.test.ts` (the sampler). End-to-end: `e2e/walk-e2e.mjs` drives real Play and asserts
+the default builder's limbs swing while walking and settle at rest. IK/physics constraints
+are R3; auto-rig (vision) R4; auto-animate (clips from Claude) R5; weighted skinning R6.
 
 ## The sim
 
@@ -474,11 +519,12 @@ avoid the overlap. Slider layout is data-driven from `TUNABLE_GROUPS`.
   but don't rotate the player record, or re-parent it under something else, and
   expect the sim to track it.
 - **A group player's COLLISION body is rigid.** Parts are merged into one outline
-  at `start()` and the collision body never deforms. With a **rig** (R1) the leaves
+  at `start()` and the collision body never deforms. With a **rig** the leaves
   *can* move relative to each other visually (the evaluator drives each), but that's
   cosmetic — collision still uses the merged rest outline (§6). Without a rig, the
-  parts ride rigidly as before. Articulated motion DURING PLAY needs R2 clips (R1's
-  play pose is empty ⇒ rest).
+  parts ride rigidly as before. The default builder IS rigged and articulated during
+  play (R2 — the walk.ts state machine drives it); collision still uses its merged
+  rest outline, so the moving limbs don't change what the body collides by.
 - **`persistenceKey="tlArcade-engine-native"`** — unique per demo (the shell's
   CLAUDE.md explains why this must never be shared). Levels persist in
   localStorage.
