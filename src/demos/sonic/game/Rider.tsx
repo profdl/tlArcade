@@ -131,12 +131,34 @@ export function Rider() {
     // One reused contacts buffer keeps the 120 Hz substep loop allocation-free.
     const contacts: ContactEvent[] = [];
 
+    // Render interpolation state (see the substep loop): the body center BEFORE this
+    // frame's substeps, and the leftover-accumulator fraction into the next substep,
+    // so the drawn position is lerp(prev, current, alpha) — smoothing the 120Hz-sim /
+    // variable-rAF aliasing that otherwise reads as a forward stutter.
+    let prevRenderCenter: { x: number; y: number } | null = null;
+    let renderAlpha = 0;
+
     // Whether the snail is currently drawn shell-only (flipped). Tracked across
     // frames so the swap can use hysteresis and only touch the DOM on a change.
     let shellOnly = false;
     // Whether the debug overlay group is currently shown; only touch the DOM on
     // a change.
     let debugWasOn = false;
+
+    // The body center to DRAW at this frame: the current center lerped back toward
+    // this frame's pre-substep center by (1 - renderAlpha), so the drawn position
+    // advances a constant amount per real frame despite the alternating substep count
+    // (the forward-stutter fix). Falls back to the raw center when there's no prev
+    // sample (paused, or the very first frame). Reused by the camera + the sled.
+    const interpolatedCenter = (): { x: number; y: number } => {
+      const cur = bodyCenter(run.currentBody);
+      if (!prevRenderCenter) return cur;
+      const a = renderAlpha;
+      return {
+        x: prevRenderCenter.x + (cur.x - prevRenderCenter.x) * a,
+        y: prevRenderCenter.y + (cur.y - prevRenderCenter.y) * a,
+      };
+    };
 
     const tick = (now: number) => {
       const inputs = readInputs();
@@ -168,13 +190,26 @@ export function Rider() {
         let scored = false;
         let won = false;
         audio.beginFrame();
+        // Render INTERPOLATION: the sim runs whole 120Hz substeps inside a variable
+        // rAF, so the number of substeps per frame alternates (2,2,1,…) and the body's
+        // raw per-frame page advance alternates with it — which reads as a forward
+        // stutter against the smoothly-lerping camera. Standard fix: draw at
+        // lerp(secondToLast, last, alpha) where the two are ONE substep apart and
+        // alpha = the leftover accumulator fraction. So we keep the center from just
+        // before the FINAL substep as `beforeLast`. (Only the DRAWN transform is
+        // interpolated; the sim stays exact/deterministic.)
+        let beforeLast = bodyCenter(run.currentBody); // if 0 substeps run, prev == cur
         while (acc >= FIXED_DT) {
+          beforeLast = bodyCenter(run.currentBody); // center just before this substep
           const res = run.stepFixed(FIXED_DT, contacts);
           audio.onSubstep(res.contacts);
           if (res.scored) scored = true;
           if (res.won) won = true;
           acc -= FIXED_DT;
         }
+        // Fraction into the next substep (0..1); used to interpolate the render below.
+        renderAlpha = acc / FIXED_DT;
+        prevRenderCenter = beforeLast;
         if (scored)
           scoreAtom.set({
             collected: run.collectedCount,
@@ -204,7 +239,7 @@ export function Rider() {
         // stack; the camera move must not be an undoable edit.
         if (followAtom.get()) {
           const center = editor.getViewportPageBounds().center;
-          const c = bodyCenter(run.currentBody);
+          const c = interpolatedCenter();
           const dx = c.x - center.x;
           const dy = c.y - center.y;
           if (Math.hypot(dx, dy) > 1) {
@@ -220,7 +255,12 @@ export function Rider() {
       } else {
         last = now; // keep timebase fresh while paused
         audio.stop(); // silence sustained voices; re-arm impacts for the next run
+        prevRenderCenter = null; // paused: draw at the raw center (no interpolation)
       }
+
+      // The interpolated page-space body center to draw the sled + follow the camera
+      // at this frame (see interpolatedCenter / the substep loop).
+      const renderCenter = interpolatedCenter();
 
       // Position the sled. pageToViewport reads live camera + screenBounds and
       // returns coords relative to the editor container — which is exactly the
@@ -292,7 +332,7 @@ export function Rider() {
       const snail = snailRef.current;
       if (snail) {
         const body = run.currentBody;
-        const center = editor.pageToViewport(bodyCenter(body));
+        const center = editor.pageToViewport(renderCenter);
         // Rotate by the FULL body orientation (bodyUpAngle, from the mast), NOT
         // bodyAngle (the runner direction, which stays ~horizontal even upside-down).
         // This is what makes a flip / roll-out actually VISIBLE: an inverted body
