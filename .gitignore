@@ -30,3 +30,9 @@ dist-ssr
 
 # Wrangler local dev state (Durable Objects, R2, etc.)
 .wrangler
+
+# Local notes vault (Obsidian) — not part of any demo
+.tldraw-brain/
+
+# Stray per-demo planning scratch files
+**/templates/SISYPHUS_PLAN.md
