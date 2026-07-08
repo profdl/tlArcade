@@ -71,23 +71,43 @@ export const T_SPAWN: Vec2 = { x: 200, y: 400 }
  * scored in step 7. */
 export const EXIT = { cx: 1050, cy: 400, halfW: 80, halfH: 120 }
 
-// The gap between the two corridor walls. Kept just UNDER the crossbar's full
-// width (2*CROSSBAR_HALF_W = 180) so a level crossbar can't fit — the T has to
-// turn to thread it. Tune this ratio to make the squeeze easier/harder.
-const GAP_HALF = 70 // half the corridor opening height (140 tall < 180 crossbar)
-const CORRIDOR_X = 620 // x of the pinch point
-const WALL_T = 30 // wall thickness (half-extent)
+// The pinch. The opening is defined by its CENTER and half-height, then each
+// pinch wall is derived to fill from the field edge to the opening edge — so the
+// gap width is exactly `GAP * 2` and can't drift from a hand-computed extent
+// (the bug the first pass had: the gap collapsed to 30px, unthreadable).
+//
+// Sizing the gap — the squeeze is an ALIGNMENT problem, not a "shrink the
+// bounding box" one. The pinch is a thin VERTICAL wall, so what must fit through
+// is the T's VERTICAL extent as it crosses x=CORRIDOR_X:
+//  - Level (angle 0): crossbar 44px thick + stem hangs 156px below = ~200px tall.
+//  - Tilted: taller (a 45° T spans more vertically) → jams.
+// So a T that's carefully held LEVEL slips through, but a careless/tilted one
+// wedges. That's the tension: keep it aligned or it catches. Gap is set just
+// above the level extent (200px) for clearance, so alignment — not luck — is what
+// gets it through. (A single straight slot can't force a *rotation*; a real
+// rotate-to-pass needs a corridor with a turn — that's a step-7 maze, not step 2.)
+const WALL_T = 30 // wall half-thickness (px)
+const CORRIDOR_X = 620 // x of the pinch
+const GAP = 120 // half the opening → 240px tall. Level T (~200) fits; tilted jams.
+const GAP_CY = 400 // opening centered on the field's mid-line
+const GAP_TOP = GAP_CY - GAP // page-y of the opening's top edge
+const GAP_BOTTOM = GAP_CY + GAP // page-y of the opening's bottom edge
+
+/** Build a vertical pinch wall spanning [yTop, yBottom] at x=CORRIDOR_X. */
+function pinchWall(yTop: number, yBottom: number): Rect {
+	return { cx: CORRIDOR_X, cy: (yTop + yBottom) / 2, halfW: WALL_T, halfH: (yBottom - yTop) / 2 }
+}
 
 /** Static maze walls, page space (center + half-extents). A boxed field with a
- * pinch in the middle wall that forces the rotate-to-pass moment. */
+ * pinch in the middle that forces the rotate-to-pass moment. */
 export const MAZE_WALLS: Rect[] = [
 	// Outer boundary (top, bottom, left, right) — keep the T on the field.
 	{ cx: 600, cy: FIELD.minY - WALL_T, halfW: 620, halfH: WALL_T }, // top
 	{ cx: 600, cy: FIELD.maxY + WALL_T, halfW: 620, halfH: WALL_T }, // bottom
 	{ cx: FIELD.minX - WALL_T, cy: 400, halfW: WALL_T, halfH: 420 }, // left
 	{ cx: FIELD.maxX + WALL_T, cy: 400, halfW: WALL_T, halfH: 420 }, // right
-	// The pinch: a wall from the top and one from the bottom, leaving a GAP_HALF*2
-	// opening centered vertically — narrower than the crossbar.
-	{ cx: CORRIDOR_X, cy: (FIELD.minY + (400 - GAP_HALF)) / 2, halfW: WALL_T, halfH: (400 - GAP_HALF) / 2 },
-	{ cx: CORRIDOR_X, cy: (FIELD.maxY + (400 + GAP_HALF)) / 2, halfW: WALL_T, halfH: (FIELD.maxY - (400 + GAP_HALF)) / 2 },
+	// The pinch: a wall from the field top down to the opening, and one from the
+	// opening down to the field bottom — leaving a GAP*2 gap centered on GAP_CY.
+	pinchWall(FIELD.minY, GAP_TOP),
+	pinchWall(GAP_BOTTOM, FIELD.maxY),
 ]

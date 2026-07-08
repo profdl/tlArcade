@@ -86,11 +86,73 @@ export function tPose(sim: Sim): Pose {
 	return { x: p.x, y: p.y, angle: pageAngleFromPlanck(sim.t.getAngle()) }
 }
 
+// --- Grabs ------------------------------------------------------------------
+// A grab is a spring from a BODY-LOCAL anchor (stuck to the spot the player
+// grabbed, so it tracks the T's rotation) to that player's cursor. Each tick we
+// resolve the anchor to its live world point and apply a force there — AT THE
+// POINT, not the center, so an off-center grab produces torque. That torque is
+// the whole game (see the planck-rigid-body-sim skill).
+
+/** Spring stiffness: force per meter of (cursor − anchor) offset, per unit mass.
+ * Tuned so a normal drag feels like pulling a rope, not teleporting the piece. */
+const SPRING_K = 40
+/** Max force magnitude (N-ish, in planck units). The clamp is BOTH a feel knob
+ * and the anti-tunneling guard: an unclamped spring on a far cursor could inject
+ * enough velocity to jump a wall in one step. */
+const MAX_FORCE = 90
+
+/** One player's active grab, in PAGE space. `anchorLocal` is the grabbed point in
+ * the T's own frame (meters, planck convention) — captured once on grab so it
+ * stays stuck to that spot; `cursor` updates every input. */
+export interface Grab {
+	/** Body-local anchor (planck meters, +y up) — where on the T this player holds. */
+	anchorLocal: Vec2
+	/** This player's current cursor target (page px). */
+	cursor: Vec2
+}
+
+/** Hit-test a page-space point against the T's fixtures. Returns the body-local
+ * anchor (planck meters) if the point is on the piece, else null. Used on
+ * mousedown to start a grab. */
+export function hitTestT(sim: Sim, pagePoint: Vec2): Vec2 | null {
+	const worldM = pxToM(pagePoint.x, pagePoint.y)
+	for (let f = sim.t.getFixtureList(); f; f = f.getNext()) {
+		if (f.testPoint(worldM)) {
+			const local = sim.t.getLocalPoint(worldM)
+			return { x: local.x, y: local.y }
+		}
+	}
+	return null
+}
+
+/** Apply every active grab's spring force to the T for this tick. Forces SUM —
+ * many grabs (real players or scripted) just accumulate on the one body, which is
+ * the co-op/conflict mechanic. Call once per step, before world.step. */
+function applyGrabs(sim: Sim, grabs: Iterable<Grab>): void {
+	for (const g of grabs) {
+		const anchorWorld = sim.t.getWorldPoint(new PlanckVec2(g.anchorLocal.x, g.anchorLocal.y))
+		const cursorM = pxToM(g.cursor.x, g.cursor.y)
+		// Spring toward the cursor, scaled by mass so heavier tuning doesn't change
+		// the feel; clamped to MAX_FORCE.
+		const mass = sim.t.getMass()
+		let fx = (cursorM.x - anchorWorld.x) * SPRING_K * mass
+		let fy = (cursorM.y - anchorWorld.y) * SPRING_K * mass
+		const mag = Math.hypot(fx, fy)
+		const cap = MAX_FORCE * mass
+		if (mag > cap && mag > 1e-9) {
+			fx = (fx / mag) * cap
+			fy = (fy / mag) * cap
+		}
+		sim.t.applyForce(new PlanckVec2(fx, fy), anchorWorld, true)
+	}
+}
+
 /** Fixed simulation timestep (seconds). ~30 Hz — the tick rate the DO will use.
  * Never a variable dt (see the skill). */
 export const FIXED_DT = 1 / 30
 
-/** Advance the sim one fixed step. */
-export function step(sim: Sim): void {
+/** Advance the sim one fixed step, applying all active grabs first. */
+export function step(sim: Sim, grabs: Iterable<Grab> = []): void {
+	applyGrabs(sim, grabs)
 	sim.world.step(FIXED_DT, 8, 3)
 }

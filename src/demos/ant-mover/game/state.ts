@@ -17,3 +17,8 @@ export const tPoseAtom = atom<Pose>('am-tPose', { x: 0, y: 0, angle: 0 })
 
 /** Bumped to force a fresh sim (Reset). */
 export const resetNonceAtom = atom<number>('am-resetNonce', 0)
+
+/** Dev-only: number of SCRIPTED grabbers (bots) pulling the T toward the exit, so
+ * a crowd sim can run with no humans. 0 = off. Lets us watch how N pullers shove
+ * one body around long before N real players exist (plan step 2 / step 7 proxy). */
+export const scriptedCountAtom = atom<number>('am-scripted', 0)
