@@ -51,14 +51,48 @@ tight corridor, so the tension between pullers is emergent from the body, not
 scripted. Server capacity (how many concurrent grabs one DO can simulate at tick
 rate) is the real ceiling, and finding it is part of the test — see step 7.
 
+### Native-first authoring (the maze + object are real tldraw shapes)
+
+**Decided during step 3.** The maze and the movable object are **native tldraw
+shapes on a synced canvas**, not hardcoded constants — the Sonic model:
+
+- **Stopped = author mode.** Players draw/edit the maze with native tldraw tools
+  (geo/draw/line), and **designate any shape or drawing as "the object to move."**
+  Anything drawable can be the awkward load — the game is customizable.
+- **Playing = sim mode.** At play-start we read the collidable shapes' **true
+  geometry** (`editor.getShapeGeometry`, like Sonic's `geometry.ts` reads track):
+  the designated object becomes a planck **dynamic body** built from its actual
+  outline (polygon fixtures, convex-decomposed if concave — NOT a bounding box, so
+  a drawn squiggle stays awkward); every other collidable shape becomes a **static**
+  body (the maze). The sim runs; the pose broadcasts; players grab and pull.
+- **Stop → edit → restart.** Stopping drops back to author mode with the shapes
+  intact, so the maze/object can be edited and the run restarted.
+
+Two consequences that reshape the architecture:
+
+1. **There IS a shared document now** — the maze shapes + which shape is the object
+   must be seen/edited by every player. So the netcode is **real tldraw sync
+   (`TLSocketRoom` + `useSync`)**, mirroring the Toolkit; the "plain WebSocket, no
+   sync" simplification is off the table. The high-frequency **pose** still rides
+   the out-of-band custom-message channel (it's transient, not document state), and
+   **input** still needs the dedicated upstream socket (the sync socket is
+   receive-only client-side). See the transport table.
+2. **"Which shape is the object"** is a piece of synced state (e.g. a tag in the
+   shape's `meta`, or a dedicated marker) so all players and the DO agree on it.
+
+Native-first also means the earlier hardcoded `geometry.ts` (T + maze constants)
+becomes the **step-2 local prototype only** — its shapes move to authored native
+shapes from step 4 on. The pure planck sim (`sim.ts`) stays; only where its bodies
+come *from* changes (constants → shape geometry).
+
 ## Architecture
 
 | Concern | Decision | Why |
 |---|---|---|
-| Netcode | Cloudflare Worker + Durable Object, server-authoritative | Mirrors the Toolkit demo's proven plumbing |
-| Physics engine | **planck.js** (pure-JS Box2D) running *inside the DO* | WASM engines (Rapier) fight the Worker's no-async-WASM-load + cold-start limits; planck instantiates synchronously, ideal compound-body + force-at-point APIs, and single-authority makes its determinism limits irrelevant. Rapier2D is the fallback if perf ceilings appear. **Gated by step 0 — unproven under `@cloudflare/vite-plugin` until then.** |
-| The load | One dynamic planck `Body` = two welded box fixtures (stem + crossbar) = the T | Compound rigid body; rotates and collides as one. Free to tumble/rotate (unlike Sonic's self-righting sled rig). |
-| The maze | Static planck bodies (box/chain fixtures) | The corridor-squeeze is exactly what a real engine buys us |
+| Netcode | Cloudflare Worker + Durable Object with **`TLSocketRoom` + `useSync`** (mirror the Toolkit), server-authoritative | There IS a shared document (the authored maze + which shape is the object), so we need real tldraw sync — not the plain-WebSocket variant. **Gate PASSED (step 0): planck runs under `workerd`.** |
+| Physics engine | **planck.js** (pure-JS Box2D) running *inside the DO* | ✅ **Gate passed (step 0)** — planck imports/steps under `@cloudflare/vite-plugin`/`workerd`, applies off-center force → torque. Pure JS, synchronous instantiation (no async WASM load), single-authority makes determinism limits irrelevant. |
+| The load | The **designated native shape**, read into a dynamic planck body from its **true geometry** (`getShapeGeometry` → polygon fixtures; convex-decompose if concave) | Any drawing can be the awkward object (native-first authoring). NOT a bounding box — a drawn squiggle stays awkward. Free to tumble (no self-righting). |
+| The maze | Every OTHER collidable native shape → a **static** planck body from its geometry | Authored/edited on the synced canvas (Sonic model). The corridor-squeeze is what a real engine buys us. |
 | **Client → server input** | **Dedicated second WebSocket** (`/api/input/:roomId`) to the *same* DO, separate from the sync socket. On mousedown the client hit-tests the cursor against the T's live pose and records a **body-local anchor**; while dragging it sends `{anchor, cursor}` (coalesced); mouseup clears it. Server holds each player's current anchor+cursor. | ⚠️ **The sync socket cannot carry client→server custom data — confirmed against `@tldraw/sync ^5.1.1`.** See "Why the transport changed". A separate socket the DO accepts itself has no `TLSocketRoom` framing conflict because the room never sees it. |
 | Server loop | DO `alarm()`-armed fixed-tick loop (~30 Hz) that re-arms each tick **while players are connected**, and **stops arming when the room empties** | Toolkit has no tick loop to copy; hibernation freezes a naive `setInterval`, so the alarm pattern is DO-correct. A self-re-arming 30 Hz alarm on an empty room ticks (and bills) forever — the stop condition is mandatory, not optional. **No in-repo precedent — build & prove it in isolation (step 3).** |
 | Broadcast | The T-piece pose (x, y, angle) + player cursors pushed **server→client** via `room.sendCustomMessage` / `sendToSession`, received by `useSync({ onCustomMessageReceived })` | This direction (server→client) genuinely works today (`referee/privateReveals.ts`, `pages/Room.tsx`). High-frequency poses bypass the CRDT store. **NOT raw `ws.send` on the sync socket** — that collides with `TLSocketRoom`'s framing. |
@@ -134,16 +168,29 @@ every tick, fine for change-driven sends.
    with zero netcode, and stress the wedge behavior long before that many humans exist.
 3. **Prove the alarm tick loop AND the input socket in isolation** — copy Toolkit's
    `worker/`, `wrangler.toml`, `@cloudflare/vite-plugin`, `shared/` plumbing for a
-   *new* DO. Two no-precedent pieces, proven together before physics:
+   *new* DO (`AntMoverDurableObject`, its own migration + binding). Two no-precedent
+   pieces, proven together before physics:
    - `alarm()`-armed fixed-tick loop that re-arms each tick, **survives hibernation**,
      and **stops arming when the last player disconnects** (re-arms on next connect).
-   - a **second WebSocket** (`/api/input/:roomId`) the DO accepts itself: client sends
-     a dummy `{anchor, cursor}` up it; DO logs it; DO broadcasts a *dummy* pose driven by
-     the vector via `room.sendCustomMessage`; client renders it moving, interpolated.
+   - a **second WebSocket** (`/api/am-input/:roomId`) the DO accepts itself: client
+     sends a dummy `{anchor, cursor}` up it; DO logs it; DO broadcasts a *dummy* pose
+     driven by the vector via `room.sendCustomMessage`; client renders it moving,
+     interpolated.
    This is the whole risky transport spine with zero physics — get it ticking cleanly
    so DO-hibernation, empty-room, and socket-routing bugs don't tangle with physics bugs.
-4. **Move the sim server-side** — port the step-2 planck sim into the ticking DO; drive
-   it from the alarm loop; broadcast the real T-piece pose (replacing the dummy).
+   Client joins with `useSync` (the room now has a real synced store — see native-first).
+3a. **Native shapes → planck bodies** — build the read layer (Sonic's `geometry.ts`
+   model): `editor.getShapeGeometry` on each collidable native shape → planck fixtures.
+   The **designated object** → a dynamic body from its true outline (polygon fixtures,
+   convex-decomposed if concave); every other collidable shape → a static body. Plus a
+   way to **designate "the object"** (a `meta` tag / marker on the shape) that syncs to
+   all players. Prove it client-side first (replace step-2's hardcoded `geometry.ts`
+   constants with authored shapes), then it feeds the server sim.
+4. **Move the sim server-side** — port the step-2 planck sim into the ticking DO; feed
+   it the shape-derived bodies from 3a (the DO reads the synced store's shapes at
+   play-start); drive it from the alarm loop; broadcast the real object pose (replacing
+   the dummy). **Play/Stop lifecycle:** stop = editable native shapes; play = sim from
+   their geometry; stop→edit→restart.
 5. **Wire real input** — replace the dummy vector with real `{anchor, cursor}` inputs
    over the input socket; each tick, for every player holding, resolve the anchor to a
    world point and `applyForce(k·(cursor − anchorWorld), anchorWorld)`; render the
@@ -151,7 +198,7 @@ every tick, fine for change-driven sends.
 6. **Multi-player correctness** — many grabs summing on one body, free per-player grab
    points (overlap allowed, no claiming), grab/release, disconnect drops that player's
    force. Prove the core mechanic (coordinate → glides; fight → jams) with 2+ real clients.
-7. **Make it a game, and open the doors** — start/exit zones, win when the T clears
+7. **Make it a game, and open the doors** — start/exit zones, win when the object clears
    the maze, a group timer. **No player cap:** let as many players join one room as
    the DO can simulate, and treat finding that ceiling as part of the test (how many
    concurrent grabs can one DO step at tick rate before poses degrade?). Optionally a
