@@ -87,19 +87,30 @@ export function tPose(sim: Sim): Pose {
 }
 
 // --- Grabs ------------------------------------------------------------------
-// A grab is a spring from a BODY-LOCAL anchor (stuck to the spot the player
-// grabbed, so it tracks the T's rotation) to that player's cursor. Each tick we
-// resolve the anchor to its live world point and apply a force there — AT THE
-// POINT, not the center, so an off-center grab produces torque. That torque is
-// the whole game (see the planck-rigid-body-sim skill).
+// A grab is a DAMPED spring from a BODY-LOCAL anchor (stuck to the spot the
+// player grabbed, so it tracks the T's rotation) to that player's cursor. Each
+// tick we resolve the anchor to its live world point and apply a force there — AT
+// THE POINT, not the center, so an off-center grab produces torque. That torque
+// is the whole game (see the planck-rigid-body-sim skill).
+//
+// It's a PD controller, not a pure position spring: force = K*(cursor − anchor)
+// − C*(anchor velocity). The velocity term is what kills the BOUNCE — a pure
+// spring is an undamped oscillator that overshoots the cursor and springs back;
+// the damping term bleeds that energy so the piece settles ONTO the cursor
+// instead of wobbling around it. C is set near critical damping for the effective
+// stiffness so it's firm but not sluggish.
 
 /** Spring stiffness: force per meter of (cursor − anchor) offset, per unit mass.
- * Tuned so a normal drag feels like pulling a rope, not teleporting the piece. */
-const SPRING_K = 40
+ * Raised from the first pass so the pull is firm/taut, not floaty. */
+const SPRING_K = 70
+/** Damping: force per (m/s) of the anchor's velocity, per unit mass, OPPOSING its
+ * motion. This is the anti-bounce term — near critical damping (~2*sqrt(K)) so the
+ * anchor eases onto the cursor without overshooting. */
+const SPRING_C = 16
 /** Max force magnitude (N-ish, in planck units). The clamp is BOTH a feel knob
  * and the anti-tunneling guard: an unclamped spring on a far cursor could inject
  * enough velocity to jump a wall in one step. */
-const MAX_FORCE = 90
+const MAX_FORCE = 120
 
 /** One player's active grab, in PAGE space. `anchorLocal` is the grabbed point in
  * the T's own frame (meters, planck convention) — captured once on grab so it
@@ -139,11 +150,15 @@ function applyGrabs(sim: Sim, grabs: Iterable<Grab>): void {
 	for (const g of grabs) {
 		const anchorWorld = sim.t.getWorldPoint(new PlanckVec2(g.anchorLocal.x, g.anchorLocal.y))
 		const cursorM = pxToM(g.cursor.x, g.cursor.y)
-		// Spring toward the cursor, scaled by mass so heavier tuning doesn't change
-		// the feel; clamped to MAX_FORCE.
+		// Velocity of the grabbed point itself (includes the T's spin, since the
+		// anchor is off-center) — the damping term opposes THIS, killing overshoot.
+		const vAnchor = sim.t.getLinearVelocityFromWorldPoint(anchorWorld)
+		// DAMPED spring (PD): K*(cursor − anchor) − C*(anchor velocity). Scaled by
+		// mass so tuning the piece's density doesn't change the feel; clamped to
+		// MAX_FORCE.
 		const mass = sim.t.getMass()
-		let fx = (cursorM.x - anchorWorld.x) * SPRING_K * mass
-		let fy = (cursorM.y - anchorWorld.y) * SPRING_K * mass
+		let fx = ((cursorM.x - anchorWorld.x) * SPRING_K - vAnchor.x * SPRING_C) * mass
+		let fy = ((cursorM.y - anchorWorld.y) * SPRING_K - vAnchor.y * SPRING_C) * mass
 		const mag = Math.hypot(fx, fy)
 		const cap = MAX_FORCE * mass
 		if (mag > cap && mag > 1e-9) {
