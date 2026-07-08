@@ -22,3 +22,17 @@ export const resetNonceAtom = atom<number>('am-resetNonce', 0)
  * a crowd sim can run with no humans. 0 = off. Lets us watch how N pullers shove
  * one body around long before N real players exist (plan step 2 / step 7 proxy). */
 export const scriptedCountAtom = atom<number>('am-scripted', 0)
+
+/** A rope to draw: from the grabbed point ON the T (page px, so it tracks the T's
+ * motion/rotation) to the puller's cursor (page px). `human` flags the local
+ * player's own rope for a distinct color. */
+export interface RopeView {
+	anchor: { x: number; y: number }
+	cursor: { x: number; y: number }
+	human: boolean
+}
+
+/** The active ropes to render this frame. Written by the sim loop (resolving each
+ * grab's body-local anchor to its live world point), read by Field. In step 5 the
+ * broadcast fills this so remote players' ropes draw the same way. */
+export const ropesAtom = atom<RopeView[]>('am-ropes', [])

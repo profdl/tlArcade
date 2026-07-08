@@ -13,7 +13,7 @@
 
 import { useEditor, useValue } from 'tldraw'
 import { MAZE_WALLS, EXIT, T_FIXTURES } from './geometry'
-import { tPoseAtom } from './state'
+import { tPoseAtom, ropesAtom } from './state'
 
 export function Field() {
 	const editor = useEditor()
@@ -22,6 +22,8 @@ export function Field() {
 	const camera = useValue('am-camera', () => editor.getCamera(), [editor])
 	// The T pose to draw (page space), reactively.
 	const pose = useValue('am-tPose', () => tPoseAtom.get(), [])
+	// The active grab ropes (page space), reactively.
+	const ropes = useValue('am-ropes', () => ropesAtom.get(), [])
 
 	const zoom = camera.z
 	// page point → viewport (container-relative) point.
@@ -90,6 +92,23 @@ export function Field() {
 					</g>
 				)
 			})()}
+
+			{/* Grab ropes: a line from the grabbed point ON the piece to the puller's
+			    cursor, with a knot at the grab end and a ring at the cursor. Drawn last
+			    (on top). The human's own rope is styled distinctly. Both endpoints are
+			    page-space → viewport; the T-end tracks the rotating piece. */}
+			{ropes.map((r, i) => {
+				const a = toView(r.anchor.x, r.anchor.y)
+				const c = toView(r.cursor.x, r.cursor.y)
+				const cls = r.human ? 'am-rope am-rope-human' : 'am-rope'
+				return (
+					<g key={`rope-${i}`}>
+						<line x1={a.x} y1={a.y} x2={c.x} y2={c.y} className={cls} />
+						<circle cx={a.x} cy={a.y} r={4} className={`${cls} am-rope-knot`} />
+						<circle cx={c.x} cy={c.y} r={5} className={`${cls} am-rope-hand`} />
+					</g>
+				)
+			})}
 		</svg>
 	)
 }

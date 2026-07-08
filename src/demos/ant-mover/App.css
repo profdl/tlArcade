@@ -30,6 +30,40 @@
 	vector-effect: non-scaling-stroke;
 }
 
+/* --- Grab ropes ----------------------------------------------------------- */
+/* Rope line: a taut cord from the grab knot to the hand. Others (bots / remote
+   players) are muted grey; the local human's is a warm highlight. */
+.am-rope {
+	stroke: #8a8f98;
+	stroke-width: 2.5;
+	stroke-linecap: round;
+	fill: none;
+}
+
+.am-rope-human {
+	stroke: #2f6fed;
+}
+
+/* The knot sits on the piece (filled); the hand end is a hollow ring. */
+.am-rope-knot {
+	fill: #8a8f98;
+	stroke: none;
+}
+
+.am-rope-human.am-rope-knot {
+	fill: #2f6fed;
+}
+
+.am-rope-hand {
+	fill: rgba(255, 255, 255, 0.9);
+	stroke: #8a8f98;
+	stroke-width: 2.5;
+}
+
+.am-rope-human.am-rope-hand {
+	stroke: #2f6fed;
+}
+
 /* --- Panel ---------------------------------------------------------------- */
 
 .am-panel {

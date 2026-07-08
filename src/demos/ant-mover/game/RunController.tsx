@@ -14,9 +14,9 @@
 
 import { useEffect, useRef } from 'react'
 import { useEditor, useValue } from 'tldraw'
-import { createWorld, step, tPose, hitTestT, FIXED_DT, type Sim, type Grab } from './sim'
+import { createWorld, step, tPose, hitTestT, grabAnchorPage, FIXED_DT, type Sim, type Grab } from './sim'
 import { EXIT } from './geometry'
-import { playingAtom, resetNonceAtom, tPoseAtom, scriptedCountAtom } from './state'
+import { playingAtom, resetNonceAtom, tPoseAtom, scriptedCountAtom, ropesAtom, type RopeView } from './state'
 
 /** A scripted (bot) grabber: holds a fixed body-local anchor and pulls toward a
  * moving target — here, the exit — so a crowd sim can run with no humans. */
@@ -81,6 +81,13 @@ export function RunController() {
 			const anchorLocal = hitTestT(sim, p)
 			if (anchorLocal) {
 				humanGrab.current = { anchorLocal, cursor: { x: p.x, y: p.y } }
+				// This drag is a GRAB, not a canvas gesture — claim the event so tldraw
+				// never sees it (no brush-select, no shape drag). Capture phase + stop
+				// both propagations so nothing downstream reacts. (Readonly already
+				// disables the brush; this also covers a grab that starts on the T when
+				// not readonly, and keeps the grab from being hijacked.)
+				e.stopPropagation()
+				e.preventDefault()
 			}
 		}
 		const onMove = (e: PointerEvent) => {
@@ -102,6 +109,23 @@ export function RunController() {
 		}
 	}, [editor])
 
+	// Lock the canvas to read-only WHILE PLAYING so a drag can't draw a
+	// brush-select box or move shapes — during play the only meaningful drag is a
+	// grab (handled above). Safe here (unlike the Engine demo) because the T is an
+	// OVERLAY, not a store shape, so read-only never blocks the sim. Pan/zoom still
+	// work in read-only, so a click that MISSES the T still pans the canvas. Clear
+	// selection on entering play so no leftover selection UI shows. Restore editing
+	// on pause. Driven off the atom so it also tracks Play toggled elsewhere.
+	useEffect(() => {
+		editor.run(
+			() => {
+				editor.updateInstanceState({ isReadonly: playing })
+				if (playing) editor.selectNone()
+			},
+			{ history: 'ignore' }
+		)
+	}, [editor, playing])
+
 	// The fixed-timestep loop. Accumulator pattern: step the sim in fixed FIXED_DT
 	// chunks regardless of frame rate, so physics is deterministic and matches the
 	// server tick. Only steps while playing; always writes the pose (so a paused
@@ -116,6 +140,12 @@ export function RunController() {
 			const sim = simRef.current
 			if (!sim) return
 
+			// Gather this frame's active grabs (human + bots) once; used both to step
+			// the sim and to publish ropes.
+			const grabs: Grab[] = []
+			if (humanGrab.current) grabs.push(humanGrab.current)
+			for (const b of botsRef.current) grabs.push(b.grab)
+
 			const dtMs = now - last
 			last = now
 			if (playingAtom.get()) {
@@ -123,9 +153,6 @@ export function RunController() {
 				// Cap the accumulator so a tab-away doesn't spiral into a huge catch-up.
 				if (acc > 0.25) acc = 0.25
 				while (acc >= FIXED_DT) {
-					const grabs: Grab[] = []
-					if (humanGrab.current) grabs.push(humanGrab.current)
-					for (const b of botsRef.current) grabs.push(b.grab)
 					step(sim, grabs)
 					acc -= FIXED_DT
 				}
@@ -133,6 +160,20 @@ export function RunController() {
 				acc = 0
 			}
 			tPoseAtom.set(tPose(sim))
+
+			// Publish the ropes to draw: each grab's live T-side point (page space) →
+			// its cursor. Human first so its rope draws distinctly. Recomputed every
+			// frame so the rope stays glued to the (possibly rotating) piece and the
+			// cursor end tracks the mouse with no lag. Only while playing — a paused
+			// game applies no forces, so dangling bot ropes would be misleading.
+			const ropes: RopeView[] = playingAtom.get()
+				? grabs.map((g, i) => ({
+						anchor: grabAnchorPage(sim, g),
+						cursor: { x: g.cursor.x, y: g.cursor.y },
+						human: i === 0 && humanGrab.current === g,
+					}))
+				: []
+			ropesAtom.set(ropes)
 		}
 
 		raf = requestAnimationFrame(frame)

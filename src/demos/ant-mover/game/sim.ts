@@ -125,6 +125,13 @@ export function hitTestT(sim: Sim, pagePoint: Vec2): Vec2 | null {
 	return null
 }
 
+/** Resolve a grab's body-local anchor to its live PAGE-space point (px) — the T
+ * end of the rope, which tracks the piece as it moves/rotates. */
+export function grabAnchorPage(sim: Sim, g: Grab): Vec2 {
+	const w = sim.t.getWorldPoint(new PlanckVec2(g.anchorLocal.x, g.anchorLocal.y))
+	return mToPx(w)
+}
+
 /** Apply every active grab's spring force to the T for this tick. Forces SUM —
  * many grabs (real players or scripted) just accumulate on the one body, which is
  * the co-op/conflict mechanic. Call once per step, before world.step. */
