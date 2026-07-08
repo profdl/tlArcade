@@ -166,19 +166,27 @@ every tick, fine for change-driven sends.
    dev below): N fake players, each an anchor pulling toward a target, fed into the
    same local `world.step()` — lets you watch a 10/50/200-grabber crowd sim solo,
    with zero netcode, and stress the wedge behavior long before that many humans exist.
-3. **Prove the alarm tick loop AND the input socket in isolation** — copy Toolkit's
-   `worker/`, `wrangler.toml`, `@cloudflare/vite-plugin`, `shared/` plumbing for a
-   *new* DO (`AntMoverDurableObject`, its own migration + binding). Two no-precedent
-   pieces, proven together before physics:
-   - `alarm()`-armed fixed-tick loop that re-arms each tick, **survives hibernation**,
-     and **stops arming when the last player disconnects** (re-arms on next connect).
-   - a **second WebSocket** (`/api/am-input/:roomId`) the DO accepts itself: client
-     sends a dummy `{anchor, cursor}` up it; DO logs it; DO broadcasts a *dummy* pose
-     driven by the vector via `room.sendCustomMessage`; client renders it moving,
-     interpolated.
-   This is the whole risky transport spine with zero physics — get it ticking cleanly
-   so DO-hibernation, empty-room, and socket-routing bugs don't tangle with physics bugs.
-   Client joins with `useSync` (the room now has a real synced store — see native-first).
+3. **✅ Prove the alarm tick loop AND the input socket in isolation — DONE.** Built
+   `AntMoverDurableObject` (its own `wrangler.toml` binding + `v2` migration),
+   mirroring the Toolkit DO for sync/hibernation and adding the two no-precedent
+   pieces. Verified END-TO-END against the real `workerd` runtime with a headless
+   WebSocket test (temporary debug route, since removed):
+   - **alarm loop:** starts on first connect, re-arms every tick (~30 Hz, TICK_MS=33
+     → tickCount grew 30 in ~1s), and **stops arming when the room empties** (tickCount
+     froze, `ticking:false`) — no runaway billing.
+   - **input socket** (`/api/am/input/:roomId`, second WS the DO accepts itself):
+     received `{anchor, cursor}` grabs and drove the (dummy) pose — pulling toward
+     (900,200) eased the pose there and spun the angle. The room never sees this
+     socket (JSON, not sync framing), and it coexists with the sync socket — each
+     independently keeps the room alive; the loop stops only when BOTH are gone.
+   - **hibernation:** code path mirrors the Toolkit's (re-register sockets from
+     attachments on wake, tagged `kind: 'sync'|'input'`); SQLite-backed DO so alarms
+     persist. True hibernation can't be forced in local `vite dev` — verifiable only
+     on deploy, but the code follows the proven pattern.
+   Scope note: the **client-side** dummy-pose render (useSync join + input socket +
+   interpolated draw) is deferred into steps 4–5, where it wires to the REAL sim
+   instead of throwaway dummy plumbing — no novel risk there (well-trodden Toolkit
+   `useSync`), and the risky server spine is already proven.
 3a. **Native shapes → planck bodies** — build the read layer (Sonic's `geometry.ts`
    model): `editor.getShapeGeometry` on each collidable native shape → planck fixtures.
    The **designated object** → a dynamic body from its true outline (polygon fixtures,

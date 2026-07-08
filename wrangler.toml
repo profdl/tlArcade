@@ -17,15 +17,23 @@ not_found_handling = "single-page-application"
 # client-side routes like /demos/toolkit/:roomId).
 run_worker_first = ["/api/*"]
 
-# Set up the durable object used for each tldraw room
+# Durable objects: one per tldraw room (Toolkit) + one per ant-mover room. The
+# ant-mover DO adds a server tick loop (alarm-driven) the Toolkit DO lacks.
 [durable_objects]
-bindings = [{ name = "TLDRAW_DURABLE_OBJECT", class_name = "TldrawDurableObject" }]
+bindings = [
+	{ name = "TLDRAW_DURABLE_OBJECT", class_name = "TldrawDurableObject" },
+	{ name = "ANT_MOVER_DURABLE_OBJECT", class_name = "AntMoverDurableObject" },
+]
 
-# Durable objects require migrations to create/modify/delete them
-# Using new_sqlite_classes for SQLite-backed storage
+# Durable objects require migrations to create/modify/delete them.
+# Using new_sqlite_classes for SQLite-backed storage (needed for storage.setAlarm).
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TldrawDurableObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["AntMoverDurableObject"]
 
 # We store asset uploads (images, videos) in an R2 bucket.
 # Room data is stored in Durable Object SQLite storage.
