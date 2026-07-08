@@ -1,22 +1,34 @@
 // The ant-mover sim driver: owns the local planck sim, runs a fixed-timestep rAF
 // loop, turns mouse drags into grabs, and (dev) drives scripted grabbers. Renders
 // NOTHING — it's a headless controller mounted alongside the Field overlay. It
-// writes the T pose into tPoseAtom every frame; Field reads it and draws.
+// writes the object pose into objPoseAtom every frame; Field reads it and draws.
 //
-// This is the STEP-2 LOCAL sim (client-authoritative, to prove feel). The sim
+// This is the STEP-2/3a LOCAL sim (client-authoritative, to prove feel). The sim
 // module (sim.ts) is pure and framework-free precisely so it ports into the DO at
 // step 4 unchanged — only this driver (input + loop) is client-only.
 //
-// Grab model: mousedown hit-tests the T; if it hits, we capture the body-local
-// anchor (stuck to that spot) and track the cursor until mouseup. Force is a
-// spring from anchor→cursor applied AT the anchor (off-center → torque). See the
-// planck-rigid-body-sim skill.
+// Play/Stop lifecycle (step 3a): STOPPED = author mode (the maze + object are
+// editable native shapes). On PLAY we read the authored shapes' true geometry
+// into a planck sim (readWorldSpec → createWorld), hide the object shape (the
+// overlay draws the posed body instead), and step. On STOP we drop the sim and
+// unhide the shape at its authored spot. Stop → edit → restart.
 
 import { useEffect, useRef } from 'react'
-import { useEditor, useValue } from 'tldraw'
-import { createWorld, step, tPose, hitTestT, grabAnchorPage, FIXED_DT, type Sim, type Grab } from './sim'
-import { EXIT } from './geometry'
-import { playingAtom, resetNonceAtom, tPoseAtom, scriptedCountAtom, ropesAtom, type RopeView } from './state'
+import { useEditor, useValue, type TLShapePartial } from 'tldraw'
+import {
+	createWorld,
+	step,
+	objPose,
+	hitTestObject,
+	grabAnchorPage,
+	FIXED_DT,
+	type Sim,
+	type Grab,
+} from './sim'
+import { readWorldSpec, getObjectShapeId } from './shapes'
+import { EXIT, PX_PER_M } from './geometry'
+import { seedDefaultLayout } from './seed'
+import { playingAtom, resetNonceAtom, objPoseAtom, scriptedCountAtom, ropesAtom, objShapeAtom, type RopeView } from './state'
 
 /** A scripted (bot) grabber: holds a fixed body-local anchor and pulls toward a
  * moving target — here, the exit — so a crowd sim can run with no humans. */
@@ -32,60 +44,107 @@ export function RunController() {
 
 	// Mutable refs the rAF loop reads without re-subscribing.
 	const simRef = useRef<Sim | null>(null)
-	// The human's live grab (null when not dragging). Kept in a ref so pointer
-	// handlers and the loop share one object.
 	const humanGrab = useRef<Grab | null>(null)
 	const botsRef = useRef<Bot[]>([])
 
-	// (Re)build the sim on mount and on Reset. Seed the static pose immediately so
-	// Field shows the piece even before the loop starts.
+	// Seed a starter maze + object onto a fresh canvas (once; no-op if the page
+	// already has shapes, so a persisted/edited canvas is never clobbered).
 	useEffect(() => {
-		const sim = createWorld()
-		simRef.current = sim
-		humanGrab.current = null
-		tPoseAtom.set(tPose(sim))
-	}, [resetNonce])
+		seedDefaultLayout(editor)
+	}, [editor])
 
-	// Rebuild the scripted bots whenever the requested count changes. Each bot
-	// grabs a point spread around the T's crossbar and stem and pulls toward the
-	// exit — enough to watch a crowd shove the piece around.
+	// Build / tear down the sim on the Play↔Stop edge (and on Reset while playing).
+	// PLAY: read the authored shapes into a planck world, hide the object shape
+	// (the overlay draws the posed body). STOP: drop the sim, unhide the shape.
+	useEffect(() => {
+		if (playing) {
+			const spec = readWorldSpec(editor)
+			const sim = createWorld(spec)
+			simRef.current = sim
+			humanGrab.current = null
+			if (sim) {
+				objPoseAtom.set(objPose(sim))
+				objShapeAtom.set(sim.shape)
+				// Hide the authored object shape while the sim owns its motion.
+				const objId = getObjectShapeId(editor)
+				const objType = objId && editor.getShape(objId)?.type
+				if (objId && objType) {
+					// Non-literal `type` → cast the partial (repo CLAUDE.md union gotcha).
+					editor.run(
+						() => editor.updateShape({ id: objId, type: objType, opacity: 0 } as TLShapePartial),
+						{ history: 'ignore' }
+					)
+				}
+			} else {
+				// No designated object (or unusable outline) — nothing to simulate.
+				objShapeAtom.set(null)
+			}
+			return () => {
+				// Leaving play: unhide the authored object at its resting spot. Clear
+				// read-only FIRST — updateShape is a no-op while the editor is readonly
+				// (still true here: this cleanup runs before the readonly effect sets it
+				// false on the same toggle), so the unhide would otherwise be dropped and
+				// the shape stay invisible.
+				const objId = getObjectShapeId(editor)
+				const s = objId && editor.getShape(objId)
+				editor.run(
+					() => {
+						editor.updateInstanceState({ isReadonly: false })
+						if (objId && s) {
+							editor.updateShape({ id: objId, type: s.type, opacity: 1 } as TLShapePartial)
+						}
+					},
+					{ history: 'ignore' }
+				)
+				simRef.current = null
+				botsRef.current = []
+				ropesAtom.set([])
+				objShapeAtom.set(null)
+			}
+		}
+	}, [editor, playing, resetNonce])
+
+	// Rebuild the scripted bots whenever the count changes (only meaningful while
+	// a sim exists). Each bot grabs a point spread across the object and pulls
+	// toward the exit — enough to watch a crowd shove the piece around.
 	useEffect(() => {
 		const sim = simRef.current
-		if (!sim) return
+		if (!sim) {
+			botsRef.current = []
+			return
+		}
 		const bots: Bot[] = []
+		// Spread anchors across the object's local convex pieces (body-local meters,
+		// planck +y up). Grab a vertex from successive pieces so pulls aren't colinear.
+		const pieces = sim.shape.pieces
 		for (let i = 0; i < scriptedCount; i++) {
-			// Spread anchors across the T in body-local meters (planck +y up). The
-			// crossbar spans ~±3m; the stem hangs below (−y). Fan them out so pulls
-			// aren't all colinear.
-			const frac = scriptedCount === 1 ? 0.5 : i / (scriptedCount - 1)
-			const anchorLocal = { x: (frac - 0.5) * 5.2, y: 2.2 }
+			const piece = pieces[i % pieces.length]
+			const v = piece[i % piece.length]
+			// Piece verts are local page px (+y down); convert to planck local meters
+			// (y-flip: page +y down → planck +y up).
+			const anchorLocal = { x: v.x / PX_PER_M, y: -v.y / PX_PER_M }
 			bots.push({ grab: { anchorLocal, cursor: { x: EXIT.cx, y: EXIT.cy } } })
 		}
 		botsRef.current = bots
-	}, [scriptedCount, resetNonce])
+	}, [scriptedCount, playing, resetNonce])
 
-	// Pointer grab handling on the editor container. We attach our own listeners
-	// (capture phase) so a drag on the T becomes a grab regardless of the active
-	// tldraw tool, and use screenToPage for page coords.
+	// Pointer grab handling on the editor container. Own listeners (capture phase)
+	// so a drag on the object becomes a grab regardless of the active tldraw tool.
 	useEffect(() => {
 		const container = editor.getContainer()
 
-		const pagePointFromEvent = (e: PointerEvent) =>
-			editor.screenToPage({ x: e.clientX, y: e.clientY })
+		const pagePointFromEvent = (e: PointerEvent) => editor.screenToPage({ x: e.clientX, y: e.clientY })
 
 		const onDown = (e: PointerEvent) => {
 			if (!playingAtom.get()) return
 			const sim = simRef.current
 			if (!sim) return
 			const p = pagePointFromEvent(e)
-			const anchorLocal = hitTestT(sim, p)
+			const anchorLocal = hitTestObject(sim, p)
 			if (anchorLocal) {
 				humanGrab.current = { anchorLocal, cursor: { x: p.x, y: p.y } }
 				// This drag is a GRAB, not a canvas gesture — claim the event so tldraw
-				// never sees it (no brush-select, no shape drag). Capture phase + stop
-				// both propagations so nothing downstream reacts. (Readonly already
-				// disables the brush; this also covers a grab that starts on the T when
-				// not readonly, and keeps the grab from being hijacked.)
+				// never sees it (no brush-select, no shape drag).
 				e.stopPropagation()
 				e.preventDefault()
 			}
@@ -109,13 +168,9 @@ export function RunController() {
 		}
 	}, [editor])
 
-	// Lock the canvas to read-only WHILE PLAYING so a drag can't draw a
-	// brush-select box or move shapes — during play the only meaningful drag is a
-	// grab (handled above). Safe here (unlike the Engine demo) because the T is an
-	// OVERLAY, not a store shape, so read-only never blocks the sim. Pan/zoom still
-	// work in read-only, so a click that MISSES the T still pans the canvas. Clear
-	// selection on entering play so no leftover selection UI shows. Restore editing
-	// on pause. Driven off the atom so it also tracks Play toggled elsewhere.
+	// Lock the canvas to read-only WHILE PLAYING so a drag can't brush-select or
+	// move shapes — during play the only meaningful drag is a grab (handled above).
+	// Pan/zoom still work in read-only, so a click that MISSES the object pans.
 	useEffect(() => {
 		editor.run(
 			() => {
@@ -127,9 +182,8 @@ export function RunController() {
 	}, [editor, playing])
 
 	// The fixed-timestep loop. Accumulator pattern: step the sim in fixed FIXED_DT
-	// chunks regardless of frame rate, so physics is deterministic and matches the
-	// server tick. Only steps while playing; always writes the pose (so a paused
-	// piece still renders where it rests).
+	// chunks regardless of frame rate, so physics matches the server tick. Only
+	// steps while playing and a sim exists.
 	useEffect(() => {
 		let raf = 0
 		let last = performance.now()
@@ -138,20 +192,17 @@ export function RunController() {
 		const frame = (now: number) => {
 			raf = requestAnimationFrame(frame)
 			const sim = simRef.current
+			const dtMs = now - last
+			last = now
 			if (!sim) return
 
-			// Gather this frame's active grabs (human + bots) once; used both to step
-			// the sim and to publish ropes.
 			const grabs: Grab[] = []
 			if (humanGrab.current) grabs.push(humanGrab.current)
 			for (const b of botsRef.current) grabs.push(b.grab)
 
-			const dtMs = now - last
-			last = now
 			if (playingAtom.get()) {
 				acc += dtMs / 1000
-				// Cap the accumulator so a tab-away doesn't spiral into a huge catch-up.
-				if (acc > 0.25) acc = 0.25
+				if (acc > 0.25) acc = 0.25 // don't spiral into a huge catch-up after a tab-away
 				while (acc >= FIXED_DT) {
 					step(sim, grabs)
 					acc -= FIXED_DT
@@ -159,13 +210,9 @@ export function RunController() {
 			} else {
 				acc = 0
 			}
-			tPoseAtom.set(tPose(sim))
+			objPoseAtom.set(objPose(sim))
 
-			// Publish the ropes to draw: each grab's live T-side point (page space) →
-			// its cursor. Human first so its rope draws distinctly. Recomputed every
-			// frame so the rope stays glued to the (possibly rotating) piece and the
-			// cursor end tracks the mouse with no lag. Only while playing — a paused
-			// game applies no forces, so dangling bot ropes would be misleading.
+			// Publish the ropes to draw: each grab's live object-side point → cursor.
 			const ropes: RopeView[] = playingAtom.get()
 				? grabs.map((g, i) => ({
 						anchor: grabAnchorPage(sim, g),
@@ -178,13 +225,9 @@ export function RunController() {
 
 		raf = requestAnimationFrame(frame)
 		return () => cancelAnimationFrame(raf)
-		// The loop reads playing via the atom (not the closure) so it never needs to
-		// restart; mount once.
 	}, [])
 
-	// Nudge dependency so lint/TS see `playing` used (it gates via the atom inside
-	// the loop; this keeps the mirror honest and re-renders the panel).
-	void playing
+	void playing // keep the panel re-rendering on toggle
 
 	return null
 }

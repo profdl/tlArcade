@@ -8,21 +8,11 @@
 }
 
 /* --- Canvas overlay (Field.tsx) ------------------------------------------- */
+/* The maze walls, exit, and the object's authored resting shape are now real
+   tldraw shapes (native-first, step 3a); tldraw renders those. The overlay only
+   draws the POSED object body (the sim's live pose) while playing. */
 
-.am-wall {
-	fill: #2b2f36;
-	stroke: #1a1d22;
-	stroke-width: 1;
-}
-
-.am-exit {
-	fill: rgba(60, 180, 100, 0.18);
-	stroke: #3cb464;
-	stroke-width: 2;
-	stroke-dasharray: 8 6;
-}
-
-.am-t {
+.am-obj {
 	fill: #d9663a;
 	stroke: #8f3d1e;
 	stroke-width: 2;
@@ -118,6 +108,11 @@
 
 .am-btn:hover {
 	background: #f2f3f5;
+}
+
+.am-btn:disabled {
+	opacity: 0.45;
+	cursor: default;
 }
 
 .am-play {
