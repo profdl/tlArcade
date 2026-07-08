@@ -63,12 +63,23 @@ function addT(world: World): Body {
 			friction: 0.4,
 		})
 	}
-	// Damping so pulls don't leave it drifting/spinning forever (NO restoring
-	// torque — the T tumbles freely, per the skill).
-	t.setLinearDamping(0.8)
-	t.setAngularDamping(0.8)
+	// Damping = the piece's "floor friction". This is the WEIGHT knob, not mass:
+	// on release the piece keeps its velocity and coasts; damping is how fast it
+	// bleeds that off. Low damping reads as light/floaty (a long glide); high reads
+	// as heavy (stops roughly where you let go). At 0.8 it coasted ~296px/5.6s after
+	// a firm release; 4 settles in ~59px/1.2s — weighty without feeling stuck. Mass
+	// is the WRONG knob here: the grab force is mass-scaled (identical drag feel),
+	// and more mass would only make it coast FARTHER. (No restoring torque — the T
+	// still tumbles freely, per the skill.)
+	t.setLinearDamping(LINEAR_DAMPING)
+	t.setAngularDamping(ANGULAR_DAMPING)
 	return t
 }
+
+/** Linear/angular damping on the T — its "floor friction" (the weight feel). See
+ * the note in addT. Tune these to make the piece settle sooner/later on release. */
+const LINEAR_DAMPING = 4
+const ANGULAR_DAMPING = 4
 
 /** Construct a fresh sim: the maze walls + the T. Gravity is ZERO — this is a
  * top-down drag game, not a side view; the only forces are player grabs (step 2)
