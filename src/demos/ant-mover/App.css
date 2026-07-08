@@ -1,0 +1,62 @@
+/* ant-mover styles. Prefix `.am-` per the repo CSS-collision rule (CLAUDE.md):
+   demos share the app shell, so a unique prefix keeps a stylesheet from leaking
+   onto another demo after navigation. */
+
+.am-root {
+	position: absolute;
+	inset: 0;
+}
+
+/* --- Canvas overlay (Field.tsx) ------------------------------------------- */
+
+.am-wall {
+	fill: #2b2f36;
+	stroke: #1a1d22;
+	stroke-width: 1;
+}
+
+.am-exit {
+	fill: rgba(60, 180, 100, 0.18);
+	stroke: #3cb464;
+	stroke-width: 2;
+	stroke-dasharray: 8 6;
+}
+
+.am-t {
+	fill: #d9663a;
+	stroke: #8f3d1e;
+	stroke-width: 2;
+	/* vector-effect keeps the stroke crisp under the group's scale transform. */
+	vector-effect: non-scaling-stroke;
+}
+
+/* --- Panel ---------------------------------------------------------------- */
+
+.am-panel {
+	position: absolute;
+	top: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	padding: 8px 14px;
+	background: rgba(255, 255, 255, 0.92);
+	border: 1px solid #e2e4e8;
+	border-radius: 10px;
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+	font-family: system-ui, sans-serif;
+	pointer-events: none;
+	z-index: 10;
+}
+
+.am-title {
+	font-weight: 700;
+	font-size: 14px;
+	color: #23262b;
+}
+
+.am-hint {
+	font-size: 12px;
+	color: #6b7078;
+}

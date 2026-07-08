@@ -60,6 +60,13 @@ export const demos: DemoEntry[] = [
 		Component: lazy(() => import('./face-mask/App')),
 	},
 	{
+		slug: 'ant-mover',
+		title: 'Ant-Mover',
+		blurb:
+			'A multiplayer piano-movers game: many players each grab anywhere on one rigid T-piece and drag it through a tight maze, with a server-authoritative planck.js physics sim. Coordinate and it glides; fight and it jams.',
+		Component: lazy(() => import('./ant-mover/App')),
+	},
+	{
 		slug: 'toolkit',
 		title: 'Toolkit',
 		blurb:
