@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Tldraw, createShapeId, type Editor, type TLShapePartial } from 'tldraw'
+import { isShapeId } from '@tldraw/tlschema'
 import 'tldraw/tldraw.css'
 import './App.css'
 import {
@@ -32,6 +33,7 @@ const GAP = 16
 const COLS = 6
 const FRAME_PAD = 24
 const HEADER = 40 // rough frame-header height, so icons don't sit under the label
+const FRAME_GAP = 48 // page-space gap between a parent frame and a child it opens
 
 /** tl-os — a spatial file workspace. Bind a local folder (Chrome/Edge), read it
  *  into a frame as icon-shapes you can lay out, annotate, and relate on the
@@ -64,8 +66,22 @@ export default function App() {
 		if (!root || !editor) return
 		const { kind, path } = shape.props
 		if (kind === 'directory') {
-			// v1: read the folder's children into a fresh frame beside this one.
-			await dumpDirectory(editor, root, path, shape.x + ICON_W + 48, shape.y)
+			// Open the folder into a new frame placed just to the RIGHT of the
+			// frame this icon lives in (a file-shape's x/y are relative to its
+			// parent frame, so anchor off the parent's *page* bounds, not the
+			// icon's local coords). Fall back to the icon's own page point if it
+			// somehow has no parent frame.
+			const parentId = editor.getShape(shape.id)?.parentId
+			// parentId may be a page id; only use it when it's a frame shape.
+			const parentFrameId =
+				parentId && isShapeId(parentId) && editor.getShape(parentId)?.type === 'frame'
+					? parentId
+					: null
+			const parentBounds = editor.getShapePageBounds(parentFrameId ?? shape.id)
+			const at = parentBounds
+				? { x: parentBounds.maxX + FRAME_GAP, y: parentBounds.y }
+				: { x: 0, y: 0 }
+			await dumpDirectory(editor, root, path, at.x, at.y, true)
 			return
 		}
 		const blob = await readFileBlob(root, path)
@@ -195,6 +211,9 @@ async function dumpDirectory(
 	subPath: string,
 	fx: number,
 	fy: number,
+	// Pan the camera to centre the new frame (used when a folder is opened by
+	// double-click; the initial root dump leaves the camera where it is).
+	centerCamera = false,
 ): Promise<void> {
 	const entries = await readDirectory(root, subPath)
 	const label = subPath ? subPath.split('/').pop()! : root.name
@@ -208,15 +227,21 @@ async function dumpDirectory(
 
 	const cols = Math.min(COLS, Math.max(1, entries.length))
 	const rows = Math.max(1, Math.ceil(entries.length / cols))
+	// Frame is sized to fit exactly cols×rows of icon boxes plus padding + header,
+	// so every file lands inside its frame with no clipping or empty overflow.
 	const frameW = FRAME_PAD * 2 + cols * ICON_W + (cols - 1) * GAP
 	const frameH = HEADER + FRAME_PAD * 2 + rows * ICON_H + (rows - 1) * GAP
+
+	// Nudge the target rect down past any existing frame it would overlap, so a
+	// second opened folder stacks below rather than on top of the first.
+	const y = avoidOverlap(editor, fx, fy, frameW, frameH)
 
 	const frameId = createShapeId()
 	editor.createShape({
 		id: frameId,
 		type: 'frame',
 		x: fx,
-		y: fy,
+		y,
 		props: { w: frameW, h: frameH, name: label },
 		meta: { tlosPath: subPath },
 	})
@@ -234,6 +259,41 @@ async function dumpDirectory(
 		}
 	})
 	if (shapes.length) editor.createShapes(shapes)
+
+	// Pan (keeping the current zoom) so the new frame sits centred in view.
+	if (centerCamera) {
+		editor.centerOnPoint(
+			{ x: fx + frameW / 2, y: y + frameH / 2 },
+			{ animation: { duration: 300 } },
+		)
+	}
+}
+
+/**
+ * Given a target rect at (x, y, w, h) in page space, return a y pushed down just
+ * far enough to clear every existing frame it would overlap. x stays fixed (we
+ * only ever place new frames in a rightward column, stacking downward). Iterates
+ * because clearing one frame can reveal an overlap with the next below it.
+ */
+function avoidOverlap(editor: Editor, x: number, y: number, w: number, h: number): number {
+	const frames = editor
+		.getCurrentPageShapes()
+		.filter((s) => s.type === 'frame')
+		.map((s) => editor.getShapePageBounds(s.id))
+		.filter((b): b is NonNullable<typeof b> => b != null)
+	let moved = true
+	let guard = 0
+	while (moved && guard++ < 100) {
+		moved = false
+		for (const b of frames) {
+			const overlaps = x < b.maxX && x + w > b.x && y < b.maxY && y + h > b.y
+			if (overlaps) {
+				y = b.maxY + FRAME_GAP
+				moved = true
+			}
+		}
+	}
+	return y
 }
 
 function entryToProps(entry: DirEntry): FileShape['props'] {
