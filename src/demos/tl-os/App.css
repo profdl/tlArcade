@@ -1,0 +1,8 @@
+/* tl-os demo styles. Prefix every global class with `.tlos-` so a stale
+   lazy-loaded stylesheet can't collide with another demo's classes after a
+   route change (see the repo CLAUDE.md on CSS collisions). */
+
+.tlos-root {
+	position: absolute;
+	inset: 0;
+}

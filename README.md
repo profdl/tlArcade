@@ -5,6 +5,7 @@ running out of one app. `/` lists them; each one lazy-loads at its own route.
 
 | Demo | Route | What it is | Origin branch |
 |---|---|---|---|
+| tl-OS | `/demos/tl-os` | A desktop/OS metaphor on the canvas — windows, dock, icons (WIP scaffold) | [`tl-os`](../../tree/tl-os) |
 | Line Rider: Classic | `/demos/line-rider-classic` | Draw a track, hit play, ride it — hand-rolled Verlet physics, flags, portals | [`line-rider`](../../tree/line-rider) |
 | Line Rider: Machines | `/demos/line-rider-machines` | Classic + a drag-and-drop tray for portal/multiplier pieces | [`machines`](../../tree/machines) |
 | Line Rider: Side Mode | `/demos/line-rider-side` | Diverged variant: draw ramps live while riding | [`side-rider-mode`](../../tree/side-rider-mode) |

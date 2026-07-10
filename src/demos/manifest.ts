@@ -11,6 +11,13 @@ export interface DemoEntry {
 
 export const demos: DemoEntry[] = [
 	{
+		slug: 'tl-os',
+		title: 'tl-OS',
+		blurb:
+			'A desktop / operating-system metaphor on the tldraw canvas — a blank scaffold to build windows, a dock, and icons into.',
+		Component: lazy(() => import('./tl-os/App')),
+	},
+	{
 		slug: 'line-rider-classic',
 		title: 'Line Rider: Classic',
 		blurb:
