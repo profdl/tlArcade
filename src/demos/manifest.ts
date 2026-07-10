@@ -46,6 +46,13 @@ export const demos: DemoEntry[] = [
 		Component: lazy(() => import('./face-mask/App')),
 	},
 	{
+		slug: 'puppet',
+		title: 'Puppet',
+		blurb:
+			'A VTuber-style rig on the canvas — drive a layered character with live webcam face tracking (head pose, blinks, brows, lipsync) plus manual expression and pose controls.',
+		Component: lazy(() => import('./puppet/App')),
+	},
+	{
 		slug: 'toolkit',
 		title: 'Toolkit',
 		blurb:
