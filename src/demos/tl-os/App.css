@@ -6,3 +6,59 @@
 	position: absolute;
 	inset: 0;
 }
+
+/* Bottom-centre binding bar, above the canvas. `pointer-events: none` on the
+   bar lets canvas interaction through the gaps; the controls re-enable it. */
+.tlos-bar {
+	position: absolute;
+	bottom: 16px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 300;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 12px;
+	background: rgba(255, 255, 255, 0.92);
+	border: 1px solid rgba(0, 0, 0, 0.08);
+	border-radius: 10px;
+	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+	font-family: system-ui, -apple-system, sans-serif;
+	pointer-events: auto;
+}
+
+.tlos-note {
+	font-size: 13px;
+	color: #1d1d1d;
+	white-space: nowrap;
+}
+
+.tlos-btn {
+	font: inherit;
+	font-size: 13px;
+	padding: 5px 12px;
+	border-radius: 7px;
+	border: 1px solid rgba(0, 0, 0, 0.12);
+	background: #fff;
+	color: #1d1d1d;
+	cursor: pointer;
+}
+
+.tlos-btn:hover:not(:disabled) {
+	background: #f2f4f7;
+}
+
+.tlos-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.tlos-btn-primary {
+	background: #4465e9;
+	border-color: #4465e9;
+	color: #fff;
+}
+
+.tlos-btn-primary:hover:not(:disabled) {
+	background: #3a56c8;
+}

@@ -14,7 +14,7 @@ export const demos: DemoEntry[] = [
 		slug: 'tl-os',
 		title: 'tl-OS',
 		blurb:
-			'A desktop / operating-system metaphor on the tldraw canvas — a blank scaffold to build windows, a dock, and icons into.',
+			'A spatial file workspace — bind a real local folder (Chrome/Edge) and lay its files out as icon-shapes on the canvas, then open them with a double-click.',
 		Component: lazy(() => import('./tl-os/App')),
 	},
 	{
