@@ -34,12 +34,20 @@ export function buildDefaultPuppet(editor: Editor, cx: number, cy: number): TLSh
 	) => {
 		const id = createShapeId()
 		ids.push(id)
-		const meta: PuppetMeta = { puppetRole: role, ...extraMeta }
+		const px = cx + x
+		const py = cy + y
+		// Capture rest at creation time so the driver never has to infer it from a
+		// (possibly already-deformed) live shape. See PuppetDriver's rest invariant.
+		const meta: PuppetMeta = {
+			puppetRole: role,
+			...extraMeta,
+			rest: { x: px, y: py, rotation: 0, w, h },
+		}
 		editor.createShape({
 			id,
 			type: 'geo',
-			x: cx + x,
-			y: cy + y,
+			x: px,
+			y: py,
 			props: { geo, w, h, color, fill, dash: 'draw' },
 			meta: meta as unknown as JsonObject,
 		})

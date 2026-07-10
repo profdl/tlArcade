@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react'
-import { Tldraw, type Editor } from 'tldraw'
+import { Tldraw, type Editor, type TLShapeId } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { PuppetStage } from './PuppetStage'
 import { buildDefaultPuppet } from './rig/defaultPuppet'
+import { getPuppetMeta } from './rig/roles'
 
 /**
  * Puppet — a VTuber-style rig on the tldraw canvas. The puppet is ordinary
@@ -13,17 +14,38 @@ import { buildDefaultPuppet } from './rig/defaultPuppet'
 export default function App() {
 	const [editor, setEditor] = useState<Editor | null>(null)
 
-	const handleMount = useCallback((editor: Editor) => {
-		setEditor(editor)
-		// Guard against StrictMode double-mount creating two puppets.
-		const hasPuppet = editor.getCurrentPageShapes().some((s) => (s.meta as { puppetRole?: string })?.puppetRole)
-		if (!hasPuppet) {
-			const center = editor.getViewportPageBounds().center
-			const ids = buildDefaultPuppet(editor, center.x, center.y)
-			editor.zoomToBounds(editor.getShapePageBounds(ids[0])!, { inset: 220, animation: { duration: 300 } })
-		}
-		if (import.meta.env.DEV) (window as unknown as { __editor: Editor }).__editor = editor
+	const spawnPuppet = useCallback((editor: Editor) => {
+		const center = editor.getViewportPageBounds().center
+		const ids = buildDefaultPuppet(editor, center.x, center.y)
+		editor.zoomToBounds(editor.getShapePageBounds(ids[0])!, { inset: 220, animation: { duration: 300 } })
+		return ids
 	}, [])
+
+	const resetPuppet = useCallback(
+		(editor: Editor) => {
+			const existing = editor.getCurrentPageShapes().filter((s) => getPuppetMeta(s))
+			if (existing.length) editor.deleteShapes(existing.map((s) => s.id as TLShapeId))
+			spawnPuppet(editor)
+		},
+		[spawnPuppet]
+	)
+
+	const handleMount = useCallback(
+		(editor: Editor) => {
+			setEditor(editor)
+			const puppetShapes = editor.getCurrentPageShapes().filter((s) => getPuppetMeta(s))
+			// Fresh doc → spawn. A persisted puppet from before the rest-in-meta fix
+			// has no meta.rest and would deform from a stale/mangled pose; rebuild it.
+			const needsRebuild = puppetShapes.length > 0 && puppetShapes.some((s) => !getPuppetMeta(s)!.rest)
+			if (puppetShapes.length === 0) {
+				spawnPuppet(editor)
+			} else if (needsRebuild) {
+				resetPuppet(editor)
+			}
+			if (import.meta.env.DEV) (window as unknown as { __editor: Editor }).__editor = editor
+		},
+		[spawnPuppet, resetPuppet]
+	)
 
 	return (
 		<div style={{ position: 'fixed', inset: 0 }}>
@@ -42,6 +64,14 @@ export default function App() {
 				}}
 			>
 				{editor && <PuppetStage editor={editor} />}
+				{editor && (
+					<button
+						onClick={() => resetPuppet(editor)}
+						style={{ width: '100%', padding: '8px', font: '12px system-ui', cursor: 'pointer', border: 'none', borderTop: '1px solid #0001' }}
+					>
+						Reset puppet
+					</button>
+				)}
 			</div>
 		</div>
 	)

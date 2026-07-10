@@ -22,9 +22,14 @@ export function PuppetStage({ editor }: { editor: Editor }) {
 	useEffect(() => {
 		const driver = new PuppetDriver(editor)
 		driver.scan()
-		// Re-scan when shapes are added/removed/retagged so redrawn features bind live.
+		// Re-scan when the user edits the document, so a redrawn/assigned feature
+		// binds live. Rest pose lives immutably in each shape's meta.rest, so
+		// re-scanning can NOT recapture a deformed shape (that was the old runaway
+		// bug); this listener only needs to skip the driver's own per-frame writes.
 		const unsub = editor.store.listen(
-			() => driver.scan(),
+			() => {
+				if (!driver.isApplying) driver.scan()
+			},
 			{ scope: 'document', source: 'user' }
 		)
 

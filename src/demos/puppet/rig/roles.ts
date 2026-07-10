@@ -52,6 +52,25 @@ export type PuppetMeta = {
 	 * letting a user rebind a feature without changing its role.
 	 */
 	binding?: string
+	/**
+	 * The feature's REST pose — its neutral, undeformed transform + size. This is
+	 * immutable authored data captured once when the feature is created/assigned;
+	 * the driver deforms *from* it every frame and NEVER re-derives it from the
+	 * live (already-deformed) shape. Storing it here (not recomputing from the
+	 * canvas) is what makes the rig idempotent and free of the compounding
+	 * feedback loop — same lesson as face-mask's bind-time `base*`/`offset*`.
+	 */
+	rest?: RestPose
+}
+
+/** A feature's neutral transform + size, in page space, captured at author time. */
+export type RestPose = {
+	x: number
+	y: number
+	rotation: number
+	/** Size from the shape's own w/h props, when it has them (geo/image/…); null for draw etc. */
+	w: number | null
+	h: number | null
 }
 
 /** Read a shape's puppet meta, or null if it isn't tagged as a rig feature. */
@@ -66,11 +85,11 @@ export function isPuppetShape(shape: TLShape): boolean {
 	return getPuppetMeta(shape) !== null
 }
 
-/** A rig feature resolved for a frame: the shape id + its parsed meta + the origin transform to deform from. */
+/** A rig feature resolved for a frame: the shape id + its parsed meta + the immutable rest pose to deform from. */
 export type RigFeature = {
 	id: TLShapeId
 	role: PuppetRole
 	meta: PuppetMeta
-	/** The shape's rest-pose transform, captured when the rig is (re)scanned, so per-frame deltas are relative to rest, not cumulative. */
-	rest: { x: number; y: number; rotation: number }
+	/** The feature's rest pose (from meta.rest) — deform relative to this, never to the live shape. */
+	rest: RestPose
 }
