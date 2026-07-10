@@ -29,13 +29,42 @@ POSIX-style, and is the join key back to disk.
   pointers. Minimal FS-Access API types are declared inline (no
   `@types/wicg-file-system-access` dep).
 - [FileShapeUtil.tsx](FileShapeUtil.tsx) — the `tlos-file` custom shape (one
-  util for files *and* folders; `props.kind` selects). Renders an icon, name,
-  extension badge, and lazy image thumbnails. Thumbnails load via a
-  `ThumbProvider` context resolver so the util never imports the disk layer or
-  root handle. Double-click → `setOpenHandler` module callback (App wires it).
-- [App.tsx](App.tsx) — grant/reconnect bar, reads the root into a titled frame
-  on a starting grid, provides the thumb resolver, sets the open handler.
-  Double-click opens files in a new tab and navigates folders into a new frame.
+  util for files *and* folders; `props.kind` selects). Renders a hand-drawn
+  file/folder glyph (see [freehand.ts](freehand.ts) and the "Looking & feeling"
+  section), name, extension badge, and lazy image thumbnails. Thumbnails load
+  via a `ThumbProvider` context resolver so the util never imports the disk
+  layer or root handle. Double-click → `setOpenHandler` module callback.
+- [freehand.ts](freehand.ts) — a tiny perfect-freehand helper (`strokePath`,
+  `poly`) producing tldraw Draw-dash-style rough outlines for the glyphs.
+- [App.tsx](App.tsx) — owns all bind/open/import state and effects; reads the
+  root into a titled frame on a starting grid, provides the thumb resolver, sets
+  the open handler. Double-click opens files in a new tab and navigates folders
+  into a new frame. Shares state with the tldraw-native UI via `TlosUiProvider`.
+- [ui.tsx](ui.tsx) — the **tldraw-native UI**. `BindPanel` is injected as
+  tldraw's `SharePanel` (top-right) so the folder-bind control reads as app
+  chrome, not a floating overlay. The import-vs-reference prompt is a real
+  tldraw dialog (`useDialogs().addDialog` + `TldrawUiDialog*` + `TldrawUiButton`)
+  — inherits the SDK's theming, dark mode, focus trap, and esc/backdrop close.
+
+## Looking & feeling like tldraw
+
+The demo deliberately leans on tldraw's own UI system instead of bespoke chrome:
+- **Theme CSS vars, not hardcoded hex.** Surfaces/text use `--tl-color-panel` /
+  `--tl-color-text` / `--tl-color-muted-*` and `--tl-font-sans`, so tl-os flips
+  correctly in **dark mode**. File-family tints (`FAMILY_TINT`) are tldraw's own
+  draw-palette hexes on purpose; the folder glyph strokes tldraw blue with a
+  translucent fill (a solid light-blue glared in dark mode).
+- **Native components, not overlays.** Bind controls live in `SharePanel`; the
+  dialog is a `useDialogs` dialog; buttons are `TldrawUiButton`. Selection is
+  tldraw's own indicator (`getIndicatorPath`); only *hover* is added, as a faint
+  `--tl-color-muted-2` highlight on `.tlos-file`.
+- **Hand-drawn glyphs.** The file & folder icons are drawn with perfect-freehand
+  ([freehand.ts](freehand.ts)) using the same even-nib / no-pressure options
+  busytown uses to match tldraw's geo "Dash: Draw" look — so they read as
+  drawn-on-canvas, not like macOS icons. Outline paths are computed once at
+  module load (fixed 0–100 art box) and filled; the SVG uses `overflow:visible`
+  so the freehand wobble past the box edge isn't clipped. `freehand.ts` is a
+  local copy on purpose (demos stay isolated — no cross-demo import).
 
 **Browser reality: the directory picker is Chrome/Edge/Opera only** — Safari and
 Firefox have no `showDirectoryPicker` (they ship only the Origin-Private FS). The

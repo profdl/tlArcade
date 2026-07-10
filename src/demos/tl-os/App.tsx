@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Tldraw, createShapeId, type Editor, type TLShapePartial } from 'tldraw'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+	Tldraw,
+	createShapeId,
+	type Editor,
+	type TLComponents,
+	type TLShapePartial,
+} from 'tldraw'
 import { isShapeId } from '@tldraw/tlschema'
 import 'tldraw/tldraw.css'
 import './App.css'
@@ -11,6 +17,7 @@ import {
 	type FileShape,
 	type ThumbResolver,
 } from './FileShapeUtil'
+import { BindPanel, TlosUiProvider, useOpenImportDialog, type TlosUi } from './ui'
 import {
 	fsAccessSupported,
 	pickRootDirectory,
@@ -51,9 +58,9 @@ export default function App() {
 		() => (fsAccessSupported() ? 'loading' : 'unsupported'),
 	)
 	const [busy, setBusy] = useState(false)
-	// A file-shape the user just dragged out of its frame onto the page: prompt
-	// to import its bytes into tldraw, or keep it as a reference to the original.
-	const [pendingDrop, setPendingDrop] = useState<FileShape | null>(null)
+	// Set by DialogBridge (which lives inside Tldraw's UI context) so the mount
+	// side-effect — which runs outside React — can open the native import dialog.
+	const openImportDialogRef = useRef<((shape: FileShape) => void) | null>(null)
 
 	// --- thumbnail resolver (path → object-URL for image files) -------------
 	const resolveThumb = useCallback<ThumbResolver>(async (path, ext) => {
@@ -104,7 +111,6 @@ export default function App() {
 	// without the disk binding. "Keep as reference": leave the tlos-file pointer
 	// where it was dropped (it stays bound to the original on disk).
 	const importDrop = useCallback(async (shape: FileShape) => {
-		setPendingDrop(null)
 		const root = rootRef.current
 		const editor = editorRef.current
 		if (!root || !editor) return
@@ -116,8 +122,6 @@ export default function App() {
 		await editor.putExternalContent({ type: 'files', files: [file], point })
 		editor.deleteShapes([shape.id])
 	}, [])
-
-	const keepAsReference = useCallback(() => setPendingDrop(null), [])
 
 	// --- bind / reconnect ---------------------------------------------------
 	const bindRoot = useCallback(async (root: DirHandle) => {
@@ -208,7 +212,7 @@ export default function App() {
 			if (prev.parentId === next.parentId) return
 			const wasInFrame = isShapeId(prev.parentId) && editor.getShape(prev.parentId)?.type === 'frame'
 			const nowOnPage = !isShapeId(next.parentId)
-			if (wasInFrame && nowOnPage) setPendingDrop(next as FileShape)
+			if (wasInFrame && nowOnPage) openImportDialogRef.current?.(next as FileShape)
 		})
 
 		// If a root got bound before the editor mounted, dump it now.
@@ -216,61 +220,49 @@ export default function App() {
 		if (root && status === 'bound') void dumpDirectory(editor, root, '', 0, 0)
 	}, [status])
 
+	// Shared with the tldraw-mounted UI (BindPanel, import dialog) via context.
+	const ui = useMemo<TlosUi>(
+		() => ({
+			status,
+			rootName,
+			busy,
+			onGrant: () => void handleGrant(),
+			onReconnect: () => void handleReconnect(),
+			onImport: (shape) => void importDrop(shape),
+		}),
+		[status, rootName, busy, handleGrant, handleReconnect, importDrop],
+	)
+
 	return (
 		<div className="tlos-root">
-			<ThumbProvider value={resolveThumb}>
-				<Tldraw persistenceKey="tl-os" shapeUtils={shapeUtils} onMount={handleMount} />
-			</ThumbProvider>
-			<div className="tlos-bar">
-				{status === 'unsupported' ? (
-					<span className="tlos-note">
-						File binding needs Chrome or Edge — this browser has no directory picker.
-					</span>
-				) : status === 'bound' ? (
-					<>
-						<span className="tlos-note">📁 {rootName}</span>
-						<button className="tlos-btn" disabled={busy} onClick={handleGrant}>
-							Change folder…
-						</button>
-					</>
-				) : status === 'reconnect' ? (
-					<>
-						<span className="tlos-note">📁 {rootName} — permission expired</span>
-						<button className="tlos-btn" disabled={busy} onClick={handleReconnect}>
-							Reconnect
-						</button>
-					</>
-				) : status === 'none' ? (
-					<button className="tlos-btn tlos-btn-primary" disabled={busy} onClick={handleGrant}>
-						Bind a folder…
-					</button>
-				) : null}
-			</div>
-
-			{pendingDrop ? (
-				<div className="tlos-modal-scrim" onClick={keepAsReference}>
-					<div className="tlos-modal" onClick={(e) => e.stopPropagation()}>
-						<div className="tlos-modal-title">Add “{pendingDrop.props.name}” to the canvas</div>
-						<p className="tlos-modal-body">
-							You dragged this file out of its folder. Import a copy into the tldraw
-							document, or keep it as a live reference to the original on disk?
-						</p>
-						<div className="tlos-modal-actions">
-							<button className="tlos-btn" onClick={keepAsReference}>
-								Keep as reference
-							</button>
-							<button
-								className="tlos-btn tlos-btn-primary"
-								onClick={() => void importDrop(pendingDrop)}
-							>
-								Import into tldraw
-							</button>
-						</div>
-					</div>
-				</div>
-			) : null}
+			<TlosUiProvider value={ui}>
+				<ThumbProvider value={resolveThumb}>
+					<Tldraw persistenceKey="tl-os" shapeUtils={shapeUtils} components={components} onMount={handleMount}>
+						<DialogBridge openRef={openImportDialogRef} />
+					</Tldraw>
+				</ThumbProvider>
+			</TlosUiProvider>
 		</div>
 	)
+}
+
+// The bind control lives in tldraw's top-right SharePanel slot, so it reads as
+// native app chrome rather than a floating overlay.
+const components: TLComponents = {
+	SharePanel: BindPanel,
+}
+
+/** Renders nothing; bridges the import-dialog opener (a hook, so it must run
+ *  inside Tldraw's UI context) out to a ref the mount side-effect can call. */
+function DialogBridge({ openRef }: { openRef: React.RefObject<((s: FileShape) => void) | null> }) {
+	const open = useOpenImportDialog()
+	useEffect(() => {
+		openRef.current = open
+		return () => {
+			openRef.current = null
+		}
+	}, [open, openRef])
+	return null
 }
 
 /**
