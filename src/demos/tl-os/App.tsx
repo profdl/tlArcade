@@ -18,6 +18,7 @@ import {
 	ensurePermission,
 	readDirectory,
 	readFileBlob,
+	getFileHandle,
 	type DirHandle,
 	type DirEntry,
 } from './fs'
@@ -50,6 +51,9 @@ export default function App() {
 		() => (fsAccessSupported() ? 'loading' : 'unsupported'),
 	)
 	const [busy, setBusy] = useState(false)
+	// A file-shape the user just dragged out of its frame onto the page: prompt
+	// to import its bytes into tldraw, or keep it as a reference to the original.
+	const [pendingDrop, setPendingDrop] = useState<FileShape | null>(null)
 
 	// --- thumbnail resolver (path → object-URL for image files) -------------
 	const resolveThumb = useCallback<ThumbResolver>(async (path, ext) => {
@@ -92,6 +96,28 @@ export default function App() {
 		// Give the tab time to grab the URL before revoking.
 		setTimeout(() => URL.revokeObjectURL(url), 60_000)
 	}, [])
+
+	// --- import-vs-reference, for a file dragged out of its frame -----------
+	// "Import": read the file's bytes and run tldraw's own file→asset→shape
+	// pipeline at the icon's spot (image → image shape, etc.), then remove the
+	// pointer icon — the content now lives in the tldraw document and survives
+	// without the disk binding. "Keep as reference": leave the tlos-file pointer
+	// where it was dropped (it stays bound to the original on disk).
+	const importDrop = useCallback(async (shape: FileShape) => {
+		setPendingDrop(null)
+		const root = rootRef.current
+		const editor = editorRef.current
+		if (!root || !editor) return
+		const handle = await getFileHandle(root, shape.props.path)
+		if (!handle?.getFile) return
+		const file = await handle.getFile()
+		const bounds = editor.getShapePageBounds(shape.id)
+		const point = bounds ? { x: bounds.x, y: bounds.y } : { x: shape.x, y: shape.y }
+		await editor.putExternalContent({ type: 'files', files: [file], point })
+		editor.deleteShapes([shape.id])
+	}, [])
+
+	const keepAsReference = useCallback(() => setPendingDrop(null), [])
 
 	// --- bind / reconnect ---------------------------------------------------
 	const bindRoot = useCallback(async (root: DirHandle) => {
@@ -160,6 +186,31 @@ export default function App() {
 		if (import.meta.env.DEV) {
 			;(window as unknown as { __tlosEditor?: Editor }).__tlosEditor = editor
 		}
+
+		// Belt-and-braces: even with the thumbnail <img> non-draggable, refuse to
+		// turn a blob:/file: URL into a bookmark shape (its url validator rejects
+		// those protocols and throws, taking down the whole canvas). A registered
+		// handler fully replaces the default and can't cleanly "fall through", and
+		// re-dispatching via putExternalContent would recurse — so this swallows
+		// blob:/file: and no-ops other URLs too. That's an acceptable tradeoff for
+		// this file-manager (dropping a web URL to make a bookmark isn't a goal);
+		// revisit if bookmark-from-URL is ever wanted.
+		editor.registerExternalContentHandler('url', (content) => {
+			if (/^(blob|file):/i.test(content.url)) return
+		})
+
+		// Detect a file-shape dragged OUT of its frame onto the page (user action:
+		// parent goes from a frame to a page id). Prompt import-vs-reference once
+		// per drop. Programmatic reparents (source !== 'user') are ignored, as is
+		// the reverse (dropping back into a frame).
+		editor.sideEffects.registerAfterChangeHandler('shape', (prev, next, source) => {
+			if (source !== 'user' || next.type !== 'tlos-file') return
+			if (prev.parentId === next.parentId) return
+			const wasInFrame = isShapeId(prev.parentId) && editor.getShape(prev.parentId)?.type === 'frame'
+			const nowOnPage = !isShapeId(next.parentId)
+			if (wasInFrame && nowOnPage) setPendingDrop(next as FileShape)
+		})
+
 		// If a root got bound before the editor mounted, dump it now.
 		const root = rootRef.current
 		if (root && status === 'bound') void dumpDirectory(editor, root, '', 0, 0)
@@ -195,6 +246,29 @@ export default function App() {
 					</button>
 				) : null}
 			</div>
+
+			{pendingDrop ? (
+				<div className="tlos-modal-scrim" onClick={keepAsReference}>
+					<div className="tlos-modal" onClick={(e) => e.stopPropagation()}>
+						<div className="tlos-modal-title">Add “{pendingDrop.props.name}” to the canvas</div>
+						<p className="tlos-modal-body">
+							You dragged this file out of its folder. Import a copy into the tldraw
+							document, or keep it as a live reference to the original on disk?
+						</p>
+						<div className="tlos-modal-actions">
+							<button className="tlos-btn" onClick={keepAsReference}>
+								Keep as reference
+							</button>
+							<button
+								className="tlos-btn tlos-btn-primary"
+								onClick={() => void importDrop(pendingDrop)}
+							>
+								Import into tldraw
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
 		</div>
 	)
 }

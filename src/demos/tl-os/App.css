@@ -62,3 +62,44 @@
 .tlos-btn-primary:hover:not(:disabled) {
 	background: #3a56c8;
 }
+
+/* Import-vs-reference dialog, shown when a file is dragged out of its frame. */
+.tlos-modal-scrim {
+	position: absolute;
+	inset: 0;
+	z-index: 400;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.28);
+	pointer-events: auto;
+}
+
+.tlos-modal {
+	width: min(420px, calc(100vw - 32px));
+	background: #fff;
+	border-radius: 12px;
+	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+	padding: 20px;
+	font-family: system-ui, -apple-system, sans-serif;
+}
+
+.tlos-modal-title {
+	font-size: 15px;
+	font-weight: 600;
+	color: #1d1d1d;
+	margin-bottom: 8px;
+}
+
+.tlos-modal-body {
+	font-size: 13px;
+	line-height: 1.45;
+	color: #4a4a4a;
+	margin: 0 0 18px;
+}
+
+.tlos-modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+}

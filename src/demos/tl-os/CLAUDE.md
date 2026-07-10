@@ -54,6 +54,25 @@ UI feature-detects and shows an "unsupported" note rather than breaking.
   re-creating it. The planned full "rescan" (new / missing / matched by path)
   extends this — and must *never* delete a user's annotated layout for a
   missing file; gray it out instead.
+- **Dragging a file-shape OUT of its frame onto the page prompts import-vs-
+  reference.** A `registerAfterChangeHandler('shape')` side-effect (in
+  `handleMount`) detects the reparent (frame → page, `source === 'user'`) and
+  opens a dialog. *Import into tldraw* → `putExternalContent({type:'files'})`
+  runs tldraw's own file→asset→shape pipeline at the icon's spot and deletes the
+  pointer (content now lives in the doc, survives without the disk binding).
+  *Keep as reference* → the `tlos-file` pointer just stays where it was dropped.
+
+## Gotcha: blob: URLs crash the default bookmark handler
+
+An image thumbnail is an `<img src="blob:…">`. A blob: `<img>` is **natively
+draggable by the browser**; if it drags, the canvas receives a `url` drop of the
+blob: URL, tldraw's default handler tries to make a **bookmark** shape from it,
+and the bookmark `url` validator rejects the `blob:` protocol — a
+`ValidationError` that takes down the whole canvas. Two guards, keep both:
+`draggable={false}` + `pointerEvents:'none'` on the thumbnail img (removes the
+vector), and a `registerExternalContentHandler('url', …)` that swallows
+`blob:`/`file:` URLs (belt-and-braces). The url handler currently no-ops *all*
+URLs — see the code comment; revisit if bookmark-from-URL is ever wanted.
 
 ## Not yet built (planned next)
 

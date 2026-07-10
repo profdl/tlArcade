@@ -145,7 +145,20 @@ function Thumbnail({ path, ext }: { path: string; ext: string }) {
 			<img
 				src={url}
 				alt={path}
-				style={{ maxWidth: '80%', maxHeight: '60%', objectFit: 'contain', borderRadius: 4 }}
+				// A blob: <img> is natively draggable by the browser. If it drags,
+				// the canvas receives a `url` drop of the blob: URL and tldraw's
+				// default handler tries to make a bookmark shape from it — whose
+				// url validator rejects the blob: protocol and crashes the app.
+				// Disable native drag and let the drag hit the tldraw shape instead.
+				draggable={false}
+				style={{
+					maxWidth: '80%',
+					maxHeight: '60%',
+					objectFit: 'contain',
+					borderRadius: 4,
+					pointerEvents: 'none',
+					userSelect: 'none',
+				}}
 			/>
 		)
 	}
