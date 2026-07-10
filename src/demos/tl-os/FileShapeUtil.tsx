@@ -24,6 +24,7 @@ import {
 	type RecordProps,
 	type TLBaseShape,
 } from 'tldraw'
+import { poly, strokePath } from './freehand'
 
 export type FileProps = {
 	w: number
@@ -77,41 +78,83 @@ function family(ext: string): 'image' | 'doc' | 'code' | 'media' | 'archive' | '
 	return 'file'
 }
 
+// Family tints are drawn from tldraw's own draw-color palette so the icons sit
+// naturally in the tldraw palette (same hexes the SDK ships for light-blue /
+// green / violet / orange / grey). The glyph's *surface* and the filename use
+// tldraw theme CSS vars instead, so both flip correctly in dark mode.
 const FAMILY_TINT: Record<string, string> = {
-	image: '#4ba1f1',
-	doc: '#9fa8b2',
-	code: '#099268',
-	media: '#ae3ec9',
-	archive: '#e16919',
-	file: '#9fa8b2',
+	image: '#4ba1f1', // light-blue
+	doc: '#9fa8b2', // grey
+	code: '#099268', // green
+	media: '#ae3ec9', // violet
+	archive: '#e16919', // orange
+	file: '#9fa8b2', // grey
 }
 
-/** The little sheet-with-a-folded-corner file glyph, tinted per family. */
+// Sheet-with-a-folded-corner, drawn hand-drawn to match the folder: a freehand
+// outline (family-tint ink) over a panel-coloured fill, plus a rough fold line.
+// The dog-eared corner is the cut from the top edge down to the fold. Coords in
+// the 0–100 box.
+const FILE_OUTLINE = poly([
+	[26, 14],
+	[60, 14],
+	[76, 30],
+	[76, 86],
+	[26, 86],
+	[26, 14],
+])
+const FILE_FOLD = poly([
+	[60, 14],
+	[60, 30],
+	[76, 30],
+])
+const FILE_INK_PATH = strokePath(FILE_OUTLINE, 3)
+const FILE_FOLD_PATH = strokePath(FILE_FOLD, 3)
+const FILE_FILL_PATH =
+	'M ' + FILE_OUTLINE.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ') + ' Z'
+
+/** The little sheet-with-a-folded-corner file glyph, tinted per family. The
+ *  sheet fill follows the tldraw panel colour so it reads on either theme. */
 function FileGlyph({ tint }: { tint: string }) {
 	return (
-		<svg viewBox="0 0 100 100" width="52" height="52" style={{ display: 'block' }}>
-			<path
-				d="M24 12 h36 l16 16 v60 a4 4 0 0 1 -4 4 H24 a4 4 0 0 1 -4 -4 V16 a4 4 0 0 1 4 -4 z"
-				fill="#ffffff"
-				stroke={tint}
-				strokeWidth="4"
-			/>
-			<path d="M60 12 v16 h16" fill="none" stroke={tint} strokeWidth="4" strokeLinejoin="round" />
+		<svg viewBox="0 0 100 100" width="52" height="52" style={{ display: 'block', overflow: 'visible' }}>
+			<path d={FILE_FILL_PATH} fill="var(--tl-color-panel)" stroke="none" />
+			<path d={FILE_INK_PATH} fill={tint} stroke="none" />
+			<path d={FILE_FOLD_PATH} fill={tint} stroke="none" />
 		</svg>
 	)
 }
 
-/** A classic folder glyph. */
+// A folder glyph drawn hand-drawn, tldraw-style: the outline is a perfect-
+// freehand stroke (filled outline, even nib) rather than a crisp vector path, so
+// it reads as "drawn on the tldraw canvas" like a native Draw shape. Ink is
+// tldraw blue with a translucent blue body fill (works on either theme; a solid
+// light-blue glared in dark mode). Coords live in a 0–100 box.
+const FOLDER_BLUE = '#4465e9' // tldraw 'blue'
+const FOLDER_FILL = 'rgba(68, 101, 233, 0.24)'
+// Folder outline corners: back-tab up the left, across the top of the tab, a
+// small step down to the body's top edge, along the top, down the right, and
+// back along the bottom — closed by repeating the first corner.
+const FOLDER_OUTLINE = poly([
+	[14, 32],
+	[14, 24],
+	[40, 24],
+	[47, 31],
+	[86, 31],
+	[86, 76],
+	[14, 76],
+	[14, 32],
+])
+const FOLDER_INK_PATH = strokePath(FOLDER_OUTLINE, 3.2)
+// Centre-line closed path for the translucent body fill (just the polygon).
+const FOLDER_FILL_PATH =
+	'M ' + FOLDER_OUTLINE.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ') + ' Z'
+
 function FolderGlyph() {
 	return (
-		<svg viewBox="0 0 100 100" width="56" height="56" style={{ display: 'block' }}>
-			<path
-				d="M12 30 a4 4 0 0 1 4 -4 h22 l8 8 h34 a4 4 0 0 1 4 4 v38 a4 4 0 0 1 -4 4 H16 a4 4 0 0 1 -4 -4 z"
-				fill="#7fc7f5"
-				stroke="#4465e9"
-				strokeWidth="3.5"
-				strokeLinejoin="round"
-			/>
+		<svg viewBox="0 0 100 100" width="58" height="58" style={{ display: 'block', overflow: 'visible' }}>
+			<path d={FOLDER_FILL_PATH} fill={FOLDER_FILL} stroke="none" />
+			<path d={FOLDER_INK_PATH} fill={FOLDER_BLUE} stroke="none" />
 		</svg>
 	)
 }
@@ -190,6 +233,7 @@ export class FileShapeUtil extends BaseBoxShapeUtil<FileShape> {
 		const fam = family(ext)
 		return (
 			<HTMLContainer
+				className="tlos-file"
 				style={{
 					width: w,
 					height: h,
@@ -199,6 +243,7 @@ export class FileShapeUtil extends BaseBoxShapeUtil<FileShape> {
 					justifyContent: 'flex-start',
 					gap: 4,
 					padding: 4,
+					borderRadius: 6,
 					pointerEvents: 'all',
 					userSelect: 'none',
 				}}
@@ -244,8 +289,8 @@ export class FileShapeUtil extends BaseBoxShapeUtil<FileShape> {
 						fontSize: 11,
 						lineHeight: 1.2,
 						textAlign: 'center',
-						color: '#1d1d1d',
-						fontFamily: 'system-ui, -apple-system, sans-serif',
+						color: 'var(--tl-color-text)',
+						fontFamily: 'var(--tl-font-sans)',
 						maxWidth: '100%',
 						// Two-line clamp so long names don't overflow the icon.
 						display: '-webkit-box',
