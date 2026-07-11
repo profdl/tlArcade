@@ -30,3 +30,6 @@ dist-ssr
 
 # Wrangler local dev state (Durable Objects, R2, etc.)
 .wrangler
+
+# Local Obsidian knowledge-base vault (not app code)
+.tldraw-brain/
