@@ -61,14 +61,20 @@ export function paramsFromFace(frame: FaceFrame): Partial<PuppetParams> {
 	const bs = (k: string) => b[k] ?? 0
 	return {
 		headPitch: frame.pose.pitch,
-		headYaw: frame.pose.yaw,
-		headRoll: frame.pose.roll,
+		// The preview is shown mirrored (selfie view, see PuppetStage), so the
+		// puppet follows the mirror: turn/tilt one way, it goes the same way on
+		// screen. A horizontal mirror flips the sign of yaw and roll (both are
+		// left/right-handed); pitch (up/down) is unaffected.
+		headYaw: -frame.pose.yaw,
+		headRoll: -frame.pose.roll,
 		// ARKit blink shapes are "how closed"; invert to "how open".
 		eyeOpenL: clamp(1 - bs('eyeBlinkLeft'), 0, 1),
 		eyeOpenR: clamp(1 - bs('eyeBlinkRight'), 0, 1),
 		eyeBrowL: bs('browOuterUpLeft') - bs('browDownLeft'),
 		eyeBrowR: bs('browOuterUpRight') - bs('browDownRight'),
-		gazeX: bs('eyeLookOutLeft') - bs('eyeLookInLeft'),
+		// Mirror-flip horizontal gaze too, so pupils track the same on-screen
+		// direction as the (mirrored) head. Vertical gaze is unaffected.
+		gazeX: -(bs('eyeLookOutLeft') - bs('eyeLookInLeft')),
 		gazeY: bs('eyeLookUpLeft') - bs('eyeLookDownLeft'),
 		mouthOpen: clamp(bs('jawOpen'), 0, 1),
 		mouthSmile: (bs('mouthSmileLeft') + bs('mouthSmileRight')) / 2 - (bs('mouthFrownLeft') + bs('mouthFrownRight')) / 2,

@@ -53,14 +53,19 @@ export default function App() {
 			<div
 				style={{
 					position: 'absolute',
-					top: 8,
+					// Sit below tldraw's native top-right style/settings panel instead of
+					// covering it. That panel is right-aligned and appears when shapes are
+					// selected; ~360px clears its tallest state (all style controls). The
+					// max-height keeps this panel on-screen if the viewport is short.
+					top: 360,
 					right: 8,
 					zIndex: 400,
 					width: 260,
+					maxHeight: 'calc(100vh - 368px)',
 					borderRadius: 12,
 					background: 'var(--tl-color-panel, white)',
 					boxShadow: 'var(--tl-shadow-2)',
-					overflow: 'hidden',
+					overflow: 'hidden auto',
 				}}
 			>
 				{editor && <PuppetStage editor={editor} />}

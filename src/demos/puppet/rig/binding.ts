@@ -39,16 +39,35 @@ function term(t: BindingTerm | undefined, params: PuppetParams): number {
 export type FeatureDelta = {
 	dx: number
 	dy: number
+	/**
+	 * The feature's OWN local rotation delta (brow arch, body lean, …) — spun
+	 * about its own pivot. Head roll is deliberately NOT folded in here: it's the
+	 * shared, parent rotation that orbits the whole head group about the head's
+	 * pivot, and the driver applies it once via `editor.rotateShapesBy`. See
+	 * `HEAD_PARENT_PARAM`.
+	 */
 	drot: number
 	scaleX: number
 	scaleY: number
 }
 
+/**
+ * The single param that acts as the head's (and thus the whole face group's)
+ * rigid rotation. Every feature is a child of the head for roll: the driver
+ * pulls this term OUT of each binding's `drot` and applies it once, to the head
+ * plus all its children together, about the head's pivot — so the eyes/mouth/
+ * brows orbit the head instead of each spinning on its own center.
+ */
+export const HEAD_PARENT_PARAM: keyof PuppetParams = 'headRoll'
+
 export function evalBinding(binding: FeatureBinding, params: PuppetParams): FeatureDelta {
+	// Local rotation excludes the head-parent term; that's applied as the shared
+	// group rotation about the head pivot, not per-feature about its own center.
+	const localRot = term(binding.drot, params) - (params[HEAD_PARENT_PARAM] as number) * (binding.drot?.[HEAD_PARENT_PARAM] ?? 0)
 	return {
 		dx: term(binding.dx, params),
 		dy: term(binding.dy, params),
-		drot: term(binding.drot, params),
+		drot: localRot,
 		scaleX: 1 + term(binding.dscaleX, params),
 		scaleY: 1 + term(binding.dscaleY, params),
 	}

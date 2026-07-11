@@ -1,5 +1,5 @@
-import { type Editor, type JsonObject, type TLShapePartial } from 'tldraw'
-import { evalBinding, resolveBinding } from './binding'
+import { type Editor, type JsonObject, type TLShapeId, type TLShapePartial } from 'tldraw'
+import { evalBinding, HEAD_PARENT_PARAM, resolveBinding } from './binding'
 import type { PuppetParams } from './params'
 import { getPuppetMeta, type RestPose, type RigFeature } from './roles'
 
@@ -29,6 +29,12 @@ function readSize(props: unknown): { w: number; h: number } | null {
 export class PuppetDriver {
 	private features: RigFeature[] = []
 	private editor: Editor
+	/**
+	 * The head feature (if the puppet has one) — its rest pivot in page space is
+	 * the center every child feature orbits when the head rolls. Null when no
+	 * shape is tagged `head`, in which case there's no parent rotation.
+	 */
+	private headPivotPage: { x: number; y: number } | null = null
 	/** True while apply() is mid-write, so a store listener can ignore the driver's own churn. */
 	isApplying = false
 
@@ -82,6 +88,20 @@ export class PuppetDriver {
 		}
 
 		this.features = features
+
+		// Cache the head's rest pivot in page space — the shared orbit center for
+		// head roll. Uses meta.pivot (local 0..1) against the head's rest bounds so
+		// it's stable authored data, never read back from the deforming shape.
+		const head = features.find((f) => f.role === 'head')
+		if (head) {
+			const pivot = head.meta.pivot ?? { x: 0.5, y: 0.5 }
+			this.headPivotPage = {
+				x: head.rest.x + (head.rest.w ?? 0) * pivot.x,
+				y: head.rest.y + (head.rest.h ?? 0) * pivot.y,
+			}
+		} else {
+			this.headPivotPage = null
+		}
 	}
 
 	get featureCount() {
@@ -109,7 +129,23 @@ export class PuppetDriver {
 		this.scan()
 	}
 
-	/** Apply one frame of params to every feature. Every value is derived from the immutable rest pose. */
+	/**
+	 * Apply one frame of params to every feature.
+	 *
+	 * Two passes, both idempotent so nothing compounds:
+	 *
+	 * 1. **Head-neutral reset** (absolute, from immutable rest): place every
+	 *    feature at its rest transform plus its own LOCAL deltas — translation,
+	 *    scale, and any self-rotation (brow arch, body lean). Head roll is
+	 *    deliberately excluded here.
+	 * 2. **Parent rotation** (relative, via `editor.rotateShapesBy`): roll the
+	 *    head and ALL its child features together, about the head's rest pivot, by
+	 *    `headRoll`. Because pass 1 just reset the group to the same base pose, the
+	 *    relative rotate always starts from an identical state and can't drift —
+	 *    the same reason the rest pose stays immutable. This is what makes the
+	 *    features orbit the head (true parenting) instead of each spinning on its
+	 *    own center.
+	 */
 	apply(params: PuppetParams) {
 		if (this.features.length === 0) return
 
@@ -134,7 +170,8 @@ export class PuppetDriver {
 			const baseX = f.rest.x + scaleShiftX
 			const baseY = f.rest.y + scaleShiftY
 
-			// Rotate the (scaled) origin about the pivot, in page space at rest.
+			// Rotate the (scaled) origin about the pivot by the feature's LOCAL
+			// rotation only (head roll is applied later as the shared parent turn).
 			const px = f.rest.x + w0 * pivot.x
 			const py = f.rest.y + h0 * pivot.y
 			const relX = baseX - px
@@ -161,9 +198,22 @@ export class PuppetDriver {
 			updates.push(partial)
 		}
 
+		const headRoll = params[HEAD_PARENT_PARAM] as number
+		const ids = this.features.map((f) => f.id)
+
 		this.isApplying = true
 		try {
-			this.editor.run(() => this.editor.updateShapes(updates), { history: 'ignore', ignoreShapeLock: true })
+			this.editor.run(
+				() => {
+					// Pass 1: reset the whole group to its head-neutral pose.
+					this.editor.updateShapes(updates)
+					// Pass 2: roll head + children together about the head's rest pivot.
+					if (this.headPivotPage && headRoll !== 0) {
+						this.editor.rotateShapesBy(ids as TLShapeId[], headRoll, { center: this.headPivotPage })
+					}
+				},
+				{ history: 'ignore', ignoreShapeLock: true }
+			)
 		} finally {
 			this.isApplying = false
 		}
