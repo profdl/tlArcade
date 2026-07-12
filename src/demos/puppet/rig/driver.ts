@@ -108,12 +108,10 @@ export class PuppetDriver {
 		return this.features.length
 	}
 
-	/** Recompute rest for a specific shape (e.g. user deliberately re-poses a feature and re-anchors it). */
-	reanchor(id: string) {
-		const shape = this.editor.getShape(id as RigFeature['id'])
-		if (!shape || !getPuppetMeta(shape)) return
-		const size = readSize((shape as { props?: unknown }).props)
-		const rest: RestPose = { x: shape.x, y: shape.y, rotation: shape.rotation, w: size?.w ?? null, h: size?.h ?? null }
+	/** Persist a fresh rest pose into a shape's meta (driver-owned write; excluded from the store listener). */
+	private writeRest(id: RigFeature['id'], rest: RestPose) {
+		const shape = this.editor.getShape(id)
+		if (!shape) return
 		this.isApplying = true
 		try {
 			this.editor.run(
@@ -127,6 +125,18 @@ export class PuppetDriver {
 			this.isApplying = false
 		}
 		this.scan()
+	}
+
+	/**
+	 * Recompute rest for a specific shape from its CURRENT live transform. Safe
+	 * only when the live pose IS the neutral pose — i.e. while tracking is paused,
+	 * so no driver deform is baked in. Used for a paused move/resize/rotate.
+	 */
+	reanchor(id: string) {
+		const shape = this.editor.getShape(id as RigFeature['id'])
+		if (!shape || !getPuppetMeta(shape)) return
+		const size = readSize((shape as { props?: unknown }).props)
+		this.writeRest(shape.id, { x: shape.x, y: shape.y, rotation: shape.rotation, w: size?.w ?? null, h: size?.h ?? null })
 	}
 
 	/**

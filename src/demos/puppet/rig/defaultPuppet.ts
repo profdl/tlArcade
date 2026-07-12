@@ -1,13 +1,6 @@
-import {
-	createShapeId,
-	type Editor,
-	type JsonObject,
-	type TLDefaultColorStyle,
-	type TLDefaultFillStyle,
-	type TLGeoShapeGeoStyle,
-	type TLShapeId,
-} from 'tldraw'
-import type { PuppetMeta, PuppetRole } from './roles'
+import { createShapeId, type Editor, type JsonObject, type TLShapeId } from 'tldraw'
+import { PUPPET_LAYOUT } from './layout'
+import type { PuppetMeta } from './roles'
 
 /**
  * Builds a default puppet entirely from **native tldraw shapes** (geo shapes),
@@ -16,64 +9,38 @@ import type { PuppetMeta, PuppetRole } from './roles'
  * "rig is metadata, not art" contract, not a special asset. Delete any piece
  * and draw your own, then assign it the same role, and the rig keeps working.
  *
+ * The layout (which part goes where) comes from the shared {@link PUPPET_LAYOUT}
+ * table so the unassigned-part placeholder overlay can draw its dashed slots at
+ * exactly the same positions.
+ *
  * Returns the created shape ids so the caller can frame/select them.
  */
 export function buildDefaultPuppet(editor: Editor, cx: number, cy: number): TLShapeId[] {
 	const ids: TLShapeId[] = []
 
-	const add = (
-		role: PuppetRole,
-		geo: TLGeoShapeGeoStyle,
-		x: number,
-		y: number,
-		w: number,
-		h: number,
-		color: TLDefaultColorStyle,
-		fill: TLDefaultFillStyle = 'solid',
-		extraMeta: Partial<PuppetMeta> = {}
-	) => {
+	// Back-to-front paint order (tldraw stacks in creation order) — the table is
+	// already in that order.
+	for (const part of PUPPET_LAYOUT) {
 		const id = createShapeId()
 		ids.push(id)
-		const px = cx + x
-		const py = cy + y
+		const px = cx + part.x
+		const py = cy + part.y
 		// Capture rest at creation time so the driver never has to infer it from a
 		// (possibly already-deformed) live shape. See PuppetDriver's rest invariant.
 		const meta: PuppetMeta = {
-			puppetRole: role,
-			...extraMeta,
-			rest: { x: px, y: py, rotation: 0, w, h },
+			puppetRole: part.role,
+			...part.meta,
+			rest: { x: px, y: py, rotation: 0, w: part.w, h: part.h },
 		}
 		editor.createShape({
 			id,
 			type: 'geo',
 			x: px,
 			y: py,
-			props: { geo, w, h, color, fill, dash: 'draw' },
+			props: { geo: part.geo, w: part.w, h: part.h, color: part.color, fill: part.fill ?? 'solid', dash: 'draw' },
 			meta: meta as unknown as JsonObject,
 		})
-		return id
 	}
-
-	// Back-to-front paint order (tldraw stacks in creation order).
-	add('hairBack', 'ellipse', -120, -150, 240, 300, 'violet')
-	add('body', 'ellipse', -110, 150, 220, 220, 'blue')
-	add('head', 'ellipse', -100, -120, 200, 240, 'yellow')
-	// Eyes (whites) + pupils.
-	add('eyeL', 'ellipse', -70, -50, 55, 45, 'white')
-	add('eyeR', 'ellipse', 15, -50, 55, 45, 'white')
-	add('pupilL', 'ellipse', -50, -38, 20, 22, 'black')
-	add('pupilR', 'ellipse', 35, -38, 20, 22, 'black')
-	// Eyelids: same-size solid overlays that collapse to a slit as the eye "closes".
-	// Pivot at top so they hinge down from the top lid.
-	add('eyelidL', 'rectangle', -70, -55, 55, 48, 'yellow', 'solid', { pivot: { x: 0.5, y: 0 } })
-	add('eyelidR', 'rectangle', 15, -55, 55, 48, 'yellow', 'solid', { pivot: { x: 0.5, y: 0 } })
-	// Brows.
-	add('browL', 'rectangle', -68, -78, 50, 10, 'orange')
-	add('browR', 'rectangle', 18, -78, 50, 10, 'orange')
-	// Mouth — pivot at center so it opens symmetrically.
-	add('mouth', 'ellipse', -35, 45, 70, 26, 'red', 'solid', { pivot: { x: 0.5, y: 0.5 } })
-	// Front hair on top.
-	add('hairFront', 'rectangle', -105, -135, 210, 70, 'violet')
 
 	return ids
 }

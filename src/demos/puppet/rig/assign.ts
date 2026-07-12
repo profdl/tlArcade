@@ -1,4 +1,5 @@
 import { type Editor, type JsonObject, type TLShape, type TLShapePartial } from 'tldraw'
+import { defaultSlotCenter } from './layout'
 import { getPuppetMeta, type PuppetMeta, type PuppetRole, type RestPose } from './roles'
 
 /**
@@ -62,10 +63,19 @@ export function assignRole(editor: Editor, ids: readonly TLShape['id'][], role: 
 	const priorOwners = editor
 		.getCurrentPageShapes()
 		.filter((s) => !assignSet.has(s.id) && getPuppetMeta(s)?.puppetRole === role)
-	// The slot to drop into: the first prior owner's rest (stable authored data, not
-	// the live/deformed transform) — its center and rotation. Null when unoccupied.
+	// The slot to drop into: prefer the first prior owner's rest (stable authored
+	// data, not the live/deformed transform) — its center and rotation. When the
+	// role is UNOCCUPIED (e.g. the default part was deleted), fall back to the
+	// role's default-layout slot center so the shape still snaps into the rig's
+	// layout — the same spot its empty-slot placeholder was drawn. Null only when
+	// the role has neither a prior owner nor a layout entry.
 	const priorRest = priorOwners.map((s) => getPuppetMeta(s)!.rest).find((r): r is RestPose => !!r)
-	const slot = priorRest ? { ...restCenter(priorRest), rotation: priorRest.rotation } : null
+	const defaultCenter = priorRest ? null : defaultSlotCenter(editor, role)
+	const slot = priorRest
+		? { ...restCenter(priorRest), rotation: priorRest.rotation }
+		: defaultCenter
+			? { ...defaultCenter, rotation: 0 }
+			: null
 
 	const assigned: TLShape['id'][] = []
 	editor.run(
@@ -77,16 +87,25 @@ export function assignRole(editor: Editor, ids: readonly TLShape['id'][], role: 
 				const shape = editor.getShape(id)
 				if (!shape) continue
 				if (slot) {
-					// 2a. Translate: center the shape on the slot (keep its own size).
-					const size = readSize((shape as { props?: unknown }).props)
-					const x = slot.x - (size?.w ?? 0) / 2
-					const y = slot.y - (size?.h ?? 0) / 2
-					editor.updateShapes([{ id: shape.id, type: shape.type, x, y } as TLShapePartial])
-					// 2b. Rotate to match the slot's rotation, about the slot center, using
-					// the native API so the shape orbits the center rather than spinning on
-					// its own origin. Delta from the shape's current rotation.
-					const delta = slot.rotation - shape.rotation
-					if (delta !== 0) editor.rotateShapesBy([shape.id], delta, { center: { x: slot.x, y: slot.y } })
+					// Drop the shape into the slot in two rotation-independent steps. We
+					// deliberately do NOT compute the center from `x/y + w/h` — that's the
+					// top-left-plus-half-size point, which is the true center ONLY for an
+					// unrotated shape. For a shape the user drew at an angle it's wrong, and
+					// mis-centering there is what threw the placement off. Instead:
+					//
+					// 2a. Rotate IN PLACE to the slot's rotation, orbiting the shape's own
+					//     current page-bounds center, so the rotation changes orientation
+					//     without moving the center.
+					const before = editor.getShapePageBounds(shape.id)
+					if (before) {
+						const delta = slot.rotation - shape.rotation
+						if (delta !== 0) editor.rotateShapesBy([shape.id], delta, { center: before.center })
+					}
+					// 2b. Translate the shape's ACTUAL page-bounds center onto the slot
+					//     center via a pure nudge — correct regardless of rotation or origin,
+					//     and it keeps the shape's own size.
+					const after = editor.getShapePageBounds(shape.id)
+					if (after) editor.nudgeShapes([shape.id], { x: slot.x - after.center.x, y: slot.y - after.center.y })
 				}
 				// 3. Capture rest from the resulting live transform.
 				const live = editor.getShape(id)!

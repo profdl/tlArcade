@@ -3,6 +3,7 @@ import type { Editor } from 'tldraw'
 import { PuppetDriver } from './rig/driver'
 import { NEUTRAL_PARAMS, paramsFromFace, smoothParams, type PuppetParams } from './rig/params'
 import { getPuppetMeta } from './rig/roles'
+import { setTrackingLive } from './rig/trackingState'
 import { trackFace } from './tracking/faceTracker'
 
 /**
@@ -18,6 +19,9 @@ export function PuppetStage({ editor }: { editor: Editor }) {
 	const trackingRef = useRef(tracking)
 	useEffect(() => {
 		trackingRef.current = tracking
+		// Mirror tracking state into the module flag the geo shape util reads to
+		// decide whether a rig feature may be resized (blocked while tracking is live).
+		setTrackingLive(tracking)
 	}, [tracking])
 
 	useEffect(() => {
@@ -88,6 +92,8 @@ export function PuppetStage({ editor }: { editor: Editor }) {
 			stopped = true
 			cancelAnimationFrame(raf)
 			unsub()
+			// Panel gone → tracking is no longer live; let features be resized again.
+			setTrackingLive(false)
 			const s = video.srcObject as MediaStream | null
 			s?.getTracks().forEach((tr) => tr.stop())
 		}

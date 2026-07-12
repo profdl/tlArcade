@@ -1,10 +1,13 @@
 import { useCallback, useState } from 'react'
-import { Tldraw, type Editor, type TLComponents, type TLShapeId } from 'tldraw'
+import { Tldraw, type Editor, type TLComponents, type TLShape, type TLShapeId } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { PuppetStage } from './PuppetStage'
 import { buildDefaultPuppet } from './rig/defaultPuppet'
+import { getPuppetCenter, PUPPET_LAYOUT, setPuppetCenter } from './rig/layout'
+import { PuppetGeoShapeUtil } from './rig/puppetShapeUtils'
 import { getPuppetMeta } from './rig/roles'
 import { PuppetContextMenu } from './ui/PuppetContextMenu'
+import { PuppetPlaceholders } from './ui/PuppetPlaceholders'
 import { PuppetSelectionToolbar } from './ui/PuppetSelectionToolbar'
 
 /**
@@ -16,13 +19,50 @@ import { PuppetSelectionToolbar } from './ui/PuppetSelectionToolbar'
 // The right-click "Puppet role" submenu that assigns rig roles to selected art.
 // Module-level constant so <Tldraw> doesn't see a fresh `components` prop each
 // render.
-const components: TLComponents = { ContextMenu: PuppetContextMenu, InFrontOfTheCanvas: PuppetSelectionToolbar }
+// InFrontOfTheCanvas is a single screen-space slot, so compose our two overlays
+// (the empty-slot placeholders behind, the selection toolbar in front) into one.
+function PuppetOverlays() {
+	return (
+		<>
+			<PuppetPlaceholders />
+			<PuppetSelectionToolbar />
+		</>
+	)
+}
+
+const components: TLComponents = { ContextMenu: PuppetContextMenu, InFrontOfTheCanvas: PuppetOverlays }
+
+// Replace the built-in geo util with one that forbids resizing a rig feature
+// while tracking is live (same 'geo' type → overrides the default). Module-level
+// so <Tldraw> sees a stable array reference.
+const shapeUtils = [PuppetGeoShapeUtil]
+
+/**
+ * Recover the fixed-layout center of a puppet persisted before the placeholder
+ * overlay existed: find any existing feature whose role is in the layout table
+ * and invert `center = restTopLeft − layoutOffset`. Uses the immutable rest pose
+ * (not the live, possibly-deformed transform) so the derived center is stable.
+ */
+function backfillPuppetCenter(editor: Editor, puppetShapes: readonly TLShape[]): void {
+	for (const shape of puppetShapes) {
+		const meta = getPuppetMeta(shape)
+		const rest = meta?.rest
+		if (!meta || !rest) continue
+		const part = PUPPET_LAYOUT.find((p) => p.role === meta.puppetRole)
+		if (!part) continue
+		setPuppetCenter(editor, { x: rest.x - part.x, y: rest.y - part.y })
+		return
+	}
+}
 
 export default function App() {
 	const [editor, setEditor] = useState<Editor | null>(null)
 
 	const spawnPuppet = useCallback((editor: Editor) => {
 		const center = editor.getViewportPageBounds().center
+		// Persist the puppet center on the page so the fixed-layout placeholder
+		// overlay knows where empty slots sit, even after reload.
+		setPuppetCenter(editor, center)
 		const ids = buildDefaultPuppet(editor, center.x, center.y)
 		editor.zoomToBounds(editor.getShapePageBounds(ids[0])!, { inset: 220, animation: { duration: 300 } })
 		return ids
@@ -48,6 +88,11 @@ export default function App() {
 				spawnPuppet(editor)
 			} else if (needsRebuild) {
 				resetPuppet(editor)
+			} else if (!getPuppetCenter(editor)) {
+				// A puppet persisted from before the fixed-layout placeholder overlay
+				// has no stored center. Back-fill it from an anchor role's rest pose
+				// (its layout offset is known) so empty-slot placeholders line up.
+				backfillPuppetCenter(editor, puppetShapes)
 			}
 			if (import.meta.env.DEV) (window as unknown as { __editor: Editor }).__editor = editor
 		},
@@ -56,7 +101,7 @@ export default function App() {
 
 	return (
 		<div style={{ position: 'fixed', inset: 0 }}>
-			<Tldraw persistenceKey="puppet" onMount={handleMount} components={components} />
+			<Tldraw persistenceKey="puppet" onMount={handleMount} components={components} shapeUtils={shapeUtils} />
 			<div
 				style={{
 					position: 'absolute',
