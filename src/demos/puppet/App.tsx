@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react'
-import { Tldraw, type Editor, type TLShapeId } from 'tldraw'
+import { Tldraw, type Editor, type TLComponents, type TLShapeId } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { PuppetStage } from './PuppetStage'
 import { buildDefaultPuppet } from './rig/defaultPuppet'
 import { getPuppetMeta } from './rig/roles'
+import { PuppetContextMenu } from './ui/PuppetContextMenu'
+import { PuppetSelectionToolbar } from './ui/PuppetSelectionToolbar'
 
 /**
  * Puppet — a VTuber-style rig on the tldraw canvas. The puppet is ordinary
@@ -11,6 +13,11 @@ import { getPuppetMeta } from './rig/roles'
  * them through a shared PuppetDriver. On mount we drop a default puppet (built
  * from geo shapes) the user can redraw or restyle freely.
  */
+// The right-click "Puppet role" submenu that assigns rig roles to selected art.
+// Module-level constant so <Tldraw> doesn't see a fresh `components` prop each
+// render.
+const components: TLComponents = { ContextMenu: PuppetContextMenu, InFrontOfTheCanvas: PuppetSelectionToolbar }
+
 export default function App() {
 	const [editor, setEditor] = useState<Editor | null>(null)
 
@@ -49,19 +56,20 @@ export default function App() {
 
 	return (
 		<div style={{ position: 'fixed', inset: 0 }}>
-			<Tldraw persistenceKey="puppet" onMount={handleMount} />
+			<Tldraw persistenceKey="puppet" onMount={handleMount} components={components} />
 			<div
 				style={{
 					position: 'absolute',
-					// Sit below tldraw's native top-right style/settings panel instead of
-					// covering it. That panel is right-aligned and appears when shapes are
-					// selected; ~360px clears its tallest state (all style controls). The
-					// max-height keeps this panel on-screen if the viewport is short.
-					top: 360,
+					// Bottom-right, above the "Get a license" watermark. tldraw's top-right
+					// StylePanel now grows DOWN from the top edge and our panel grows UP
+					// from the bottom, so they share the right column without colliding at
+					// normal viewport heights. The selection role-assign UI is the floating
+					// toolbar above the shape (InFrontOfTheCanvas), not here.
+					bottom: 56,
 					right: 8,
 					zIndex: 400,
 					width: 260,
-					maxHeight: 'calc(100vh - 368px)',
+					maxHeight: 'calc(100vh - 64px)',
 					borderRadius: 12,
 					background: 'var(--tl-color-panel, white)',
 					boxShadow: 'var(--tl-shadow-2)',

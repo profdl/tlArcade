@@ -158,24 +158,28 @@ export class PuppetDriver {
 			const sy = Math.max(MIN_SCALE, d.scaleY)
 			const pivot = f.meta.pivot ?? { x: 0.5, y: 0.5 }
 
-			// All geometry from rest (immutable) — never from the live shape.
+			// All size/anchor geometry comes from the IMMUTABLE rest (never read back
+			// from the live shape — that's what prevents the compounding runaway). A
+			// manual resize is handled by re-baking rest (see reanchorSize), so rest is
+			// always the user's current authored size; the driver just scales from it.
 			const w0 = f.rest.w ?? 0
 			const h0 = f.rest.h ?? 0
+			const outW = w0 * sx
+			const outH = h0 * sy
 
-			// Writing w/h grows a shape from its top-left origin. To keep the pivot
-			// fixed, shift the origin: as w goes w0 -> w0*sx, the pivot at local
-			// pivot.x*w0 moves by pivot.x*w0*(sx-1); subtract it. Same for y.
-			const scaleShiftX = -pivot.x * w0 * (sx - 1)
-			const scaleShiftY = -pivot.y * h0 * (sy - 1)
-			const baseX = f.rest.x + scaleShiftX
-			const baseY = f.rest.y + scaleShiftY
+			// The pivot's stable target position in page space: rest top-left plus the
+			// pivot fraction of the rest size. Every frame anchors the pivot here — the
+			// "assigned slot" the feature never drifts off. Because we position by the
+			// pivot (default = center) and grow the scaled size symmetrically around it,
+			// driver scale keeps the center pinned rather than growing from the top-left.
+			const pivotPageX = f.rest.x + w0 * pivot.x
+			const pivotPageY = f.rest.y + h0 * pivot.y
 
-			// Rotate the (scaled) origin about the pivot by the feature's LOCAL
-			// rotation only (head roll is applied later as the shared parent turn).
-			const px = f.rest.x + w0 * pivot.x
-			const py = f.rest.y + h0 * pivot.y
-			const relX = baseX - px
-			const relY = baseY - py
+			// Origin (top-left) of the scaled shape that puts its pivot at pivotPage.
+			const originX = pivotPageX - pivot.x * outW
+			const originY = pivotPageY - pivot.y * outH
+			const relX = originX - pivotPageX
+			const relY = originY - pivotPageY
 			const cos = Math.cos(d.drot)
 			const sin = Math.sin(d.drot)
 
@@ -185,14 +189,14 @@ export class PuppetDriver {
 			const partial = {
 				id: f.id,
 				type: this.editor.getShape(f.id)!.type,
-				x: px + relX * cos - relY * sin + d.dx,
-				y: py + relX * sin + relY * cos + d.dy,
+				x: pivotPageX + relX * cos - relY * sin + d.dx,
+				y: pivotPageY + relX * sin + relY * cos + d.dy,
 				rotation: f.rest.rotation + d.drot,
 			} as TLShapePartial
 
 			// Only write size when the shape has w/h at rest and something actually scales.
 			if (f.rest.w !== null && f.rest.h !== null && (sx !== 1 || sy !== 1)) {
-				;(partial as { props?: Record<string, number> }).props = { w: f.rest.w * sx, h: f.rest.h * sy }
+				;(partial as { props?: Record<string, number> }).props = { w: outW, h: outH }
 			}
 
 			updates.push(partial)

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Editor } from 'tldraw'
 import { PuppetDriver } from './rig/driver'
 import { NEUTRAL_PARAMS, paramsFromFace, smoothParams, type PuppetParams } from './rig/params'
+import { getPuppetMeta } from './rig/roles'
 import { trackFace } from './tracking/faceTracker'
 
 /**
@@ -27,8 +28,26 @@ export function PuppetStage({ editor }: { editor: Editor }) {
 		// re-scanning can NOT recapture a deformed shape (that was the old runaway
 		// bug); this listener only needs to skip the driver's own per-frame writes.
 		const unsub = editor.store.listen(
-			() => {
-				if (!driver.isApplying) driver.scan()
+			(entry) => {
+				if (driver.isApplying) return
+				// Re-bake rest ONLY while tracking is paused. Rest is immutable authored
+				// data the driver deforms *from*; re-capturing it from a LIVE shape while
+				// tracking is deforming that shape recreates the compounding runaway the
+				// rest invariant exists to prevent (see driver.ts + the "rest immutable"
+				// note). When paused the live pose IS the neutral pose, so re-baking a
+				// user's move/resize/rotate is exact and safe — that's the only time we do it.
+				if (!trackingRef.current) {
+					for (const [from, to] of Object.values(entry.changes.updated)) {
+						if (from.typeName !== 'shape' || to.typeName !== 'shape') continue
+						if (!getPuppetMeta(to)) continue
+						const moved = from.x !== to.x || from.y !== to.y || from.rotation !== to.rotation
+						const fp = from.props as { w?: number; h?: number }
+						const tp = to.props as { w?: number; h?: number }
+						const resized = fp.w !== tp.w || fp.h !== tp.h
+						if (moved || resized) driver.reanchor(to.id)
+					}
+				}
+				driver.scan()
 			},
 			{ scope: 'document', source: 'user' }
 		)
