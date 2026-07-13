@@ -1,0 +1,88 @@
+import { useCallback } from 'react'
+import { stopEventPropagation, useEditor, useValue } from 'tldraw'
+import { getIkChains } from './effectors'
+import { effectorTipPage, solveTwoBoneIk } from './solveTwoBoneIk'
+
+const HANDLE_RADIUS = 9 // px, screen-space (constant regardless of zoom)
+
+/**
+ * A screen-space overlay of draggable IK handles at each hand/foot. Rendered via
+ * the `InFrontOfTheCanvas` component slot. Dragging a handle solves that limb's
+ * two-bone IK so the tip follows the pointer (solveTwoBoneIk), giving the natural
+ * "grab the hand, the arm bends to follow" posing.
+ *
+ * The dots stay glued to the (moving) effector tips: `useValue` reads each tip's
+ * page position and the camera, so it re-renders whenever a bone moves or the
+ * view pans/zooms. The overlay root is pointer-events:none; only the dots capture
+ * input, so the rest of the canvas stays fully interactive.
+ */
+export function IkHandlesOverlay() {
+	const editor = useEditor()
+
+	// Screen-space position of each limb's effector tip. Reactive: reads bone
+	// transforms + camera via the editor, so it recomputes on any pose/camera change.
+	const handles = useValue(
+		'ik-handles',
+		() => {
+			return getIkChains(editor)
+				.map((chain) => {
+					const tipPage = effectorTipPage(editor, chain.effectorBoneId)
+					if (!tipPage) return null
+					const s = editor.pageToScreen(tipPage)
+					return { ...chain, sx: s.x, sy: s.y }
+				})
+				.filter((h): h is NonNullable<typeof h> => h !== null)
+		},
+		[editor]
+	)
+
+	const startDrag = useCallback(
+		(rootBoneId: (typeof handles)[number]['rootBoneId'], effectorBoneId: (typeof handles)[number]['effectorBoneId']) =>
+			(e: React.PointerEvent) => {
+				// Don't let tldraw start its own marquee/translate on this pointerdown.
+				stopEventPropagation(e)
+				;(e.target as Element).setPointerCapture(e.pointerId)
+
+				// One undo step for the whole drag gesture (the per-move solves use history:'ignore').
+				editor.markHistoryStoppingPoint('ik-pose')
+
+				const onMove = (ev: PointerEvent) => {
+					const targetPage = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
+					solveTwoBoneIk(editor, rootBoneId, effectorBoneId, targetPage)
+				}
+				const onUp = () => {
+					window.removeEventListener('pointermove', onMove)
+					window.removeEventListener('pointerup', onUp)
+				}
+				window.addEventListener('pointermove', onMove)
+				window.addEventListener('pointerup', onUp)
+			},
+		[editor]
+	)
+
+	return (
+		<>
+			{handles.map((h) => (
+				<div
+					key={h.label}
+					onPointerDown={startDrag(h.rootBoneId, h.effectorBoneId)}
+					title={h.label}
+					style={{
+						position: 'absolute',
+						left: h.sx - HANDLE_RADIUS,
+						top: h.sy - HANDLE_RADIUS,
+						width: HANDLE_RADIUS * 2,
+						height: HANDLE_RADIUS * 2,
+						borderRadius: HANDLE_RADIUS,
+						background: 'var(--color-selected, #4f46e5)',
+						border: '2px solid white',
+						boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+						cursor: 'grab',
+						pointerEvents: 'all',
+						touchAction: 'none',
+					}}
+				/>
+			))}
+		</>
+	)
+}

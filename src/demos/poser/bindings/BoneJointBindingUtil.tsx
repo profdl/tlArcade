@@ -1,4 +1,5 @@
 import { BindingUtil, type BindingOnShapeChangeOptions, type TLShapePartial } from 'tldraw'
+import { isSuppressed, withSuppressed } from '../pose/bindingSuppression'
 import { boneTailLocal, type BoneShape } from '../shapes/boneShape'
 import { boneJointBindingProps, type BoneJointBinding } from './boneJointBinding'
 
@@ -19,15 +20,13 @@ import { boneJointBindingProps, type BoneJointBinding } from './boneJointBinding
  *   bone swings around its joint like a real limb, and its own children follow.
  *
  * The tricky part is telling "the user moved it" from "I just moved it" — our
- * own reposition writes re-enter these handlers. We guard with an in-flight set
- * of shape ids we're currently repositioning, so self-writes are ignored.
+ * own reposition writes (and the IK solver's) re-enter these handlers. We guard
+ * with a shared in-flight set (pose/bindingSuppression), so both the binding's
+ * self-writes and the IK solver's rotation writes are ignored here.
  */
 export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 	static override type = 'bone-joint' as const
 	static override props = boneJointBindingProps
-
-	/** Shape ids we're mid-reposition on — changes to these are ours, not the user's. */
-	private repositioning = new Set<string>()
 
 	override getDefaultProps() {
 		return {}
@@ -43,8 +42,8 @@ export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 	}
 
 	override onAfterChangeToShape({ binding, shapeAfter }: BindingOnShapeChangeOptions<BoneJointBinding>) {
-		// Ignore the echo from our own pin/pose writes.
-		if (this.repositioning.has(binding.toId)) return
+		// Ignore the echo from our own pin/pose writes and the IK solver's writes.
+		if (isSuppressed(binding.toId)) return
 
 		const parent = this.editor.getShape(binding.fromId) as BoneShape | undefined
 		const child = shapeAfter as BoneShape
@@ -83,8 +82,7 @@ export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 		const sameRot = Math.abs(normalizeAngle(child.rotation - rotation)) < 0.0001
 		if (samePos && sameRot) return // already there — don't thrash / echo
 
-		this.repositioning.add(child.id)
-		try {
+		withSuppressed([child.id], () => {
 			this.editor.updateShape({
 				id: child.id,
 				type: 'poser-bone',
@@ -92,9 +90,7 @@ export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 				y: targetXY.y,
 				rotation,
 			} as TLShapePartial)
-		} finally {
-			this.repositioning.delete(child.id)
-		}
+		})
 	}
 
 	/** A bone's tail (distal joint) in page space. */

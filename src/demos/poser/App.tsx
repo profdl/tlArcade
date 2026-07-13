@@ -1,13 +1,16 @@
 import { useCallback, useRef } from 'react'
-import { Tldraw, type Editor } from 'tldraw'
+import { Tldraw, type Editor, type TLComponents } from 'tldraw'
 import 'tldraw/tldraw.css'
 import './App.css'
 import { BoneJointBindingUtil } from './bindings/BoneJointBindingUtil'
+import { IkHandlesOverlay } from './pose/IkHandlesOverlay'
 import { buildFigure } from './rig/buildFigure'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
 const shapeUtils = [BoneShapeUtil]
 const bindingUtils = [BoneJointBindingUtil]
+// Draggable IK handles at the hands/feet, rendered above the canvas.
+const components: TLComponents = { InFrontOfTheCanvas: IkHandlesOverlay }
 
 function addFigure(editor: Editor) {
 	const center = editor.getViewportPageBounds().center
@@ -36,10 +39,14 @@ export default function App() {
 				persistenceKey="poser"
 				shapeUtils={shapeUtils}
 				bindingUtils={bindingUtils}
+				components={components}
 				onMount={handleMount}
 			/>
 			<div className="poser-toolbar">
-				<p className="poser-hint">Drag a bone to pose the figure — child limbs follow their parent joint.</p>
+				<p className="poser-hint">
+					Drag a blue handle at a hand or foot to pose that limb (IK); drag a bone to swing it (FK); drag the pelvis to
+					move the whole figure.
+				</p>
 				<button
 					className="poser-btn"
 					onClick={() => {
