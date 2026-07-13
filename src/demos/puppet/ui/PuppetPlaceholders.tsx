@@ -11,9 +11,8 @@ import { getPuppetCenter, unassignedParts } from '../rig/layout'
  * Rendered in tldraw's `InFrontOfTheCanvas` slot, a plain screen-space overlay
  * (NOT camera-transformed), so each slot's page rect is converted to viewport
  * coordinates and the whole thing recomputes on pan/zoom and on shape edits (a
- * role becoming assigned/unassigned). Ellipse parts get a rounded (pill)
- * outline, rectangles a lightly-rounded box — close enough to read as the slot
- * without dragging in real geometry.
+ * role becoming assigned/unassigned). Each slot is a simple dashed rectangle
+ * with the role name labeled inside it.
  */
 export function PuppetPlaceholders() {
 	const editor = useEditor()
@@ -34,7 +33,6 @@ export function PuppetPlaceholders() {
 					top: topLeft.y,
 					width: part.w * z,
 					height: part.h * z,
-					rounded: part.geo === 'ellipse',
 				}
 			})
 		},
@@ -55,15 +53,24 @@ export function PuppetPlaceholders() {
 						top: s.top,
 						width: s.width,
 						height: s.height,
-						// Ellipse slots read as a pill; rects get a small radius.
-						borderRadius: s.rounded ? '50%' : Math.min(8, s.width / 4, s.height / 4),
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						textAlign: 'center',
+						overflow: 'hidden',
+						color: 'var(--tl-color-text-3, #9ca3af)',
+						fontSize: Math.max(9, Math.min(14, s.height / 3)),
+						fontFamily: 'var(--tl-font-draw, sans-serif)',
 						border: '1.5px dashed var(--tl-color-text-3, #9ca3af)',
+						borderRadius: 4,
 						opacity: 0.35,
 						boxSizing: 'border-box',
 						// Purely decorative — never intercept canvas interaction.
 						pointerEvents: 'none',
 					}}
-				/>
+				>
+					{s.role}
+				</div>
 			))}
 		</>
 	)
