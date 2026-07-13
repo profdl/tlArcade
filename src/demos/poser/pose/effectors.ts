@@ -1,5 +1,5 @@
 import type { Editor, TLShapeId } from 'tldraw'
-import type { BoneShape } from '../shapes/boneShape'
+import { allFigureIds, bonesByName } from '../rig/buildFigure'
 
 /**
  * A two-bone IK chain: root joint → middle joint → tip. For an arm that's
@@ -11,7 +11,9 @@ export interface IkChain {
 	rootBoneId: TLShapeId
 	/** Bone 2 (forearm / shin) — its tail is the tip/effector (wrist / ankle). */
 	effectorBoneId: TLShapeId
-	/** Label for the handle, e.g. 'wrist-l'. */
+	/** The figure this chain belongs to (its pelvis/root shape id). */
+	figureId: TLShapeId
+	/** Label for the handle, e.g. 'wrist-l'. Unique per figure, not per page. */
 	label: string
 }
 
@@ -25,29 +27,21 @@ const CHAIN_SPECS: { root: string; effector: string; label: string }[] = [
 ]
 
 /**
- * Find the IK chains for every figure on the page. A "figure" is a connected set
- * of bones; we key purely off bone `name`s (unique per figure in the current
- * single-figure rig — see the note below for multi-figure).
- *
- * NOTE: with more than one figure on the page, bone names repeat, so this returns
- * chains built from the *first* bone of each name. Multi-figure support would tag
- * each bone with a `meta.figureId` at build time and group by it; single-figure
- * is all the current demo spawns by default.
+ * Find the IK chains for every figure on the page. A "figure" is the set of bones
+ * sharing a `meta.figureId` (stamped by buildFigure). We resolve the four limb
+ * chains per figure and tag each with its `figureId`, so N figures yield up to 4·N
+ * chains — bone names repeat across figures, but the figureId keeps them apart.
  */
 export function getIkChains(editor: Editor): IkChain[] {
-	const byName = new Map<string, TLShapeId>()
-	for (const shape of editor.getCurrentPageShapes()) {
-		if (shape.type !== 'poser-bone') continue
-		const name = (shape as BoneShape).props.name
-		if (!byName.has(name)) byName.set(name, shape.id)
-	}
-
 	const chains: IkChain[] = []
-	for (const spec of CHAIN_SPECS) {
-		const rootBoneId = byName.get(spec.root)
-		const effectorBoneId = byName.get(spec.effector)
-		if (rootBoneId && effectorBoneId) {
-			chains.push({ rootBoneId, effectorBoneId, label: spec.label })
+	for (const figureId of allFigureIds(editor)) {
+		const byName = bonesByName(editor, figureId)
+		for (const spec of CHAIN_SPECS) {
+			const rootBoneId = byName.get(spec.root)
+			const effectorBoneId = byName.get(spec.effector)
+			if (rootBoneId && effectorBoneId) {
+				chains.push({ rootBoneId, effectorBoneId, figureId, label: spec.label })
+			}
 		}
 	}
 	return chains

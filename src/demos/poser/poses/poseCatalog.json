@@ -1,5 +1,45 @@
 [
   {
+    "name": "Kneeling down",
+    "angles": {
+      "spine": -90,
+      "neck": -92,
+      "head": -92,
+      "upper-arm-l": 100,
+      "forearm-l": 95,
+      "upper-arm-r": 80,
+      "forearm-r": 85,
+      "thigh-l": 90,
+      "shin-l": 180,
+      "thigh-r": 90,
+      "shin-r": 0
+    },
+    "pelvis": {
+      "drop": 88,
+      "lean": -90
+    }
+  },
+  {
+    "name": "Sitting on the ground",
+    "angles": {
+      "spine": -88,
+      "neck": -90,
+      "head": -90,
+      "upper-arm-l": 95,
+      "forearm-l": 90,
+      "upper-arm-r": 85,
+      "forearm-r": 90,
+      "thigh-l": 10,
+      "shin-l": -30,
+      "thigh-r": 170,
+      "shin-r": 210
+    },
+    "pelvis": {
+      "drop": 70,
+      "lean": -88
+    }
+  },
+  {
     "name": "The person swings a golf club",
     "angles": {
       "spine": -107.7,
@@ -13,6 +53,10 @@
       "shin-l": 77.2,
       "thigh-r": 99.6,
       "shin-r": 85.3
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -107.7
     }
   },
   {
@@ -29,6 +73,10 @@
       "shin-l": 88.9,
       "thigh-r": 82.4,
       "shin-r": 94.2
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -90.4
     }
   },
   {
@@ -45,6 +93,10 @@
       "shin-l": 100.4,
       "thigh-r": 27.9,
       "shin-r": 119.4
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -72
     }
   },
   {
@@ -61,6 +113,10 @@
       "shin-l": 87,
       "thigh-r": 76.6,
       "shin-r": 86.7
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -94.6
     }
   },
   {
@@ -77,6 +133,10 @@
       "shin-l": 76.4,
       "thigh-r": 97.2,
       "shin-r": 87.2
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -86
     }
   },
   {
@@ -93,6 +153,10 @@
       "shin-l": 88.8,
       "thigh-r": 80.4,
       "shin-r": 88.8
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -90.2
     }
   },
   {
@@ -109,6 +173,10 @@
       "shin-l": 73.8,
       "thigh-r": -13.7,
       "shin-r": 100.4
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -78.4
     }
   },
   {
@@ -125,6 +193,10 @@
       "shin-l": 81.3,
       "thigh-r": 85.3,
       "shin-r": 86.5
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -92.1
     }
   },
   {
@@ -141,6 +213,10 @@
       "shin-l": 89.7,
       "thigh-r": 78,
       "shin-r": 86.6
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -88.9
     }
   },
   {
@@ -157,6 +233,10 @@
       "shin-l": 91.6,
       "thigh-r": 17.1,
       "shin-r": 101
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -88
     }
   },
   {
@@ -173,6 +253,10 @@
       "shin-l": 88.2,
       "thigh-r": 81.1,
       "shin-r": 90.8
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -87.6
     }
   },
   {
@@ -189,6 +273,10 @@
       "shin-l": 83.4,
       "thigh-r": 79.6,
       "shin-r": 86.1
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -90.7
     }
   },
   {
@@ -205,6 +293,10 @@
       "shin-l": 76.1,
       "thigh-r": -30.4,
       "shin-r": 65.3
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -93.7
     }
   },
   {
@@ -221,6 +313,10 @@
       "shin-l": 126.1,
       "thigh-r": 84,
       "shin-r": 105.1
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -94.9
     }
   },
   {
@@ -237,6 +333,10 @@
       "shin-l": 86.6,
       "thigh-r": 66.9,
       "shin-r": 81
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -85.8
     }
   },
   {
@@ -253,6 +353,10 @@
       "shin-l": 80.7,
       "thigh-r": -76.1,
       "shin-r": 105.3
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -90.6
     }
   },
   {
@@ -269,6 +373,10 @@
       "shin-l": 78.4,
       "thigh-r": 95.3,
       "shin-r": 105.1
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -98.7
     }
   },
   {
@@ -285,6 +393,10 @@
       "shin-l": 82,
       "thigh-r": 43.5,
       "shin-r": 91.2
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -89.4
     }
   },
   {
@@ -301,6 +413,10 @@
       "shin-l": 88.7,
       "thigh-r": 91.4,
       "shin-r": 117.9
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -95.8
     }
   },
   {
@@ -317,6 +433,10 @@
       "shin-l": 98.8,
       "thigh-r": 74.4,
       "shin-r": 81.7
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -90.7
     }
   },
   {
@@ -333,6 +453,10 @@
       "shin-l": 114.2,
       "thigh-r": 86.2,
       "shin-r": 108.4
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -105.6
     }
   },
   {
@@ -349,6 +473,10 @@
       "shin-l": 70.2,
       "thigh-r": 71.6,
       "shin-r": 97.8
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -89.2
     }
   },
   {
@@ -365,6 +493,10 @@
       "shin-l": 90.6,
       "thigh-r": 80.8,
       "shin-r": 93.8
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -74
     }
   },
   {
@@ -381,6 +513,10 @@
       "shin-l": 89.4,
       "thigh-r": 84.3,
       "shin-r": 93
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -94.5
     }
   },
   {
@@ -397,6 +533,10 @@
       "shin-l": 93.3,
       "thigh-r": 107.5,
       "shin-r": 83.1
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -92.1
     }
   },
   {
@@ -413,6 +553,10 @@
       "shin-l": 113.7,
       "thigh-r": 86.5,
       "shin-r": 114.9
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -84
     }
   },
   {
@@ -429,6 +573,10 @@
       "shin-l": 88.1,
       "thigh-r": 83.1,
       "shin-r": 89.7
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -83.2
     }
   },
   {
@@ -445,6 +593,10 @@
       "shin-l": 92.2,
       "thigh-r": 77.1,
       "shin-r": 80.5
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -94.3
     }
   }
 ]

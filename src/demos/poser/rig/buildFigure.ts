@@ -89,19 +89,29 @@ const FIGURE: BoneSpec[] = [
 
 /**
  * Builds one humanoid figure centered near `origin` (page coords) and returns
- * the root bone's id. Bones are created top-down so a parent exists before its
- * children pin to it; each child's initial (x, y) is computed from its parent's
- * tail so the figure starts already assembled, then the binding keeps it that
- * way as you pose.
+ * the root bone's id (which doubles as the figure's stable `figureId`). Bones are
+ * created top-down so a parent exists before its children pin to it; each child's
+ * initial (x, y) is computed from its parent's tail so the figure starts already
+ * assembled, then the binding keeps it that way as you pose.
+ *
+ * Every bone is stamped with `meta.figureId` = the pelvis (root) shape id, so the
+ * whole figure has one shared identity. This is what lets multiple figures coexist
+ * on the page: pose application, IK-chain discovery, and the per-figure toolbar all
+ * group/filter bones by `meta.figureId` instead of by bone name (names repeat across
+ * figures). See figureId() in this module for reading it back.
  */
 export function buildFigure(editor: Editor, origin: { x: number; y: number }): TLShapeId {
 	const ids = new Map<string, TLShapeId>()
 	// Where each bone's tail ends up in page space — children read their parent's tail from here.
 	const tails = new Map<string, { x: number; y: number }>()
 
+	// Mint the pelvis id up front so it can serve as the shared figureId for every
+	// bone (including the pelvis itself). The FIGURE template lists pelvis first.
+	const figureId = createShapeId()
+
 	editor.run(() => {
 		for (const spec of FIGURE) {
-			const id = createShapeId()
+			const id = spec.name === 'pelvis' ? figureId : createShapeId()
 			ids.set(spec.name, id)
 
 			const rotation = spec.angle * DEG
@@ -115,6 +125,7 @@ export function buildFigure(editor: Editor, origin: { x: number; y: number }): T
 				x: head.x,
 				y: head.y,
 				rotation,
+				meta: { figureId },
 				props: {
 					length: spec.length,
 					size: spec.size,
@@ -143,5 +154,42 @@ export function buildFigure(editor: Editor, origin: { x: number; y: number }): T
 		}
 	})
 
-	return ids.get('pelvis')!
+	return figureId
+}
+
+/**
+ * The figure a bone belongs to, or `undefined` if the shape isn't a rigged bone.
+ * Reads `meta.figureId` (stamped by buildFigure). This is the single source of
+ * figure identity used by pose application, IK discovery, and the toolbar.
+ */
+export function figureId(editor: Editor, shapeId: TLShapeId): TLShapeId | undefined {
+	const shape = editor.getShape(shapeId)
+	if (!shape || shape.type !== 'poser-bone') return undefined
+	const id = shape.meta?.figureId
+	return typeof id === 'string' ? (id as TLShapeId) : undefined
+}
+
+/** All `poser-bone` shape ids belonging to `figure`, keyed by their bone `name`. */
+export function bonesByName(editor: Editor, figure: TLShapeId): Map<string, TLShapeId> {
+	const byName = new Map<string, TLShapeId>()
+	for (const shape of editor.getCurrentPageShapes()) {
+		if (shape.type !== 'poser-bone') continue
+		if (shape.meta?.figureId !== figure) continue
+		byName.set((shape as BoneShape).props.name, shape.id)
+	}
+	return byName
+}
+
+/** Every distinct figureId currently on the page, in a stable page order. */
+export function allFigureIds(editor: Editor): TLShapeId[] {
+	const seen = new Set<TLShapeId>()
+	const out: TLShapeId[] = []
+	for (const shape of editor.getCurrentPageShapes()) {
+		if (shape.type !== 'poser-bone') continue
+		const id = shape.meta?.figureId
+		if (typeof id !== 'string' || seen.has(id as TLShapeId)) continue
+		seen.add(id as TLShapeId)
+		out.push(id as TLShapeId)
+	}
+	return out
 }

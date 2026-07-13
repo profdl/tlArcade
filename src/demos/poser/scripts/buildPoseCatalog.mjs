@@ -79,6 +79,30 @@ function poseFromFrame(frame) {
 	return angles
 }
 
+// Data→page scale. In HumanML3D units the torso (pelvis→neck) is ~0.51; the rig's
+// spine bone is 100px, so 1 data-unit ≈ 100/0.51 ≈ 196 px. A standing pelvis sits at
+// data-Y ≈ 0.95; grounded poses drop toward ~0.2. We convert that height loss into a
+// downward page translation (page-y grows downward, so a drop is +px).
+const DATA_TO_PX = 196
+const STANDING_PELVIS_Y = 0.95
+
+// The pelvis (root) transform for a frame: how far to lower the figure vs. standing,
+// and the pelvis's own page-space lean (torso tilt). Lowering the pelvis is what lets
+// sitting/kneeling/crouching read — the data encodes them as a big root-height drop,
+// not as articulated hips.
+function pelvisFromFrame(frame) {
+	const J = jointsFromFrame(frame)
+	const pelvisY = J[IDX.pelvis].y
+	const drop = +((STANDING_PELVIS_Y - pelvisY) * DATA_TO_PX).toFixed(0)
+	// Pelvis lean = the spine's base direction (pelvis→neck) as a page angle; a bowing
+	// or reclining torso tilts this off -90°. Reuse the spine mapping so lean and the
+	// spine bone stay consistent.
+	const lean = +angleDeg(J, 'pelvis', 'neck').toFixed(1)
+	// Clamp drop to non-negative — a pose can't lift the figure above its standing
+	// baseline (jumping's mid-frame height isn't meaningful for a static pose).
+	return { drop: Math.max(0, drop), lean }
+}
+
 // HumanML3D captions carry POS-tagged tokens after a `#`; keep the plain sentence.
 function cleanCaption(c) {
 	const plain = String(c).split('#')[0].trim().replace(/\.$/, '')
@@ -135,17 +159,17 @@ async function main() {
 			name: cleanCaption(r.caption),
 			caption: String(r.caption).split('#')[0].toLowerCase(),
 			angles: poseFromFrame(frame),
+			pelvis: pelvisFromFrame(frame),
 		}
 	})
 
-	// Priority-sort (expressive first, plain last), then greedily keep poses that are
-	// each at least MIN_DISTINCT away from everything already chosen.
-	candidates.sort(
-		(a, b) =>
-			(EXPRESSIVE.test(b.caption) ? 2 : 0) -
-			(PLAIN.test(b.caption) ? 1 : 0) -
-			((EXPRESSIVE.test(a.caption) ? 2 : 0) - (PLAIN.test(a.caption) ? 1 : 0)),
-	)
+	// Priority score: expressive actions rank up, plain walking ranks down, and
+	// genuinely grounded poses (meaningful pelvis drop) get an extra boost so the
+	// catalog actually includes sitting / kneeling / crouching now that the rig can
+	// render them.
+	const score = (c) =>
+		(EXPRESSIVE.test(c.caption) ? 2 : 0) - (PLAIN.test(c.caption) ? 1 : 0) + (c.pelvis.drop > 60 ? 2 : 0)
+	candidates.sort((a, b) => score(b) - score(a))
 
 	const chosen = []
 	const seenNames = new Set()
@@ -155,11 +179,12 @@ async function main() {
 		if (seenNames.has(key)) continue
 		if (chosen.every((x) => poseDistance(x.angles, c.angles) > MIN_DISTINCT)) {
 			seenNames.add(key)
-			chosen.push({ name: c.name, angles: c.angles })
+			chosen.push({ name: c.name, angles: c.angles, pelvis: c.pelvis })
 		}
 	}
 
-	process.stderr.write(`kept ${chosen.length} distinct poses\n`)
+	const grounded = chosen.filter((c) => c.pelvis.drop > 60).length
+	process.stderr.write(`kept ${chosen.length} distinct poses (${grounded} grounded)\n`)
 	process.stdout.write(JSON.stringify(chosen, null, 2) + '\n')
 }
 

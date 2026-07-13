@@ -4,14 +4,24 @@ import 'tldraw/tldraw.css'
 import './App.css'
 import { BoneJointBindingUtil } from './bindings/BoneJointBindingUtil'
 import { IkHandlesOverlay } from './pose/IkHandlesOverlay'
-import { applyPose, POSES } from './poses/applyPose'
+import { PoseToolbar } from './pose/PoseToolbar'
 import { buildFigure } from './rig/buildFigure'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
 const shapeUtils = [BoneShapeUtil]
 const bindingUtils = [BoneJointBindingUtil]
-// Draggable IK handles at the hands/feet, rendered above the canvas.
-const components: TLComponents = { InFrontOfTheCanvas: IkHandlesOverlay }
+
+// Both canvas overlays share the one InFrontOfTheCanvas slot: the IK hand/foot
+// handles, and the per-figure pose picker that floats above a selected figure.
+function InFrontOfTheCanvas() {
+	return (
+		<>
+			<IkHandlesOverlay />
+			<PoseToolbar />
+		</>
+	)
+}
+const components: TLComponents = { InFrontOfTheCanvas }
 
 function addFigure(editor: Editor) {
 	const center = editor.getViewportPageBounds().center
@@ -44,24 +54,6 @@ export default function App() {
 				onMount={handleMount}
 			/>
 			<div className="poser-toolbar">
-				<select
-					className="poser-select"
-					defaultValue=""
-					onChange={(e) => {
-						const pose = POSES[Number(e.target.value)]
-						if (pose && editorRef.current) applyPose(editorRef.current, pose)
-						e.target.value = '' // reset so re-picking the same pose fires again
-					}}
-				>
-					<option value="" disabled>
-						Choose a pose…
-					</option>
-					{POSES.map((pose, i) => (
-						<option key={i} value={i}>
-							{pose.name}
-						</option>
-					))}
-				</select>
 				<button
 					className="poser-btn"
 					onClick={() => {

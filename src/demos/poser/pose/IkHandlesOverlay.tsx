@@ -64,7 +64,7 @@ export function IkHandlesOverlay() {
 		<>
 			{handles.map((h) => (
 				<div
-					key={h.label}
+					key={`${h.figureId}:${h.label}`}
 					onPointerDown={startDrag(h.rootBoneId, h.effectorBoneId)}
 					title={h.label}
 					style={{

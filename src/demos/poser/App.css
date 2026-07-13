@@ -54,3 +54,31 @@
 .poser-select:hover {
 	background: var(--tl-color-muted-2, #f0f0f0);
 }
+
+/* Context toolbar contents: pose picker + move handle, side by side. */
+.poser-ctx {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px;
+}
+
+.poser-move {
+	padding: 8px 10px;
+	border-radius: 8px;
+	border: 1px solid var(--tl-color-panel-contrast, #d3d3d3);
+	background: var(--tl-color-panel, white);
+	cursor: grab;
+	font: inherit;
+	white-space: nowrap;
+	touch-action: none;
+	user-select: none;
+}
+
+.poser-move:hover {
+	background: var(--tl-color-muted-2, #f0f0f0);
+}
+
+.poser-move:active {
+	cursor: grabbing;
+}
