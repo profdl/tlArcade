@@ -1,0 +1,108 @@
+import { useCallback } from 'react'
+import { stopEventPropagation, useEditor, useValue } from 'tldraw'
+import { JOINTS, rigModeJoints, setJoint, type JointKey } from '../rig/jointMarkers'
+
+const MARKER_RADIUS = 8 // px, screen-space
+
+/**
+ * The Mixamo-style rig-mode overlay: a labeled, draggable marker at each joint, plus
+ * a live preview skeleton drawn between connected joints. The user drags each marker
+ * onto their drawing; "Build rig" (in the toolbar) then reads these positions and
+ * builds a fitted figure (buildFigureFromJoints).
+ *
+ * Screen-space overlay via InFrontOfTheCanvas, same pattern as IkHandlesOverlay:
+ * `useValue` reads the joint atom + camera so markers track pan/zoom, the root is
+ * pointer-events:none, and only the markers capture input.
+ */
+export function RigModeOverlay() {
+	const editor = useEditor()
+
+	// Screen positions of every joint (and the parent links for the preview lines).
+	// Reactive on both the joint atom and the camera.
+	const view = useValue(
+		'rig-mode-markers',
+		() => {
+			const joints = rigModeJoints.get()
+			if (!joints) return null
+			const screen = {} as Record<JointKey, { x: number; y: number }>
+			for (const j of JOINTS) {
+				const s = editor.pageToScreen(joints[j.key])
+				screen[j.key] = { x: s.x, y: s.y }
+			}
+			const links = JOINTS.filter((j) => j.parent).map((j) => ({
+				key: j.key,
+				a: screen[j.key],
+				b: screen[j.parent as JointKey],
+			}))
+			return { screen, links }
+		},
+		[editor]
+	)
+
+	const startDrag = useCallback(
+		(key: JointKey) => (e: React.PointerEvent) => {
+			stopEventPropagation(e)
+			;(e.target as Element).setPointerCapture(e.pointerId)
+			const onMove = (ev: PointerEvent) => {
+				const p = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
+				setJoint(key, p.x, p.y)
+			}
+			const onUp = () => {
+				window.removeEventListener('pointermove', onMove)
+				window.removeEventListener('pointerup', onUp)
+			}
+			window.addEventListener('pointermove', onMove)
+			window.addEventListener('pointerup', onUp)
+		},
+		[editor]
+	)
+
+	if (!view) return null
+
+	return (
+		<>
+			{/* preview skeleton: a line per bone, behind the markers, non-interactive */}
+			<svg
+				style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+			>
+				{view.links.map((l) => (
+					<line
+						key={l.key}
+						x1={l.a.x}
+						y1={l.a.y}
+						x2={l.b.x}
+						y2={l.b.y}
+						stroke="var(--color-selected, #4f46e5)"
+						strokeWidth={2}
+						strokeLinecap="round"
+						opacity={0.6}
+					/>
+				))}
+			</svg>
+			{JOINTS.map((j) => {
+				const p = view.screen[j.key]
+				return (
+					<div
+						key={j.key}
+						onPointerDown={startDrag(j.key)}
+						title={j.label}
+						style={{
+							position: 'absolute',
+							left: p.x - MARKER_RADIUS,
+							top: p.y - MARKER_RADIUS,
+							width: MARKER_RADIUS * 2,
+							height: MARKER_RADIUS * 2,
+							borderRadius: MARKER_RADIUS,
+							background: 'white',
+							border: '2px solid var(--color-selected, #4f46e5)',
+							boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
+							cursor: 'grab',
+							pointerEvents: 'all',
+							touchAction: 'none',
+						}}
+					/>
+				)
+			})}
+		</>
+	)
+}

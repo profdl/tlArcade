@@ -6,20 +6,24 @@ import { BoneAttachmentBindingUtil } from './bindings/BoneAttachmentBindingUtil'
 import { BoneJointBindingUtil } from './bindings/BoneJointBindingUtil'
 import { IkHandlesOverlay } from './pose/IkHandlesOverlay'
 import { PoseToolbar } from './pose/PoseToolbar'
+import { RigModeOverlay } from './pose/RigModeOverlay'
 import { rigVisible, toggleRig } from './pose/rigVisibility'
 import { buildFigure } from './rig/buildFigure'
+import { buildFigureFromJoints } from './rig/buildFigureFromJoints'
+import { enterRigMode, exitRigMode, rigModeJoints } from './rig/jointMarkers'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
 const shapeUtils = [BoneShapeUtil]
 const bindingUtils = [BoneJointBindingUtil, BoneAttachmentBindingUtil]
 
-// Both canvas overlays share the one InFrontOfTheCanvas slot: the IK hand/foot
-// handles, and the per-figure pose picker that floats above a selected figure.
+// All canvas overlays share the one InFrontOfTheCanvas slot: the IK hand/foot
+// handles, the per-figure pose picker, and (when active) the rig-mode joint markers.
 function InFrontOfTheCanvas() {
 	return (
 		<>
 			<IkHandlesOverlay />
 			<PoseToolbar />
+			<RigModeOverlay />
 		</>
 	)
 }
@@ -46,6 +50,51 @@ function ShowRigButton() {
 	)
 }
 
+/**
+ * Rig-mode controls: "Rig a drawing" seeds a joint-marker layout the user drags onto
+ * their art; then "Build rig" constructs a fitted figure from those markers (so the
+ * rig matches the drawing's proportions), or "Cancel" bails. Reads the rig-mode atom
+ * so it swaps between the two states reactively.
+ */
+function RigModeControls({ editor }: { editor: () => Editor | null }) {
+	const inRigMode = useValue('inRigMode', () => rigModeJoints.get() != null, [])
+
+	if (!inRigMode) {
+		return (
+			<button
+				className="poser-btn"
+				title="Place joints on your drawing, then build a rig that fits it"
+				onClick={() => {
+					const e = editor()
+					if (e) enterRigMode(e.getViewportPageBounds().center)
+				}}
+			>
+				Rig a drawing
+			</button>
+		)
+	}
+	return (
+		<>
+			<button
+				className="poser-btn"
+				onClick={() => {
+					const e = editor()
+					const joints = rigModeJoints.get()
+					if (e && joints) {
+						e.run(() => buildFigureFromJoints(e, joints))
+						exitRigMode()
+					}
+				}}
+			>
+				Build rig
+			</button>
+			<button className="poser-btn" onClick={() => exitRigMode()}>
+				Cancel
+			</button>
+		</>
+	)
+}
+
 export default function App() {
 	const editorRef = useRef<Editor | null>(null)
 
@@ -58,6 +107,8 @@ export default function App() {
 		}
 		if (import.meta.env.DEV) {
 			;(window as unknown as { __editor: Editor }).__editor = editor
+			// Test hooks for the headless-browser verification of rig mode.
+			;(window as unknown as { __rig: unknown }).__rig = { rigModeJoints, enterRigMode, exitRigMode }
 		}
 	}, [])
 
@@ -72,6 +123,7 @@ export default function App() {
 			/>
 			<div className="poser-toolbar">
 				<ShowRigButton />
+				<RigModeControls editor={() => editorRef.current} />
 				<button
 					className="poser-btn"
 					onClick={() => {
