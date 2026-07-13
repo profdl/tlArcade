@@ -1,4 +1,11 @@
-import { createBindingId, createShapeId, type Editor, type TLShapeId } from 'tldraw'
+import {
+	createBindingId,
+	createShapeId,
+	type Editor,
+	type TLDefaultColorStyle,
+	type TLDefaultSizeStyle,
+	type TLShapeId,
+} from 'tldraw'
 import type { BoneShape } from '../shapes/boneShape'
 
 const DEG = Math.PI / 180
@@ -7,8 +14,10 @@ const DEG = Math.PI / 180
 interface BoneSpec {
 	name: string
 	length: number
-	thickness: number
-	color: string
+	/** Native size style → rendered bone diameter (see BONE_THICKNESS in boneShape.ts). */
+	size: TLDefaultSizeStyle
+	/** Native theme color style. */
+	color: TLDefaultColorStyle
 	/** Initial angle in degrees, measured page-space (0 = pointing right, 90 = down). */
 	angle: number
 	parent?: string
@@ -31,10 +40,14 @@ interface BoneSpec {
 // Angles are page-space degrees (y-down, so 90° points down, 0° points right).
 // Each child pins its head to its parent's tail via a bone-joint binding, so
 // posing propagates down the chain.
-const SPINE = '#556071'
-const LIMB = '#6b7688'
-const HEAD_C = '#7c88a0'
-const CONNECT = '#5e6878' // clavicle / hip spreaders — read as connective structure
+//
+// Colors are native theme palette names (they adapt to light/dark and share the
+// style panel). `size` picks the rendered diameter from BONE_THICKNESS: the trunk
+// and head are heavy (l/xl), limbs medium (m), connective spreaders slim (s).
+const SPINE: TLDefaultColorStyle = 'grey'
+const LIMB: TLDefaultColorStyle = 'blue'
+const HEAD_C: TLDefaultColorStyle = 'light-blue'
+const CONNECT: TLDefaultColorStyle = 'grey' // clavicle / hip spreaders — read as connective structure
 
 const SHOULDER_HALF_WIDTH = 46 // clavicle length: neck → each shoulder
 const HIP_HALF_WIDTH = 30 // hip length: pelvis → each hip socket
@@ -46,32 +59,32 @@ const FIGURE: BoneSpec[] = [
 	// pelvis itself all pivot around the same low point, the way COCO's hip
 	// keypoints (8/11) sit at the bottom of the torso. `spine` rises to the neck
 	// (COCO 1); `neck` is a short segment to the head base; `head` is the skull.
-	{ name: 'pelvis', length: 12, thickness: 24, color: SPINE, angle: -90 },
-	{ name: 'spine', length: 100, thickness: 24, color: SPINE, angle: -90, parent: 'pelvis' },
-	{ name: 'neck', length: 22, thickness: 15, color: SPINE, angle: -90, parent: 'spine' },
-	{ name: 'head', length: 46, thickness: 40, color: HEAD_C, angle: -90, parent: 'neck' },
+	{ name: 'pelvis', length: 12, size: 'l', color: SPINE, angle: -90 },
+	{ name: 'spine', length: 100, size: 'l', color: SPINE, angle: -90, parent: 'pelvis' },
+	{ name: 'neck', length: 22, size: 'm', color: SPINE, angle: -90, parent: 'spine' },
+	{ name: 'head', length: 46, size: 'xl', color: HEAD_C, angle: -90, parent: 'neck' },
 
 	// ── shoulders: clavicles spread left/right from the neck (COCO 2, 5) ─────────
 	// Tails = the shoulder keypoints. angle 180 = left, 0 = right.
-	{ name: 'clavicle-l', length: SHOULDER_HALF_WIDTH, thickness: 12, color: CONNECT, angle: 180, parent: 'neck' },
-	{ name: 'clavicle-r', length: SHOULDER_HALF_WIDTH, thickness: 12, color: CONNECT, angle: 0, parent: 'neck' },
+	{ name: 'clavicle-l', length: SHOULDER_HALF_WIDTH, size: 's', color: CONNECT, angle: 180, parent: 'neck' },
+	{ name: 'clavicle-r', length: SHOULDER_HALF_WIDTH, size: 's', color: CONNECT, angle: 0, parent: 'neck' },
 
 	// arms drop from each shoulder (upper arm → COCO 3/6 elbow → COCO 4/7 wrist)
-	{ name: 'upper-arm-l', length: 66, thickness: 15, color: LIMB, angle: 100, parent: 'clavicle-l' },
-	{ name: 'forearm-l', length: 60, thickness: 12, color: LIMB, angle: 95, parent: 'upper-arm-l' },
-	{ name: 'upper-arm-r', length: 66, thickness: 15, color: LIMB, angle: 80, parent: 'clavicle-r' },
-	{ name: 'forearm-r', length: 60, thickness: 12, color: LIMB, angle: 85, parent: 'upper-arm-r' },
+	{ name: 'upper-arm-l', length: 66, size: 'm', color: LIMB, angle: 100, parent: 'clavicle-l' },
+	{ name: 'forearm-l', length: 60, size: 'm', color: LIMB, angle: 95, parent: 'upper-arm-l' },
+	{ name: 'upper-arm-r', length: 66, size: 'm', color: LIMB, angle: 80, parent: 'clavicle-r' },
+	{ name: 'forearm-r', length: 60, size: 'm', color: LIMB, angle: 85, parent: 'upper-arm-r' },
 
 	// ── hips: spread left/right from the pelvis base (COCO 8, 11) ────────────────
 	// Parented to `pelvis` (the ROOT), so hips sit at the bottom of the trunk.
-	{ name: 'hip-l', length: HIP_HALF_WIDTH, thickness: 16, color: CONNECT, angle: 180, parent: 'pelvis' },
-	{ name: 'hip-r', length: HIP_HALF_WIDTH, thickness: 16, color: CONNECT, angle: 0, parent: 'pelvis' },
+	{ name: 'hip-l', length: HIP_HALF_WIDTH, size: 'm', color: CONNECT, angle: 180, parent: 'pelvis' },
+	{ name: 'hip-r', length: HIP_HALF_WIDTH, size: 'm', color: CONNECT, angle: 0, parent: 'pelvis' },
 
 	// legs drop from each hip (thigh → COCO 9/12 knee → COCO 10/13 ankle)
-	{ name: 'thigh-l', length: 88, thickness: 19, color: LIMB, angle: 92, parent: 'hip-l' },
-	{ name: 'shin-l', length: 82, thickness: 14, color: LIMB, angle: 90, parent: 'thigh-l' },
-	{ name: 'thigh-r', length: 88, thickness: 19, color: LIMB, angle: 88, parent: 'hip-r' },
-	{ name: 'shin-r', length: 82, thickness: 14, color: LIMB, angle: 90, parent: 'thigh-r' },
+	{ name: 'thigh-l', length: 88, size: 'm', color: LIMB, angle: 92, parent: 'hip-l' },
+	{ name: 'shin-l', length: 82, size: 'm', color: LIMB, angle: 90, parent: 'thigh-l' },
+	{ name: 'thigh-r', length: 88, size: 'm', color: LIMB, angle: 88, parent: 'hip-r' },
+	{ name: 'shin-r', length: 82, size: 'm', color: LIMB, angle: 90, parent: 'thigh-r' },
 ]
 
 /**
@@ -104,8 +117,10 @@ export function buildFigure(editor: Editor, origin: { x: number; y: number }): T
 				rotation,
 				props: {
 					length: spec.length,
-					thickness: spec.thickness,
+					size: spec.size,
 					color: spec.color,
+					dash: 'solid',
+					fill: 'solid',
 					name: spec.name,
 				},
 			})
