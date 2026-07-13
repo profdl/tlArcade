@@ -1,5 +1,6 @@
 import { atom, type Editor, type TLShapeId } from 'tldraw'
 import { applyFrame, type Pose } from '../poses/applyPose'
+import { setFigureFlag } from './figureSet'
 
 /**
  * Per-figure motion playback. Plays a catalog pose's `frames` sequence on a figure
@@ -47,6 +48,9 @@ export function toggleLoopMode(): void {
 	loopMode.set(!loopMode.get())
 }
 
+/** Fallback playback rate (frames/sec) for a clip whose catalog entry has no valid `fps`. */
+const DEFAULT_FPS = 20
+
 interface Playback {
 	raf: number
 	/** performance.now() timestamp when the current frame index started showing. */
@@ -56,10 +60,7 @@ interface Playback {
 const active = new Map<TLShapeId, Playback>()
 
 function markPlaying(figure: TLShapeId, playing: boolean): void {
-	const next = new Set(playingFigures.get())
-	if (playing) next.add(figure)
-	else next.delete(figure)
-	playingFigures.set(next)
+	setFigureFlag(playingFigures, figure, playing)
 }
 
 /** True if `figure` is currently animating. */
@@ -86,7 +87,7 @@ export function playPose(
 	// Restart cleanly if already playing.
 	stopPlaying(figure)
 
-	const fps = pose.fps && pose.fps > 0 ? pose.fps : 20
+	const fps = pose.fps && pose.fps > 0 ? pose.fps : DEFAULT_FPS
 	const frameDurationMs = 1000 / fps
 	let index = 0
 

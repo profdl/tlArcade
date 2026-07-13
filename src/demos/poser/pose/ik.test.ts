@@ -71,6 +71,15 @@ describe('solveTwoBone', () => {
 			expect(bendSignFromRest(s.rootAngle, s.effectorAngle)).toBe(sign)
 		}
 	})
+
+	it('bendSignFromRest returns a stable sign for a straight limb despite float noise', () => {
+		// A limb resting exactly straight has turn ≈ 0; a tiny negative from float error
+		// must NOT flip it to the mirror. Both the exact-zero and jittered cases resolve
+		// to the same default (+1) so the first grab doesn't pop the joint.
+		expect(bendSignFromRest(0, 0)).toBe(1)
+		expect(bendSignFromRest(0.5, 0.5 - 1e-9)).toBe(1) // turn = -1e-9, inside the dead-zone
+		expect(bendSignFromRest(0.5, 0.5 + 1e-9)).toBe(1)
+	})
 })
 
 describe('normalizeAngle', () => {

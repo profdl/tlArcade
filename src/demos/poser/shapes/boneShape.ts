@@ -57,7 +57,10 @@ declare module '@tldraw/tlschema' {
 }
 
 export const boneShapeProps: RecordProps<BoneShape> = {
-	length: T.nonZeroNumber,
+	// positiveNumber (> 0), not nonZeroNumber: a negative length would render the
+	// capsule / hit-rect backwards. Builders always emit length ≥ 1, so 0 is also
+	// never valid — this encodes the true geometric invariant.
+	length: T.positiveNumber,
 	// StyleProp instances — tldraw scans the util's props for these and auto-adds
 	// them to the style panel; no extra worker/schema wiring needed. Same set a
 	// geo shape carries.

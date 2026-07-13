@@ -1,4 +1,5 @@
 import { Rectangle2d, ShapeUtil, type Geometry2d } from 'tldraw'
+import { boneShapeMigrations } from '../migrations'
 import { BoneBody } from './BoneBody'
 import { boneShapeProps, boneThickness, type BoneShape } from './boneShape'
 
@@ -15,9 +16,17 @@ import { boneShapeProps, boneThickness, type BoneShape } from './boneShape'
 export class BoneShapeUtil extends ShapeUtil<BoneShape> {
 	static override type = 'poser-bone' as const
 	static override props = boneShapeProps
+	static override migrations = boneShapeMigrations
 
 	override getDefaultProps(): BoneShape['props'] {
 		return { length: 80, color: 'grey', size: 'm', dash: 'solid', fill: 'solid', name: 'bone' }
+	}
+
+	// A bone participates only in the rig's own bindings: bone-joint (bone↔bone) and
+	// bone-attachment (bone→artwork). Rejecting anything else documents the contract
+	// and keeps a stray binding type (e.g. an arrow) from ever fastening to a bone.
+	override canBind({ bindingType }: { bindingType: string }) {
+		return bindingType === 'bone-joint' || bindingType === 'bone-attachment'
 	}
 
 	// Bones are posed, not freely edited: no resize handles, no rotation handle

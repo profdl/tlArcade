@@ -1,4 +1,5 @@
 import { BindingUtil, type BindingOnShapeChangeOptions, type TLShapePartial } from 'tldraw'
+import { boneJointBindingMigrations } from '../migrations'
 import { normalizeAngle } from '../pose/ik'
 import { isSuppressed, withSuppressed } from '../pose/bindingSuppression'
 import { boneTailLocal, type BoneShape } from '../shapes/boneShape'
@@ -28,6 +29,7 @@ import { boneJointBindingProps, type BoneJointBinding } from './boneJointBinding
 export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 	static override type = 'bone-joint' as const
 	static override props = boneJointBindingProps
+	static override migrations = boneJointBindingMigrations
 
 	override getDefaultProps() {
 		return {}
@@ -54,6 +56,7 @@ export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 		// bone should now aim at; the joint (parent's tail) is the fixed pivot it must stay pinned to.
 		const jointPage = this.tailPage(parent)
 		const draggedTailPage = this.tailPage(child)
+		if (!jointPage || !draggedTailPage) return
 
 		// Angle from the joint toward where the user pulled the far end. atan2 measures from +x,
 		// and a bone's body runs along its local +x from head→tail, so this is exactly the
@@ -68,7 +71,9 @@ export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 		const parent = this.editor.getShape(binding.fromId) as BoneShape | undefined
 		const child = this.editor.getShape(binding.toId) as BoneShape | undefined
 		if (!parent || !child || parent.type !== 'poser-bone' || child.type !== 'poser-bone') return
-		this.applyPose(child, this.tailPage(parent), child.rotation)
+		const parentTail = this.tailPage(parent)
+		if (!parentTail) return
+		this.applyPose(child, parentTail, child.rotation)
 	}
 
 	/**
@@ -94,9 +99,11 @@ export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 		})
 	}
 
-	/** A bone's tail (distal joint) in page space. */
+	/** A bone's tail (distal joint) in page space, or null if its transform is unavailable. */
 	private tailPage(bone: BoneShape) {
-		return this.editor.getShapePageTransform(bone.id).applyToPoint(boneTailLocal(bone))
+		const transform = this.editor.getShapePageTransform(bone.id)
+		if (!transform) return null
+		return transform.applyToPoint(boneTailLocal(bone))
 	}
 }
 

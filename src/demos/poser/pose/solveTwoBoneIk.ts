@@ -35,7 +35,11 @@ export function solveTwoBoneIk(
 	if (!rootBone || !effectorBone || rootBone.type !== 'poser-bone' || effectorBone.type !== 'poser-bone') return
 
 	// Root joint (the fixed pivot) = the root bone's head = its origin in page space.
-	const rootJointPage = editor.getShapePageTransform(rootBoneId).applyToPoint({ x: 0, y: 0 })
+	// getShapePageTransform is Mat | undefined — a shape deleted or a page switched
+	// mid-drag (this runs on every pointermove) would otherwise throw here.
+	const rootTransform = editor.getShapePageTransform(rootBoneId)
+	if (!rootTransform) return
+	const rootJointPage = rootTransform.applyToPoint({ x: 0, y: 0 })
 
 	const l1 = rootBone.props.length
 	const l2 = effectorBone.props.length
@@ -67,5 +71,7 @@ export function solveTwoBoneIk(
 export function effectorTipPage(editor: Editor, effectorBoneId: TLShapeId): VecLike | null {
 	const bone = editor.getShape(effectorBoneId) as BoneShape | undefined
 	if (!bone || bone.type !== 'poser-bone') return null
-	return editor.getShapePageTransform(effectorBoneId).applyToPoint(boneTailLocal(bone))
+	const transform = editor.getShapePageTransform(effectorBoneId)
+	if (!transform) return null
+	return transform.applyToPoint(boneTailLocal(bone))
 }

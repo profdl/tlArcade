@@ -41,9 +41,12 @@ export type JointKey =
 	| 'knee-r'
 	| 'ankle-r'
 
-// The joint tree. Offsets mirror the current rig's default proportions (spine 100,
-// clavicle 46, upper-arm 66 + forearm 60, hip 30, thigh 88 + shin 82), so the
-// initial layout reads as a familiar standing skeleton before the user adjusts it.
+// The joint tree — the SEED layout for rig mode only (the user drags these markers
+// onto their drawing before a rig is built). Offsets are hand-authored to mirror the
+// default rig's proportions in buildFigure.ts's GEOMETRY table (spine 100, clavicle 46,
+// upper-arm 66 + forearm 60, hip 30, thigh 88 + shin 82), so the initial layout reads
+// as a familiar standing skeleton. They're a 2D-offset restatement of those 1D lengths,
+// not derived from them: if you retune the default rig proportions, nudge these to match.
 // (y grows downward.)
 export const JOINTS: JointSpec[] = [
 	{ key: 'pelvis', label: 'Pelvis', dx: 0, dy: 0 },

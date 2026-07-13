@@ -3,6 +3,11 @@ import { boneTailLocal, type BoneShape } from '../shapes/boneShape'
 import { bonesByName } from '../rig/buildFigure'
 import { cutStrokeAtJoints, distToSegment, type ResolvedBone } from './cutStrokeAtJoints'
 
+/** How much of the figure's bone-span diagonal counts as "near enough to attach". */
+const REACH_FRACTION = 0.5
+/** Floor for the attach radius (px) so a degenerate/tiny rig still attaches nearby art. */
+const MIN_REACH_PX = 24
+
 /**
  * "Apply rig": bind every free-drawn shape near a figure to the rig so the drawing
  * rides it and poses with it.
@@ -21,16 +26,21 @@ export function attachDrawing(editor: Editor, figure: TLShapeId): number {
 	if (boneIds.length === 0) return 0
 
 	// Pre-resolve each bone's page-space centerline (head→tail) + transform once.
-	const bones: ResolvedBone[] = boneIds.map((id) => {
-		const bone = editor.getShape(id) as BoneShape
+	// Skip any bone whose shape/transform can't be read (mid-deletion) rather than
+	// crashing on an undefined transform.
+	const bones: ResolvedBone[] = []
+	for (const id of boneIds) {
+		const bone = editor.getShape(id) as BoneShape | undefined
 		const t = editor.getShapePageTransform(id)
-		return {
+		if (!bone || !t) continue
+		bones.push({
 			id,
 			transform: t,
 			head: t.applyToPoint({ x: 0, y: 0 }),
 			tail: t.applyToPoint(boneTailLocal(bone)),
-		}
-	})
+		})
+	}
+	if (bones.length === 0) return 0
 
 	// A shape only "rides" this figure if it's actually near it. Without a gate, a
 	// loose shape anywhere on the page binds to whatever bone happens to be nearest
@@ -93,7 +103,9 @@ function figureReach(bones: ResolvedBone[]): number {
 		}
 	}
 	const diagonal = Math.hypot(maxX - minX, maxY - minY)
-	return diagonal * 0.5
+	// Floor so a degenerate rig (all bone endpoints ~coincident → diagonal ≈ 0) still
+	// has a usable attach radius instead of rejecting every shape as "too far".
+	return Math.max(diagonal * REACH_FRACTION, MIN_REACH_PX)
 }
 
 /**
@@ -122,7 +134,9 @@ function rigidAttach(editor: Editor, shapeId: TLShapeId, bones: ResolvedBone[], 
 
 	const shape = editor.getShape(shapeId)
 	if (!shape) return false
-	const shapePagePoint = editor.getShapePageTransform(shapeId).applyToPoint({ x: 0, y: 0 })
+	const shapeTransform = editor.getShapePageTransform(shapeId)
+	if (!shapeTransform) return false
+	const shapePagePoint = shapeTransform.applyToPoint({ x: 0, y: 0 })
 	const local = best.transform.clone().invert().applyToPoint(shapePagePoint)
 	const rot = shape.rotation - best.transform.rotation()
 

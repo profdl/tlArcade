@@ -1,4 +1,5 @@
 import { BindingUtil, type BindingOnShapeChangeOptions, type TLShapePartial } from 'tldraw'
+import { boneAttachmentBindingMigrations } from '../migrations'
 import { normalizeAngle } from '../pose/ik'
 import { boneAttachmentBindingProps, type BoneAttachmentBinding } from './boneAttachmentBinding'
 
@@ -17,6 +18,7 @@ import { boneAttachmentBindingProps, type BoneAttachmentBinding } from './boneAt
 export class BoneAttachmentBindingUtil extends BindingUtil<BoneAttachmentBinding> {
 	static override type = 'bone-attachment' as const
 	static override props = boneAttachmentBindingProps
+	static override migrations = boneAttachmentBindingMigrations
 
 	override getDefaultProps() {
 		return { dx: 0, dy: 0, rot: 0 }
@@ -77,6 +79,7 @@ export class BoneAttachmentBindingUtil extends BindingUtil<BoneAttachmentBinding
 
 		// Bone's page transform maps local (dx, dy) → the shape origin's page point.
 		const boneTransform = this.editor.getShapePageTransform(binding.fromId)
+		if (!boneTransform) return
 		const pagePoint = boneTransform.applyToPoint({ x: binding.props.dx, y: binding.props.dy })
 		// Page rotation = bone's page rotation + the stored relative rotation.
 		const pageRotation = boneTransform.rotation() + binding.props.rot

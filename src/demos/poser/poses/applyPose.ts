@@ -1,6 +1,7 @@
 import type { Editor, TLShapeId } from 'tldraw'
 import { withSuppressed } from '../pose/bindingSuppression'
 import { bonesByName } from '../rig/buildFigure'
+import { POSABLE_BONES } from '../rig/humanoidTemplate'
 import catalog from './poseCatalog.json'
 
 const DEG = Math.PI / 180
@@ -47,22 +48,11 @@ export const POSES: Pose[] = catalog as Pose[]
 
 // The order bones must be rotated in: a parent before any of its children, so that
 // when we rotate/move a parent, the bone-joint binding re-pins each child onto the
-// parent's new tail before we rotate that child. (Same parent→child order the rig
-// builder uses.) The pelvis (root) is handled separately (translate + lean) before
-// this list runs. Bones not listed here are never posed.
-const APPLY_ORDER = [
-	'spine',
-	'neck',
-	'head',
-	'upper-arm-l',
-	'forearm-l',
-	'upper-arm-r',
-	'forearm-r',
-	'thigh-l',
-	'shin-l',
-	'thigh-r',
-	'shin-r',
-] as const
+// parent's new tail before we rotate that child. POSABLE_BONES (humanoidTemplate.ts)
+// is already the trunk+limbs in top-down template order, so it IS this order — no
+// hand-synced copy. The pelvis (root) is handled separately (translate + lean) before
+// this list runs. Bones not in POSABLE_BONES (pelvis, spreaders) are never posed.
+const APPLY_ORDER = POSABLE_BONES
 
 /**
  * Apply a single posed FRAME to a specific figure — the shared core used by both

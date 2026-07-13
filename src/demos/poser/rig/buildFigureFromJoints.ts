@@ -1,12 +1,6 @@
-import {
-	createBindingId,
-	createShapeId,
-	type Editor,
-	type TLDefaultColorStyle,
-	type TLDefaultSizeStyle,
-	type TLShapeId,
-} from 'tldraw'
+import { createBindingId, createShapeId, type Editor, type TLShapeId } from 'tldraw'
 import type { BoneShape } from '../shapes/boneShape'
+import { HUMANOID_BONES, sharedBoneProps } from './humanoidTemplate'
 import type { JointKey, JointPositions } from './jointMarkers'
 
 /**
@@ -16,18 +10,16 @@ import type { JointKey, JointPositions } from './jointMarkers'
  * with short legs and you get short leg bones, because each bone spans exactly the
  * two joints the user dropped.
  *
- * Each bone is a (head joint → tail joint) pair. `parentBone` gives the bone-joint
- * binding chain (same topology as the default rig): child heads pin to parent tails
- * so posing propagates. `pelvis` is a tiny hub whose head/tail sit at the pelvis
- * marker; the clavicle/hip spreaders run from chest/pelvis out to the shoulder/hip
- * markers, so torso and hip WIDTH are just the marker spacing.
+ * Topology, names, size, and color come from HUMANOID_BONES (humanoidTemplate.ts) —
+ * the same set the default rig uses, so every downstream consumer (applyPose,
+ * getIkChains, attachDrawing) works unchanged. This table adds only the per-bone
+ * GEOMETRY SOURCE: which two joint markers each bone spans (head→tail), plus optional
+ * length limits. `parentBone` still drives the bone-joint binding chain.
  */
-interface BoneFromJoints {
-	name: string
+interface BoneGeometryFromJoints {
 	head: JointKey
 	tail: JointKey
-	size: TLDefaultSizeStyle
-	color: TLDefaultColorStyle
+	/** Which template bone this bone pins to; child heads pin to parent tails. */
 	parentBone?: string
 	/** Minimum length (px) so a degenerate marker pair still yields a valid bone. */
 	minLength?: number
@@ -40,45 +32,30 @@ interface BoneFromJoints {
 	maxLength?: number
 }
 
-const SPINE: TLDefaultColorStyle = 'grey'
-const LIMB: TLDefaultColorStyle = 'blue'
-const HEAD_C: TLDefaultColorStyle = 'light-blue'
-const CONNECT: TLDefaultColorStyle = 'grey'
-
-// Bone list mirrors the default rig's names/topology so every downstream consumer
-// (applyPose, getIkChains, attachDrawing) works unchanged — only the geometry now
-// comes from the markers. The pelvis is a short hub from the pelvis marker toward
-// the chest, giving the spine a stable pivot.
-const BONES: BoneFromJoints[] = [
-	// pelvis: the figure root — a near-zero-length hub AT the pelvis marker. The spine
-	// and hips pin to its TAIL, so the hub is kept as short as the schema allows (1px)
-	// and oriented toward the chest; that way the spine and legs start essentially
-	// exactly on the pelvis marker with no visible overshoot. (A 12px hub used to shift
-	// the whole trunk up ~12px, which read as a too-long torso / arms above the
-	// shoulder markers.)
-	{ name: 'pelvis', head: 'pelvis', tail: 'chest', size: 'l', color: SPINE, minLength: 1, maxLength: 1 },
-	{ name: 'spine', head: 'pelvis', tail: 'chest', size: 'l', color: SPINE, parentBone: 'pelvis' },
-	{ name: 'neck', head: 'chest', tail: 'neck', size: 'm', color: SPINE, parentBone: 'spine' },
-	{ name: 'head', head: 'neck', tail: 'head', size: 'xl', color: HEAD_C, parentBone: 'neck' },
-
-	// Clavicles hang from the CHEST (spine's tail), not the neck. The chest marker is
-	// the shoulder line, so parenting to `spine` pins each clavicle's head to the chest
-	// — otherwise it re-pins to the neck marker (up near the head) and drags the arms
-	// above where the shoulder markers were placed.
-	{ name: 'clavicle-l', head: 'chest', tail: 'shoulder-l', size: 's', color: CONNECT, parentBone: 'spine', minLength: 6 },
-	{ name: 'clavicle-r', head: 'chest', tail: 'shoulder-r', size: 's', color: CONNECT, parentBone: 'spine', minLength: 6 },
-	{ name: 'upper-arm-l', head: 'shoulder-l', tail: 'elbow-l', size: 'm', color: LIMB, parentBone: 'clavicle-l' },
-	{ name: 'forearm-l', head: 'elbow-l', tail: 'wrist-l', size: 'm', color: LIMB, parentBone: 'upper-arm-l' },
-	{ name: 'upper-arm-r', head: 'shoulder-r', tail: 'elbow-r', size: 'm', color: LIMB, parentBone: 'clavicle-r' },
-	{ name: 'forearm-r', head: 'elbow-r', tail: 'wrist-r', size: 'm', color: LIMB, parentBone: 'upper-arm-r' },
-
-	{ name: 'hip-l', head: 'pelvis', tail: 'hip-l', size: 'm', color: CONNECT, parentBone: 'pelvis', minLength: 6 },
-	{ name: 'hip-r', head: 'pelvis', tail: 'hip-r', size: 'm', color: CONNECT, parentBone: 'pelvis', minLength: 6 },
-	{ name: 'thigh-l', head: 'hip-l', tail: 'knee-l', size: 'm', color: LIMB, parentBone: 'hip-l' },
-	{ name: 'shin-l', head: 'knee-l', tail: 'ankle-l', size: 'm', color: LIMB, parentBone: 'thigh-l' },
-	{ name: 'thigh-r', head: 'hip-r', tail: 'knee-r', size: 'm', color: LIMB, parentBone: 'hip-r' },
-	{ name: 'shin-r', head: 'knee-r', tail: 'ankle-r', size: 'm', color: LIMB, parentBone: 'thigh-r' },
-]
+// Per-bone geometry source, keyed by the HUMANOID_BONES name. Every posable/structural
+// bone maps to the two markers it spans. Notes on the tricky ones:
+//   pelvis — a near-zero-length hub AT the pelvis marker (spine + hips pin to its TAIL,
+//     so it's clamped to 1px toward the chest; a longer hub shifts the whole trunk up).
+//   clavicles — parented to `spine` (not neck) so their heads pin to the CHEST marker
+//     (the shoulder line), keeping the arms at the shoulder markers, not up by the head.
+const GEOMETRY: Record<string, BoneGeometryFromJoints> = {
+	pelvis: { head: 'pelvis', tail: 'chest', minLength: 1, maxLength: 1 },
+	spine: { head: 'pelvis', tail: 'chest', parentBone: 'pelvis' },
+	neck: { head: 'chest', tail: 'neck', parentBone: 'spine' },
+	head: { head: 'neck', tail: 'head', parentBone: 'neck' },
+	'clavicle-l': { head: 'chest', tail: 'shoulder-l', parentBone: 'spine', minLength: 6 },
+	'clavicle-r': { head: 'chest', tail: 'shoulder-r', parentBone: 'spine', minLength: 6 },
+	'upper-arm-l': { head: 'shoulder-l', tail: 'elbow-l', parentBone: 'clavicle-l' },
+	'forearm-l': { head: 'elbow-l', tail: 'wrist-l', parentBone: 'upper-arm-l' },
+	'upper-arm-r': { head: 'shoulder-r', tail: 'elbow-r', parentBone: 'clavicle-r' },
+	'forearm-r': { head: 'elbow-r', tail: 'wrist-r', parentBone: 'upper-arm-r' },
+	'hip-l': { head: 'pelvis', tail: 'hip-l', parentBone: 'pelvis', minLength: 6 },
+	'hip-r': { head: 'pelvis', tail: 'hip-r', parentBone: 'pelvis', minLength: 6 },
+	'thigh-l': { head: 'hip-l', tail: 'knee-l', parentBone: 'hip-l' },
+	'shin-l': { head: 'knee-l', tail: 'ankle-l', parentBone: 'thigh-l' },
+	'thigh-r': { head: 'hip-r', tail: 'knee-r', parentBone: 'hip-r' },
+	'shin-r': { head: 'knee-r', tail: 'ankle-r', parentBone: 'thigh-r' },
+}
 
 /**
  * Build a fitted figure from placed joint positions (page coords). Returns the new
@@ -89,22 +66,25 @@ export function buildFigureFromJoints(editor: Editor, joints: JointPositions): T
 	const figureId = createShapeId()
 
 	editor.run(() => {
-		for (const spec of BONES) {
-			const head = joints[spec.head]
-			const tail = joints[spec.tail]
+		for (const bone of HUMANOID_BONES) {
+			const geom = GEOMETRY[bone.name]
+			if (!geom) continue // template bone with no geometry source — skip
+
+			const head = joints[geom.head]
+			const tail = joints[geom.tail]
 			if (!head || !tail) continue
 
 			const dx = tail.x - head.x
 			const dy = tail.y - head.y
 			const rawLen = Math.hypot(dx, dy)
-			let length = Math.max(spec.minLength ?? 1, rawLen)
-			if (spec.maxLength != null) length = Math.min(length, spec.maxLength)
+			let length = Math.max(geom.minLength ?? 1, rawLen)
+			if (geom.maxLength != null) length = Math.min(length, geom.maxLength)
 			// Angle from head→tail; if the two markers coincide (rawLen≈0), fall back to
 			// pointing up so the hub still has a defined orientation.
 			const rotation = rawLen < 0.001 ? -Math.PI / 2 : Math.atan2(dy, dx)
 
-			const id = spec.name === 'pelvis' ? figureId : createShapeId()
-			ids.set(spec.name, id)
+			const id = bone.name === 'pelvis' ? figureId : createShapeId()
+			ids.set(bone.name, id)
 
 			editor.createShape<BoneShape>({
 				id,
@@ -113,21 +93,15 @@ export function buildFigureFromJoints(editor: Editor, joints: JointPositions): T
 				y: head.y,
 				rotation,
 				meta: { figureId },
-				props: {
-					length,
-					// Uniform Small so the rig reads as thin, subtle guide-bones (matches
-					// the default rig; see the "Style rig bones" decision). The per-spec
-					// `size` below is kept only as proportion documentation.
-					size: 's',
-					color: spec.color,
-					dash: 'dotted',
-					fill: 'semi',
-					name: spec.name,
-				},
+				// name/size/color come from the shared template; length from the markers.
+				props: sharedBoneProps(bone.color, length, bone.name),
 			})
 
-			if (spec.parentBone) {
-				const parentId = ids.get(spec.parentBone)
+			// The joint-fitted rig re-parents a few bones vs. the default template (e.g.
+			// clavicles pin to `spine`/chest here, not `neck`), so the binding parent comes
+			// from the GEOMETRY source, not HUMANOID_BONES.parent.
+			if (geom.parentBone) {
+				const parentId = ids.get(geom.parentBone)
 				if (parentId) {
 					editor.createBinding({
 						id: createBindingId(),

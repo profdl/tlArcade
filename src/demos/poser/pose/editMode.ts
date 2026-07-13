@@ -2,6 +2,7 @@ import { atom, type Editor, type TLBindingId, type TLShapeId } from 'tldraw'
 import { applyFrame } from '../poses/applyPose'
 import { attachDrawing } from '../poses/attachDrawing'
 import { bonesByName, REST_FRAME } from '../rig/buildFigure'
+import { setFigureFlag } from './figureSet'
 import { stopPlaying } from './posePlayer'
 
 /**
@@ -36,10 +37,7 @@ export function isEditing(figure: TLShapeId): boolean {
 }
 
 function markEditing(figure: TLShapeId, editing: boolean): void {
-	const next = new Set(editingFigures.get())
-	if (editing) next.add(figure)
-	else next.delete(figure)
-	editingFigures.set(next)
+	setFigureFlag(editingFigures, figure, editing)
 }
 
 /**
@@ -57,9 +55,18 @@ function detachArtwork(editor: Editor, figure: TLShapeId): void {
 		}
 	}
 	if (attachmentIds.size === 0) return
-	editor.run(() => {
-		for (const id of attachmentIds) editor.deleteBinding(id)
-	})
+	// history:'ignore' + ignoreShapeLock:true to match the attachment binding's own
+	// lock/unlock writes (BoneAttachmentBindingUtil): deleting a binding fires its
+	// onAfterDelete, which UNLOCKS the freed art — a rig-internal lock-state mutation
+	// that's a consequence of the binding being gone, not a standalone undoable edit.
+	// Without this, entering edit mode pushes an undo entry that re-locks/re-binds art
+	// the user didn't author.
+	editor.run(
+		() => {
+			for (const id of attachmentIds) editor.deleteBinding(id)
+		},
+		{ history: 'ignore', ignoreShapeLock: true }
+	)
 }
 
 /**

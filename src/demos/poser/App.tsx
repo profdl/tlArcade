@@ -32,10 +32,13 @@ function InFrontOfTheCanvas() {
 }
 const components: TLComponents = { InFrontOfTheCanvas }
 
+// Drop the pelvis this far above the viewport center so the whole standing figure
+// (which extends downward from the pelvis) is framed rather than centered on its hips.
+const SPAWN_PELVIS_OFFSET_Y = 120
+
 function addFigure(editor: Editor) {
 	const center = editor.getViewportPageBounds().center
-	// Place the pelvis a bit below center so the standing figure is framed.
-	buildFigure(editor, { x: center.x, y: center.y - 120 })
+	buildFigure(editor, { x: center.x, y: center.y - SPAWN_PELVIS_OFFSET_Y })
 }
 
 /**

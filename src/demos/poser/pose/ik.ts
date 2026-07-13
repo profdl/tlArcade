@@ -61,7 +61,7 @@ export function solveTwoBone(root: Vec2, l1: number, l2: number, target: Vec2, b
 	// minReach ≥ maxReach), there's no valid two-bone solution and the `dist` clamp
 	// below would invert (lo > hi) and return silently-wrong angles. Point both bones
 	// straight at the target instead — the least-surprising fallback. The rig never
-	// emits a zero-length bone (props use T.nonZeroNumber), so this only guards callers
+	// emits a zero-length bone (props use T.positiveNumber), so this only guards callers
 	// of the pure solver; keeping it here makes ik.ts self-contained and unit-safe.
 	if (maxReach - minReach <= 2 * EPS) {
 		return { rootAngle: baseAngle, effectorAngle: baseAngle, reachable: false }
@@ -92,10 +92,19 @@ export function solveTwoBone(root: Vec2, l1: number, l2: number, target: Vec2, b
  * matches the way the joint is currently bent, so a solve doesn't suddenly flip
  * the elbow/knee to its mirror. The sign is the sign of the turn from bone 1 to
  * bone 2 (cross product of the two direction vectors).
+ *
+ * A dead-zone around `turn ≈ 0` guards a limb that rests exactly straight (or
+ * folded): there float noise could make `turn` a tiny negative, flipping the joint
+ * to its mirror on the very first grab — precisely the pop this function exists to
+ * prevent, at exactly the rest pose a freshly-built figure starts in. Inside the
+ * dead-zone we return a stable default (+1).
  */
+const STRAIGHT_EPS = 1e-3
+
 export function bendSignFromRest(rootAngle: number, effectorAngle: number): 1 | -1 {
 	const turn = normalizeAngle(effectorAngle - rootAngle)
-	return turn >= 0 ? 1 : -1
+	if (Math.abs(turn) < STRAIGHT_EPS) return 1 // ~straight/folded: stable default, no noise-driven flip
+	return turn > 0 ? 1 : -1
 }
 
 /** Wrap an angle to (−π, π]. */

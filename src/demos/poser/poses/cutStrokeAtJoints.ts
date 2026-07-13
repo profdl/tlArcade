@@ -89,6 +89,7 @@ export function cutStrokeAtJoints(editor: Editor, shape: TLDrawShape, bones: Res
 /** All of a draw shape's points in PAGE space (decoded across every segment). */
 function strokePagePoints(editor: Editor, shape: TLDrawShape): { x: number; y: number }[] {
 	const t = editor.getShapePageTransform(shape.id)
+	if (!t) return []
 	const out: { x: number; y: number }[] = []
 	for (const seg of shape.props.segments) {
 		const pts = b64Vecs.decodePoints(seg.path, seg.dim ?? 3)
