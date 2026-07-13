@@ -30,7 +30,11 @@ export function IkHandlesOverlay() {
 				.map((chain) => {
 					const tipPage = effectorTipPage(editor, chain.effectorBoneId)
 					if (!tipPage) return null
-					const s = editor.pageToScreen(tipPage)
+					// Position in VIEWPORT space (container-relative), not screen space —
+					// this overlay lives inside `tl-canvas__in-front`, whose origin is the
+					// editor container. pageToScreen would offset the dots by the container's
+					// on-page position (top bar / left panel).
+					const s = editor.pageToViewport(tipPage)
 					return { ...chain, sx: s.x, sy: s.y }
 				})
 				.filter((h): h is NonNullable<typeof h> => h !== null)

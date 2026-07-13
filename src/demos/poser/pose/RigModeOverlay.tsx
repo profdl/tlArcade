@@ -17,24 +17,29 @@ const MARKER_RADIUS = 8 // px, screen-space
 export function RigModeOverlay() {
 	const editor = useEditor()
 
-	// Screen positions of every joint (and the parent links for the preview lines).
+	// VIEWPORT positions of every joint (and the parent links for the preview lines).
+	// This overlay renders inside the `tl-canvas__in-front` wrapper, whose origin is
+	// the editor CONTAINER's top-left — i.e. viewport space, NOT screen space. So we
+	// position with pageToViewport, not pageToScreen; using screen coords here would
+	// shift every marker by the container's on-page offset (the top nav bar / left
+	// panel), which is what made markers jump on grab and the built rig land off.
 	// Reactive on both the joint atom and the camera.
 	const view = useValue(
 		'rig-mode-markers',
 		() => {
 			const joints = rigModeJoints.get()
 			if (!joints) return null
-			const screen = {} as Record<JointKey, { x: number; y: number }>
+			const vp = {} as Record<JointKey, { x: number; y: number }>
 			for (const j of JOINTS) {
-				const s = editor.pageToScreen(joints[j.key])
-				screen[j.key] = { x: s.x, y: s.y }
+				const v = editor.pageToViewport(joints[j.key])
+				vp[j.key] = { x: v.x, y: v.y }
 			}
 			const links = JOINTS.filter((j) => j.parent).map((j) => ({
 				key: j.key,
-				a: screen[j.key],
-				b: screen[j.parent as JointKey],
+				a: vp[j.key],
+				b: vp[j.parent as JointKey],
 			}))
-			return { screen, links }
+			return { screen: vp, links }
 		},
 		[editor]
 	)
