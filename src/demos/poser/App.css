@@ -14,17 +14,6 @@
 	gap: 12px;
 }
 
-.poser-hint {
-	margin: 0;
-	max-width: 260px;
-	padding: 6px 10px;
-	border-radius: 8px;
-	font: 12px/1.4 inherit;
-	color: var(--tl-color-text, #1d1d1d);
-	background: var(--tl-color-panel, white);
-	box-shadow: var(--tl-shadow-2);
-}
-
 .poser-btn {
 	padding: 8px 12px;
 	border-radius: 8px;

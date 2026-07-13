@@ -32,6 +32,13 @@ export function attachDrawing(editor: Editor, figure: TLShapeId): number {
 		}
 	})
 
+	// A shape only "rides" this figure if it's actually near it. Without a gate, a
+	// loose shape anywhere on the page binds to whatever bone happens to be nearest
+	// and then flies around when posed. The threshold is scaled to the figure's own
+	// size (its bone-span diagonal) so it adapts to big/small rigs, with a generous
+	// factor so art that merely overhangs the skeleton still attaches.
+	const maxAttachDist = figureReach(bones)
+
 	// Shapes already riding this figure's bones shouldn't be re-grabbed. A
 	// bone-attachment binds a single bone (fromId) to a drawing (toId), so we must
 	// scan every bone of the figure — not the figure/pelvis id, which is just one
@@ -60,7 +67,7 @@ export function attachDrawing(editor: Editor, figure: TLShapeId): number {
 				}
 				// Fell through (unreadable stroke) → rigid-attach as a fallback.
 			}
-			if (rigidAttach(editor, shape.id, bones)) count++
+			if (rigidAttach(editor, shape.id, bones, maxAttachDist)) count++
 		}
 	})
 
@@ -68,11 +75,34 @@ export function attachDrawing(editor: Editor, figure: TLShapeId): number {
 }
 
 /**
+ * The page-space distance a shape may sit from the rig and still count as "near" it.
+ * Derived from the figure's own extent (the diagonal of its bones' combined bounds)
+ * so the gate scales with rig size; the factor leaves room for art that overhangs.
+ */
+function figureReach(bones: ResolvedBone[]): number {
+	let minX = Infinity
+	let minY = Infinity
+	let maxX = -Infinity
+	let maxY = -Infinity
+	for (const b of bones) {
+		for (const p of [b.head, b.tail]) {
+			if (p.x < minX) minX = p.x
+			if (p.x > maxX) maxX = p.x
+			if (p.y < minY) minY = p.y
+			if (p.y > maxY) maxY = p.y
+		}
+	}
+	const diagonal = Math.hypot(maxX - minX, maxY - minY)
+	return diagonal * 0.5
+}
+
+/**
  * Rigidly attach one shape to its single nearest bone: capture the shape's origin in
  * that bone's local frame + its relative rotation, create a bone-attachment binding.
- * Returns true if attached.
+ * Skips (returns false) any shape whose nearest bone is farther than `maxDist`, so
+ * unrelated shapes elsewhere on the page aren't swept onto the rig.
  */
-function rigidAttach(editor: Editor, shapeId: TLShapeId, bones: ResolvedBone[]): boolean {
+function rigidAttach(editor: Editor, shapeId: TLShapeId, bones: ResolvedBone[], maxDist: number): boolean {
 	const bounds = editor.getShapePageBounds(shapeId)
 	if (!bounds) return false
 	const center = { x: bounds.midX, y: bounds.midY }
@@ -86,6 +116,9 @@ function rigidAttach(editor: Editor, shapeId: TLShapeId, bones: ResolvedBone[]):
 			best = b
 		}
 	}
+
+	// Too far from any bone → not part of this figure's drawing; leave it loose.
+	if (bestDist > maxDist) return false
 
 	const shape = editor.getShape(shapeId)
 	if (!shape) return false

@@ -40,7 +40,7 @@ export function RigModeOverlay() {
 				a: vp[j.key],
 				b: vp[j.parent as JointKey],
 			}))
-			return { screen: vp, links }
+			return { markers: vp, links }
 		},
 		[editor]
 	)
@@ -78,7 +78,7 @@ export function RigModeOverlay() {
 				))}
 			</svg>
 			{JOINTS.map((j) => {
-				const p = view.screen[j.key]
+				const p = view.markers[j.key]
 				return (
 					<div
 						key={j.key}

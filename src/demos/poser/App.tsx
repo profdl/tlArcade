@@ -8,11 +8,11 @@ import { BoneJointBindingUtil } from './bindings/BoneJointBindingUtil'
 import { IkHandlesOverlay } from './pose/IkHandlesOverlay'
 import { PoseToolbar } from './pose/PoseToolbar'
 import { RigModeOverlay } from './pose/RigModeOverlay'
-import { rigVisible, toggleRig } from './pose/rigVisibility'
+import { resetRigVisibility, rigVisible, toggleRig } from './pose/rigVisibility'
 import { attachDrawing } from './poses/attachDrawing'
 import { buildFigure } from './rig/buildFigure'
 import { buildFigureFromJoints } from './rig/buildFigureFromJoints'
-import { stopAll } from './pose/posePlayer'
+import { resetPlaybackState } from './pose/posePlayer'
 import { enterRigMode, exitRigMode, rigModeJoints, snapJointsToDrawing } from './rig/jointMarkers'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
@@ -129,8 +129,16 @@ export default function App() {
 			// Test hooks for the headless-browser verification of rig mode + stroke cutting.
 			;(window as unknown as { __rig: unknown }).__rig = { rigModeJoints, enterRigMode, exitRigMode, b64Vecs }
 		}
-		// Cancel any in-flight motion-playback rAF loops when the demo unmounts.
-		return () => stopAll()
+		// On unmount, reset all module-level state so a remount in the switcher starts
+		// clean: cancel in-flight rAF loops, clear per-figure playback state (which is
+		// keyed by ids that won't recur), restore the rig-shown default, and leave
+		// rig mode. These atoms/maps outlive the component, so without this a remount
+		// inherits stale state.
+		return () => {
+			resetPlaybackState()
+			resetRigVisibility()
+			exitRigMode()
+		}
 	}, [])
 
 	return (

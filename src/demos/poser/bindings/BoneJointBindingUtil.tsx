@@ -1,4 +1,5 @@
 import { BindingUtil, type BindingOnShapeChangeOptions, type TLShapePartial } from 'tldraw'
+import { normalizeAngle } from '../pose/ik'
 import { isSuppressed, withSuppressed } from '../pose/bindingSuppression'
 import { boneTailLocal, type BoneShape } from '../shapes/boneShape'
 import { boneJointBindingProps, type BoneJointBinding } from './boneJointBinding'
@@ -97,13 +98,6 @@ export class BoneJointBindingUtil extends BindingUtil<BoneJointBinding> {
 	private tailPage(bone: BoneShape) {
 		return this.editor.getShapePageTransform(bone.id).applyToPoint(boneTailLocal(bone))
 	}
-}
-
-function normalizeAngle(a: number): number {
-	let r = a % (Math.PI * 2)
-	if (r > Math.PI) r -= Math.PI * 2
-	if (r < -Math.PI) r += Math.PI * 2
-	return r
 }
 
 // Re-export so App can register from one place if desired.

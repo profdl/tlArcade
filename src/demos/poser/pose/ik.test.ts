@@ -40,6 +40,18 @@ describe('solveTwoBone', () => {
 		expect(dist(root, tipOf(root, l1, l2, s))).toBeCloseTo(Math.abs(l1 - l2), 3)
 	})
 
+	it('returns finite angles pointing at the target when a bone collapses (empty annulus)', () => {
+		// l2 = 0 makes minReach == maxReach == l1: the reachable annulus is a single
+		// circle, so the `dist` clamp would invert. The guard must return finite angles
+		// aimed at the target rather than NaN.
+		const target: Vec2 = { x: 200, y: 100 } // straight right of the root
+		const s = solveTwoBone(root, l1, 0, target, 1)
+		expect(Number.isFinite(s.rootAngle)).toBe(true)
+		expect(Number.isFinite(s.effectorAngle)).toBe(true)
+		expect(s.reachable).toBe(false)
+		expect(normalizeAngle(s.rootAngle)).toBeCloseTo(0) // atan2 toward +x
+	})
+
 	it('bendSign flips the middle joint to the mirror solution', () => {
 		const target: Vec2 = { x: 170, y: 160 }
 		const up = solveTwoBone(root, l1, l2, target, 1)

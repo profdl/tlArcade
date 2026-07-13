@@ -1,4 +1,4 @@
-import { T, type TLBaseBinding } from 'tldraw'
+import { type TLBaseBinding } from 'tldraw'
 
 /**
  * Pins a child bone's *head* (its local origin) to its parent bone's *tail*
@@ -22,6 +22,3 @@ declare module '@tldraw/tlschema' {
 }
 
 export const boneJointBindingProps = {} satisfies Record<string, never>
-
-// Kept for symmetry with other bindings; the binding carries no props of its own.
-export const boneJointBindingValidator = T.object({})

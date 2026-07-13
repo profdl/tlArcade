@@ -53,11 +53,22 @@ export function solveTwoBone(root: Vec2, l1: number, l2: number, target: Vec2, b
 	// instead of producing NaNs from acos of an out-of-domain value.
 	const minReach = Math.abs(l1 - l2)
 	const maxReach = l1 + l2
+
+	// Direction from the root to the target.
+	const baseAngle = Math.atan2(dy, dx)
+
+	// Degenerate rig: if the reachable annulus has collapsed (a bone is ~0-length, so
+	// minReach ≥ maxReach), there's no valid two-bone solution and the `dist` clamp
+	// below would invert (lo > hi) and return silently-wrong angles. Point both bones
+	// straight at the target instead — the least-surprising fallback. The rig never
+	// emits a zero-length bone (props use T.nonZeroNumber), so this only guards callers
+	// of the pure solver; keeping it here makes ik.ts self-contained and unit-safe.
+	if (maxReach - minReach <= 2 * EPS) {
+		return { rootAngle: baseAngle, effectorAngle: baseAngle, reachable: false }
+	}
+
 	const reachable = rawDist >= minReach - EPS && rawDist <= maxReach + EPS
 	const dist = clamp(rawDist, minReach + EPS, maxReach - EPS)
-
-	// Direction from the root to the (clamped) target.
-	const baseAngle = Math.atan2(dy, dx)
 
 	// Angle at the root between (root→target) and bone 1, via law of cosines.
 	const cosShoulder = clamp((l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist), -1, 1)

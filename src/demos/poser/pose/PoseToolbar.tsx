@@ -105,12 +105,13 @@ export function PoseToolbar() {
 	// Whether the rig is currently shown (drives the Show/Hide button label).
 	const shown = useValue('rigVisible', () => rigVisible.get(), [])
 
-	// Playback state for THIS figure, reactive so Play↔Stop and the enabled/disabled
-	// state track the player. `playingFigures`/`selectedPose` are read (not just their
-	// helpers) so useValue re-runs when either atom changes.
+	// Playback state for THIS figure, reactive so Play↔Stop track the player. Read the
+	// `playingFigures` atom directly — it's kept in lockstep with the player's internal
+	// `active` map (via markPlaying) and IS the "is this figure playing?" answer, so the
+	// atom read both drives the reactivity and gives the result.
 	const playing = useValue(
 		'playing',
-		() => (selectedFigure ? (playingFigures.get(), isPlaying(selectedFigure)) : false),
+		() => (selectedFigure ? playingFigures.get().has(selectedFigure) : false),
 		[selectedFigure]
 	)
 	// The picked pose has a motion clip → Play is available.
@@ -118,8 +119,7 @@ export function PoseToolbar() {
 		'can-play',
 		() => {
 			if (!selectedFigure) return false
-			selectedPose.get() // subscribe
-			const pose = getSelectedPose(selectedFigure)
+			const pose = selectedPose.get().get(selectedFigure)
 			return !!pose?.frames?.length
 		},
 		[selectedFigure]

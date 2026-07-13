@@ -13,3 +13,13 @@ export const rigVisible = atom('rigVisible', true)
 export function toggleRig() {
 	rigVisible.set(!rigVisible.get())
 }
+
+/**
+ * Restore the default (rig shown). This atom is module-level so it persists across a
+ * demo unmount/remount; without a reset, remounting onto a fresh canvas could inherit
+ * a hidden rig from the previous session, leaving bones invisible with no obvious way
+ * back. Called from the demo's unmount cleanup.
+ */
+export function resetRigVisibility() {
+	rigVisible.set(true)
+}

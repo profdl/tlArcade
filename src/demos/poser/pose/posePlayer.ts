@@ -150,3 +150,18 @@ export function stopPlaying(figure: TLShapeId): void {
 export function stopAll(): void {
 	for (const figure of [...active.keys()]) stopPlaying(figure)
 }
+
+/**
+ * Reset all module-level playback state to its initial values. These atoms/maps live
+ * at module scope (so multiple figures share them within one mount), which means they
+ * survive the demo unmounting and remounting in the switcher. Without this, a remount
+ * inherits the previous session's Loop toggle and — worse — `selectedPose` keeps
+ * accumulating `Pose` objects keyed by figure ids that never recur (new figures mint
+ * fresh ids), a slow leak. Called from the demo's unmount cleanup.
+ */
+export function resetPlaybackState(): void {
+	stopAll()
+	selectedPose.set(new Map())
+	playingFigures.set(new Set())
+	loopMode.set(true)
+}
