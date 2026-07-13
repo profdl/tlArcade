@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { stopEventPropagation, useEditor, useValue } from 'tldraw'
 import { getIkChains } from './effectors'
+import { rigVisible } from './rigVisibility'
 import { effectorTipPage, solveTwoBoneIk } from './solveTwoBoneIk'
 
 const HANDLE_RADIUS = 9 // px, screen-space (constant regardless of zoom)
@@ -24,6 +25,7 @@ export function IkHandlesOverlay() {
 	const handles = useValue(
 		'ik-handles',
 		() => {
+			if (!rigVisible.get()) return [] // hidden rig → no handles (art-only view)
 			return getIkChains(editor)
 				.map((chain) => {
 					const tipPage = effectorTipPage(editor, chain.effectorBoneId)

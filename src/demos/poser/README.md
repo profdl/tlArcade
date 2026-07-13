@@ -26,15 +26,45 @@ while letting it swing independently.
   starting position is computed from its parent's tail so the figure spawns
   already assembled.
 
+## Posing tools
+
+- **Pose library** ([poses/](poses/)) — a bundled catalog of named poses derived
+  offline from the HumanML3D motion dataset (see
+  [scripts/buildPoseCatalog.mjs](scripts/buildPoseCatalog.mjs) for the
+  263-dim-motion → 22-joint → per-bone-angle decode). A pose stores each posable
+  bone's page-space angle plus a `pelvis: {drop, lean}`; applying it rotates the
+  bones top-down and **lowers/leans the pelvis** so grounded poses (sitting,
+  kneeling) read — the data encodes a sit as a root-height drop, not articulated
+  hips. `applyPose(editor, figureId, pose)` targets one figure.
+
+- **Multiple figures** — "Add figure" spawns more. Every bone carries
+  `meta.figureId` (its pelvis id), so pose application, IK discovery, and the
+  toolbar all group/filter by figure. Bone `name`s repeat across figures; the
+  figureId keeps them apart.
+
+- **Context toolbar** ([pose/PoseToolbar.tsx](pose/PoseToolbar.tsx)) — built on
+  tldraw's `TldrawUiContextualToolbar`. Select any bone of a figure and a floating
+  toolbar appears **above that figure's head** with: a per-figure pose picker, a
+  **Move** handle (drags the whole figure by its pelvis root), **Apply rig**, and
+  **Show/Hide rig**.
+
+- **Rig a drawing** ([poses/attachDrawing.ts](poses/attachDrawing.ts),
+  [bindings/](bindings/)) — draw a figure with the normal tldraw tools, drag the
+  bone rig over it, then **Apply rig**: each drawn shape binds (`bone-attachment`)
+  to the nearest bone and stores its offset in that bone's local frame, so the art
+  poses along with the rig. **Hide rig** then shows just the posed artwork (bones
+  still exist and pose; only their rendering + IK handles are hidden).
+
 ## Notes
 
 - Uses a unique `persistenceKey="poser"` and a `.poser-*` CSS prefix so it can't
   collide with other demos in the switcher (see the repo `CLAUDE.md`).
-- Everything is native tldraw — no physics, no external tracking. Poses persist
-  in local storage under the `poser` key.
+- Everything is native tldraw — no physics, no runtime ML. The pose catalog is a
+  bundled JSON (built offline); poses persist in local storage under `poser`.
 
 ## Ideas / next steps
 
-- Pin-to-target IK (drag a hand and solve the arm chain), vs. the current FK.
+- Smarter rig-to-drawing: attach by overlap area rather than centerline distance;
+  let the user re-tag a mis-attached shape.
 - Save/load named poses; an onion-skin of a reference pose.
-- A second figure and per-figure color tinting for comparison.
+- Per-figure color tinting for comparison.

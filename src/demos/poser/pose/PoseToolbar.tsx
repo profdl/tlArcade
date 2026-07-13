@@ -1,7 +1,9 @@
 import { useCallback } from 'react'
 import { Box, stopEventPropagation, TldrawUiContextualToolbar, useEditor, useValue } from 'tldraw'
 import { applyPose, POSES } from '../poses/applyPose'
+import { attachDrawing } from '../poses/attachDrawing'
 import { bonesByName, figureId } from '../rig/buildFigure'
+import { rigVisible, toggleRig } from './rigVisibility'
 
 /**
  * A floating pose picker that appears above a figure's HEAD when one or more of its
@@ -85,17 +87,17 @@ export function PoseToolbar() {
 		[editor, selectedFigure]
 	)
 
+	// Whether the rig is currently shown (drives the Show/Hide button label).
+	const shown = useValue('rigVisible', () => rigVisible.get(), [])
+
 	if (!selectedFigure) return null
 
 	return (
 		<TldrawUiContextualToolbar getSelectionBounds={getSelectionBounds} label="Pose">
-			<div className="poser-ctx">
+			<div className="poser-ctx" onPointerDown={(e) => e.stopPropagation()}>
 				<select
 					className="poser-select"
 					defaultValue=""
-					// Don't let the pointerdown reach the canvas (it would clear the selection
-					// and unmount this toolbar before the change fires).
-					onPointerDown={(e) => e.stopPropagation()}
 					onChange={(e) => {
 						const pose = POSES[Number(e.target.value)]
 						if (pose) applyPose(editor, selectedFigure, pose)
@@ -111,12 +113,22 @@ export function PoseToolbar() {
 						</option>
 					))}
 				</select>
-				<button
-					className="poser-move"
-					title="Drag to move the whole figure"
-					onPointerDown={startMove}
-				>
+				<button className="poser-move" title="Drag to move the whole figure" onPointerDown={startMove}>
 					✥ Move
+				</button>
+				<button
+					className="poser-btn2"
+					title="Attach nearby drawn shapes to this figure's bones so they pose with the rig"
+					onClick={() => attachDrawing(editor, selectedFigure)}
+				>
+					Apply rig
+				</button>
+				<button
+					className="poser-btn2"
+					title="Show or hide the bones (attached artwork keeps posing either way)"
+					onClick={toggleRig}
+				>
+					{shown ? 'Hide rig' : 'Show rig'}
 				</button>
 			</div>
 		</TldrawUiContextualToolbar>

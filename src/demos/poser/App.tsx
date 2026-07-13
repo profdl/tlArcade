@@ -1,15 +1,17 @@
 import { useCallback, useRef } from 'react'
-import { Tldraw, type Editor, type TLComponents } from 'tldraw'
+import { Tldraw, useValue, type Editor, type TLComponents } from 'tldraw'
 import 'tldraw/tldraw.css'
 import './App.css'
+import { BoneAttachmentBindingUtil } from './bindings/BoneAttachmentBindingUtil'
 import { BoneJointBindingUtil } from './bindings/BoneJointBindingUtil'
 import { IkHandlesOverlay } from './pose/IkHandlesOverlay'
 import { PoseToolbar } from './pose/PoseToolbar'
+import { rigVisible, toggleRig } from './pose/rigVisibility'
 import { buildFigure } from './rig/buildFigure'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
 const shapeUtils = [BoneShapeUtil]
-const bindingUtils = [BoneJointBindingUtil]
+const bindingUtils = [BoneJointBindingUtil, BoneAttachmentBindingUtil]
 
 // Both canvas overlays share the one InFrontOfTheCanvas slot: the IK hand/foot
 // handles, and the per-figure pose picker that floats above a selected figure.
@@ -27,6 +29,21 @@ function addFigure(editor: Editor) {
 	const center = editor.getViewportPageBounds().center
 	// Place the pelvis a bit below center so the standing figure is framed.
 	buildFigure(editor, { x: center.x, y: center.y - 120 })
+}
+
+/**
+ * A persistent "Show rig" button in the bottom toolbar, visible only while the rig
+ * is hidden. Without it, hiding the rig and then deselecting would leave no way to
+ * bring the bones back (the context toolbar needs a selection to appear).
+ */
+function ShowRigButton() {
+	const shown = useValue('rigVisible', () => rigVisible.get(), [])
+	if (shown) return null
+	return (
+		<button className="poser-btn" onClick={toggleRig}>
+			Show rig
+		</button>
+	)
 }
 
 export default function App() {
@@ -54,6 +71,7 @@ export default function App() {
 				onMount={handleMount}
 			/>
 			<div className="poser-toolbar">
+				<ShowRigButton />
 				<button
 					className="poser-btn"
 					onClick={() => {

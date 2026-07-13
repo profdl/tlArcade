@@ -82,3 +82,18 @@
 .poser-move:active {
 	cursor: grabbing;
 }
+
+/* Secondary toolbar buttons (Apply rig / Show-Hide rig). */
+.poser-btn2 {
+	padding: 8px 10px;
+	border-radius: 8px;
+	border: 1px solid var(--tl-color-panel-contrast, #d3d3d3);
+	background: var(--tl-color-panel, white);
+	cursor: pointer;
+	font: inherit;
+	white-space: nowrap;
+}
+
+.poser-btn2:hover {
+	background: var(--tl-color-muted-2, #f0f0f0);
+}

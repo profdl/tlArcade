@@ -9,6 +9,7 @@ import {
 	type TLDefaultFillStyle,
 	type TLDefaultSizeStyle,
 } from 'tldraw'
+import { rigVisible } from '../pose/rigVisibility'
 import { boneThickness, type BoneShape } from './boneShape'
 
 // Native stroke weight per size step (tldraw's STROKE_SIZES isn't exported; mirror
@@ -42,6 +43,10 @@ export function BoneBody({ shape }: { shape: BoneShape }) {
 	const thickness = boneThickness(shape)
 	const editor = useEditor()
 
+	// When the rig is hidden, bones render nothing (but still exist and pose), so the
+	// user sees only their attached artwork. Read reactively so toggling re-renders.
+	const shown = useValue('rigVisible', () => rigVisible.get(), [])
+
 	// Resolve theme-dependent display values reactively — re-renders on palette /
 	// dark-mode change. Mirrors how built-in shapes resolve stroke/fill/width.
 	const { stroke, fillColor, strokeWidth, hubFill } = useValue(
@@ -59,6 +64,9 @@ export function BoneBody({ shape }: { shape: BoneShape }) {
 		},
 		[editor, color, size, fill]
 	)
+
+	// Hooks are all called above; safe to bail out of rendering now.
+	if (!shown) return null
 
 	const r = thickness / 2
 	const hub = Math.max(2.5, thickness * 0.24)
