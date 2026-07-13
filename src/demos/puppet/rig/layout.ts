@@ -28,20 +28,60 @@ export type PuppetPart = {
 	meta?: Partial<PuppetMeta>
 }
 
+/**
+ * A friendlier, better-proportioned default face. Every part is still a plain
+ * native geo shape tagged with a rig role — the same "rig is metadata" contract.
+ * The design changes here are purely in the table:
+ *
+ *  - warm `light-red` skin instead of flat yellow, so the head reads as a face;
+ *  - a neck bridging head → body (no floating head);
+ *  - rounder `oval` brows and a soft `oval` mouth instead of blocky rectangles;
+ *  - a small nose and two blush cheeks for life;
+ *  - white catch-light dots in the pupils;
+ *  - hair kept as a cohesive violet (back darker, front lighter) — a deliberate
+ *    stylized VTuber palette rather than a clash.
+ *
+ * Every *decorative* part added here (neck, nose, blush, catch-lights) also gets
+ * a binding in DEFAULT_BINDINGS so it tracks head yaw/pitch/roll like the eyes —
+ * an unbound part would sit frozen while the head moves and read as broken.
+ *
+ * Back-to-front paint order. Offsets are page-space deltas from the puppet
+ * center; the head spans x∈[-100,100], y∈[-125,115] (200×240).
+ */
 export const PUPPET_LAYOUT: readonly PuppetPart[] = [
-	{ role: 'hairBack', geo: 'ellipse', x: -120, y: -150, w: 240, h: 300, color: 'violet' },
-	{ role: 'body', geo: 'ellipse', x: -110, y: 150, w: 220, h: 220, color: 'blue' },
-	{ role: 'head', geo: 'ellipse', x: -100, y: -120, w: 200, h: 240, color: 'yellow' },
-	{ role: 'eyeL', geo: 'ellipse', x: -70, y: -50, w: 55, h: 45, color: 'white' },
-	{ role: 'eyeR', geo: 'ellipse', x: 15, y: -50, w: 55, h: 45, color: 'white' },
-	{ role: 'pupilL', geo: 'ellipse', x: -50, y: -38, w: 20, h: 22, color: 'black' },
-	{ role: 'pupilR', geo: 'ellipse', x: 35, y: -38, w: 20, h: 22, color: 'black' },
-	{ role: 'eyelidL', geo: 'rectangle', x: -70, y: -55, w: 55, h: 48, color: 'yellow', fill: 'solid', meta: { pivot: { x: 0.5, y: 0 } } },
-	{ role: 'eyelidR', geo: 'rectangle', x: 15, y: -55, w: 55, h: 48, color: 'yellow', fill: 'solid', meta: { pivot: { x: 0.5, y: 0 } } },
-	{ role: 'browL', geo: 'rectangle', x: -68, y: -78, w: 50, h: 10, color: 'orange' },
-	{ role: 'browR', geo: 'rectangle', x: 18, y: -78, w: 50, h: 10, color: 'orange' },
-	{ role: 'mouth', geo: 'ellipse', x: -35, y: 45, w: 70, h: 26, color: 'red', fill: 'solid', meta: { pivot: { x: 0.5, y: 0.5 } } },
-	{ role: 'hairFront', geo: 'rectangle', x: -105, y: -135, w: 210, h: 70, color: 'violet' },
+	// --- Behind the head ---
+	{ role: 'hairBack', geo: 'cloud', x: -125, y: -155, w: 250, h: 310, color: 'violet', fill: 'solid' },
+	{ role: 'body', geo: 'ellipse', x: -120, y: 160, w: 240, h: 240, color: 'blue', fill: 'solid' },
+	{ role: 'neck', geo: 'rectangle', x: -28, y: 95, w: 56, h: 70, color: 'light-red', fill: 'solid' },
+
+	// --- Head ---
+	{ role: 'head', geo: 'ellipse', x: -100, y: -125, w: 200, h: 240, color: 'light-red', fill: 'solid' },
+
+	// --- Cheeks (behind eyes so eyes sit on top) ---
+	{ role: 'blushL', geo: 'ellipse', x: -78, y: 5, w: 40, h: 26, color: 'red', fill: 'semi' },
+	{ role: 'blushR', geo: 'ellipse', x: 38, y: 5, w: 40, h: 26, color: 'red', fill: 'semi' },
+
+	// --- Eyes ---
+	{ role: 'eyeL', geo: 'ellipse', x: -72, y: -52, w: 58, h: 52, color: 'white', fill: 'solid' },
+	{ role: 'eyeR', geo: 'ellipse', x: 14, y: -52, w: 58, h: 52, color: 'white', fill: 'solid' },
+	{ role: 'pupilL', geo: 'ellipse', x: -52, y: -42, w: 26, h: 30, color: 'black', fill: 'solid' },
+	{ role: 'pupilR', geo: 'ellipse', x: 26, y: -42, w: 26, h: 30, color: 'black', fill: 'solid' },
+	{ role: 'catchL', geo: 'ellipse', x: -46, y: -40, w: 9, h: 9, color: 'white', fill: 'solid' },
+	{ role: 'catchR', geo: 'ellipse', x: 32, y: -40, w: 9, h: 9, color: 'white', fill: 'solid' },
+	// Eyelids blink by collapsing to 0 height — skin-toned so a closed eye looks like eyelid.
+	{ role: 'eyelidL', geo: 'rectangle', x: -72, y: -56, w: 58, h: 55, color: 'light-red', fill: 'solid', meta: { pivot: { x: 0.5, y: 0 } } },
+	{ role: 'eyelidR', geo: 'rectangle', x: 14, y: -56, w: 58, h: 55, color: 'light-red', fill: 'solid', meta: { pivot: { x: 0.5, y: 0 } } },
+
+	// --- Brows (rounded, arched slightly outward) ---
+	{ role: 'browL', geo: 'oval', x: -74, y: -82, w: 52, h: 16, color: 'violet', fill: 'solid', meta: { pivot: { x: 0.5, y: 0.5 } } },
+	{ role: 'browR', geo: 'oval', x: 22, y: -82, w: 52, h: 16, color: 'violet', fill: 'solid', meta: { pivot: { x: 0.5, y: 0.5 } } },
+
+	// --- Nose + mouth ---
+	{ role: 'nose', geo: 'ellipse', x: -8, y: 5, w: 16, h: 22, color: 'red', fill: 'semi' },
+	{ role: 'mouth', geo: 'oval', x: -34, y: 52, w: 68, h: 30, color: 'red', fill: 'solid', meta: { pivot: { x: 0.5, y: 0.5 } } },
+
+	// --- In front of the face ---
+	{ role: 'hairFront', geo: 'cloud', x: -110, y: -150, w: 220, h: 95, color: 'light-violet', fill: 'solid' },
 ]
 
 /** Page-space center the default layout is placed around. */

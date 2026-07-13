@@ -14,6 +14,7 @@ export const PUPPET_ROLES = [
 	'hairFront',
 	'hairBack',
 	'body',
+	'neck', // skin-toned bridge between head and body
 	'eyeL',
 	'eyeR',
 	'eyelidL', // an overlay shape scaled to 0 height as the eye "opens"
@@ -22,6 +23,11 @@ export const PUPPET_ROLES = [
 	'browR',
 	'pupilL', // follows gaze within the eye
 	'pupilR',
+	'catchL', // catch-light dot inside the pupil
+	'catchR',
+	'nose',
+	'blushL', // cheek blush
+	'blushR',
 	'mouth',
 	'accessory',
 ] as const

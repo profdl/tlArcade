@@ -99,6 +99,9 @@ export const DEFAULT_BINDINGS: Record<PuppetRole, FeatureBinding> = {
 		dy: { bodyBob: 4 },
 		drot: { bodyLean: 0.15 },
 	},
+	// The neck follows the head but at reduced weight, so it stretches slightly
+	// between the (fully-following) head and the (barely-moving) body.
+	neck: { dx: { headYaw: 35 }, dy: { headPitch: -35, bodyBob: 3 }, drot: { headRoll: 0.5 } },
 	eyeL: { dx: { headYaw: 60 }, dy: { headPitch: -60 }, drot: { headRoll: 1 } },
 	eyeR: { dx: { headYaw: 60 }, dy: { headPitch: -60 }, drot: { headRoll: 1 } },
 	// Eyelids blink by collapsing vertical scale as the eye closes (eyeOpen -> 1 = open).
@@ -108,6 +111,13 @@ export const DEFAULT_BINDINGS: Record<PuppetRole, FeatureBinding> = {
 	browR: { dx: { headYaw: 60 }, dy: { headPitch: -60, eyeBrowR: -14 }, drot: { eyeBrowR: -0.12 } },
 	pupilL: { dx: { headYaw: 60, gazeX: 8 }, dy: { headPitch: -60, gazeY: 8 } },
 	pupilR: { dx: { headYaw: 60, gazeX: 8 }, dy: { headPitch: -60, gazeY: 8 } },
+	// Catch-lights ride the pupils (same gaze gain) so the highlight stays put in the eye.
+	catchL: { dx: { headYaw: 60, gazeX: 8 }, dy: { headPitch: -60, gazeY: 8 } },
+	catchR: { dx: { headYaw: 60, gazeX: 8 }, dy: { headPitch: -60, gazeY: 8 } },
+	// Nose + blush are face-plane decoration: track the head like the eyes.
+	nose: { dx: { headYaw: 60 }, dy: { headPitch: -60 }, drot: { headRoll: 1 } },
+	blushL: { dx: { headYaw: 60 }, dy: { headPitch: -60 }, drot: { headRoll: 1 } },
+	blushR: { dx: { headYaw: 60 }, dy: { headPitch: -60 }, drot: { headRoll: 1 } },
 	mouth: {
 		dx: { headYaw: 55 },
 		dy: { headPitch: -55, mouthSmile: -6 },
