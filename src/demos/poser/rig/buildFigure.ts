@@ -128,10 +128,10 @@ export function buildFigure(editor: Editor, origin: { x: number; y: number }): T
 				meta: { figureId },
 				props: {
 					length: spec.length,
-					size: spec.size,
+					size: 's',
 					color: spec.color,
-					dash: 'solid',
-					fill: 'solid',
+					dash: 'dotted',
+					fill: 'semi',
 					name: spec.name,
 				},
 			})

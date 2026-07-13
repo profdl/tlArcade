@@ -115,10 +115,10 @@ export function buildFigureFromJoints(editor: Editor, joints: JointPositions): T
 				meta: { figureId },
 				props: {
 					length,
-					size: spec.size,
+					size: 's',
 					color: spec.color,
-					dash: 'solid',
-					fill: 'solid',
+					dash: 'dotted',
+					fill: 'semi',
 					name: spec.name,
 				},
 			})
