@@ -46,12 +46,13 @@ while letting it swing independently.
   per-figure (`meta.figureId`-keyed), reuses the exact `applyFrame` write path the
   picker uses (so the bone-joint binding never mistakes it for a drag), and stops
   cleanly if the figure is deleted or the demo unmounts.
-  > **Note:** the shipped `frames` are currently **synthesized** (rest → pose → rest
-  > ease, [scripts/synthPoseFrames.mjs](scripts/synthPoseFrames.mjs)) because
-  > HuggingFace's datasets-server was unavailable at build time. The build script
-  > already emits real HumanML3D per-frame motion in the identical schema — re-run
-  > `buildPoseCatalog.mjs` when the server is back to swap in the authentic clips
-  > (no code changes), then delete `synthPoseFrames.mjs`.
+  > The shipped `frames` are **authentic HumanML3D per-frame motion** (downsampled to
+  > ≤40 keyframes per clip, `fps` scaled to match), decoded by
+  > [scripts/buildPoseCatalog.mjs](scripts/buildPoseCatalog.mjs). That script loads
+  > rows from HuggingFace's datasets-server REST API when it's up, and falls back to
+  > reading the dataset's parquet shard directly (via `huggingface_hub` + `duckdb` in
+  > a throwaway venv) when the datasets-server is down — so the build is
+  > outage-proof. Re-run it to refresh the catalog; no runtime code changes needed.
 
 - **Multiple figures** — "Add figure" spawns more. Every bone carries
   `meta.figureId` (its pelvis id), so pose application, IK discovery, and the

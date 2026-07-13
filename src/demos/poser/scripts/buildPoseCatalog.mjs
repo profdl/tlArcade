@@ -3,10 +3,20 @@
 //
 //   node src/demos/poser/scripts/buildPoseCatalog.mjs > src/demos/poser/poses/poseCatalog.json
 //
-// It streams rows from the HF datasets-server REST API (no dataset download, no
-// Python deps), decodes each motion's mid-frame into 22 joint positions, converts
-// the joint chain into our rig's per-bone page-space angles, and greedily selects
-// a diverse, expressively-captioned subset.
+// It fetches a pool of rows, decodes each motion's mid-frame into 22 joint
+// positions, converts the joint chain into our rig's per-bone page-space angles,
+// and greedily selects a diverse, expressively-captioned subset.
+//
+// Two data sources, tried in order (see loadRows):
+//   1. HF datasets-server REST API — no download, no deps, streams JSON rows. This
+//      is the preferred path, but the datasets-server is periodically down (503).
+//   2. Direct parquet fallback — when the REST API is unavailable, download the
+//      `test` split's first parquet shard once (via the `huggingface_hub` +
+//      `duckdb` Python packages) and read the same rows out of it locally. Slower
+//      first run (a few hundred MB), but immune to datasets-server outages. Requires
+//      `python3` on PATH; the packages are auto-installed into a throwaway venv.
+// Both paths yield rows of the identical shape ({ motion: number[][], caption }),
+// so the decode below is source-agnostic.
 //
 // Why this shape of data: HumanML3D stores each motion as a T×263 float matrix in
 // the standard T2M feature layout. The first slice after the root channels is
@@ -14,6 +24,11 @@
 // just those positions plus the root at the origin. No FBX, no Blender, no rotation
 // decode needed for a single frame; the rest of the 263 dims (6D rotations, local
 // velocities, foot contacts) we don't use.
+
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const DATASET = 'TeoGchx/HumanML3D'
 const CONFIG = 'default'
@@ -151,6 +166,7 @@ const EXPRESSIVE =
 	/(jump|kick|punch|dance|sit|squat|kneel|throw|wave|clap|reach|bend|stretch|salute|bow|crouch|lunge|balance|climb|swing|pick|raise|arms|hands up|cross|point|golf|box)/
 const PLAIN = /\b(walk|walks|walking)\b/
 
+// ── Source 1: HF datasets-server REST API ────────────────────────────────────
 // The datasets-server API is occasionally flaky (transient 502/503). Retry with
 // backoff so a blip mid-stream doesn't abort the whole build.
 async function fetchRows(offset, length, attempt = 0) {
@@ -167,13 +183,70 @@ async function fetchRows(offset, length, attempt = 0) {
 	}
 }
 
-async function main() {
+// Pull the whole pool from the REST API in POOL_SIZE/20 pages.
+async function rowsFromRestApi() {
 	const pool = []
 	for (let off = 0; off < POOL_SIZE; off += 20) {
 		pool.push(...(await fetchRows(off, 20)))
-		process.stderr.write(`pool ${pool.length}\r`)
+		process.stderr.write(`  rest pool ${pool.length}\r`)
 	}
-	process.stderr.write(`\npool ${pool.length}\n`)
+	process.stderr.write(`\n`)
+	return pool
+}
+
+// ── Source 2: direct parquet fallback (datasets-server-outage-proof) ──────────
+// Download the `test` split's first parquet shard via huggingface_hub and read the
+// first POOL_SIZE rows' {caption, motion} out of it with duckdb — both installed
+// into a throwaway venv on first use. We drive Python because there's no pure-JS
+// parquet reader in this repo's deps; keeping it out-of-band avoids adding one.
+const PARQUET_FILE = 'data/test-00000-of-00002.parquet'
+function rowsFromParquet() {
+	if (!process.env.HF_TOKEN && !existsSync(join(process.env.HOME ?? '', '.cache/huggingface/token'))) {
+		throw new Error(
+			'parquet fallback needs a Hugging Face token (env HF_TOKEN or ~/.cache/huggingface/token; run `huggingface-cli login`)',
+		)
+	}
+	const py = process.env.PYTHON ?? 'python3'
+	const venv = join(mkdtempSync(join(tmpdir(), 'poser-hf-')), 'venv')
+	process.stderr.write(`  creating venv at ${venv} …\n`)
+	execFileSync(py, ['-m', 'venv', venv], { stdio: 'inherit' })
+	const vpy = join(venv, 'bin', 'python')
+	process.stderr.write(`  installing huggingface_hub + duckdb …\n`)
+	execFileSync(vpy, ['-m', 'pip', 'install', '--quiet', 'huggingface_hub', 'duckdb'], { stdio: 'inherit' })
+	const out = join(venv, 'rows.json')
+	const script = `
+import os, sys, json
+from huggingface_hub import hf_hub_download
+import duckdb
+tok = os.environ.get("HF_TOKEN") or open(os.path.expanduser("~/.cache/huggingface/token")).read().strip()
+p = hf_hub_download(repo_id=${JSON.stringify(DATASET)}, repo_type="dataset",
+                    filename=${JSON.stringify(PARQUET_FILE)}, token=tok)
+con = duckdb.connect()
+rows = con.execute(f"SELECT caption, motion FROM read_parquet('{p}') LIMIT ${POOL_SIZE}").fetchall()
+with open(${JSON.stringify(out)}, "w") as fh:
+    json.dump([{"caption": c, "motion": m} for (c, m) in rows], fh)
+print(f"parquet pool {len(rows)}", file=sys.stderr, flush=True)
+`
+	// Keep the child's stdout OFF our stdout — this process's stdout is the catalog
+	// stream. Route child stdout to stderr; the child writes its result to `out`.
+	execFileSync(vpy, ['-c', script], { stdio: ['ignore', 2, 'inherit'] })
+	return JSON.parse(readFileSync(out, 'utf8'))
+}
+
+// Try the REST API; on any failure, fall back to reading the parquet directly.
+async function loadRows() {
+	try {
+		process.stderr.write('loading rows via datasets-server REST API …\n')
+		return await rowsFromRestApi()
+	} catch (err) {
+		process.stderr.write(`REST API unavailable (${err.message}); falling back to direct parquet …\n`)
+		return rowsFromParquet()
+	}
+}
+
+async function main() {
+	const pool = await loadRows()
+	process.stderr.write(`pool ${pool.length}\n`)
 
 	// One candidate per motion: a settled mid-frame for the static pose/preview, plus
 	// the full downsampled sequence for playback.

@@ -1,2 +1,14 @@
 #root { width: 100%; height: 100%; }
 html, body { margin: 0; height: 100%; }
+
+/*
+ * tldraw's UI chrome (menus, panels, buttons) is `font-family: inherit` — it
+ * deliberately inherits from the host page rather than hardcoding a font.
+ * Without a base font here it walks up to the browser default, which is serif
+ * (Times). Give the whole app tldraw's sans stack so its UI — and every demo's
+ * own UI — renders sans-serif.
+ */
+body {
+	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+		Helvetica, Arial, sans-serif;
+}
