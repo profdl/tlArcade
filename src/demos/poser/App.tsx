@@ -9,9 +9,10 @@ import { IkHandlesOverlay } from './pose/IkHandlesOverlay'
 import { PoseToolbar } from './pose/PoseToolbar'
 import { RigModeOverlay } from './pose/RigModeOverlay'
 import { rigVisible, toggleRig } from './pose/rigVisibility'
+import { attachDrawing } from './poses/attachDrawing'
 import { buildFigure } from './rig/buildFigure'
 import { buildFigureFromJoints } from './rig/buildFigureFromJoints'
-import { enterRigMode, exitRigMode, rigModeJoints } from './rig/jointMarkers'
+import { enterRigMode, exitRigMode, rigModeJoints, snapJointsToDrawing } from './rig/jointMarkers'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
 const shapeUtils = [BoneShapeUtil]
@@ -67,7 +68,7 @@ function RigModeControls({ editor }: { editor: () => Editor | null }) {
 				title="Place joints on your drawing, then build a rig that fits it"
 				onClick={() => {
 					const e = editor()
-					if (e) enterRigMode(e.getViewportPageBounds().center)
+					if (e) enterRigMode(e, e.getViewportPageBounds().center)
 				}}
 			>
 				Rig a drawing
@@ -78,16 +79,32 @@ function RigModeControls({ editor }: { editor: () => Editor | null }) {
 		<>
 			<button
 				className="poser-btn"
+				title="Snap the joints toward the drawing's limbs"
+				onClick={() => {
+					const e = editor()
+					if (e) snapJointsToDrawing(e)
+				}}
+			>
+				Snap to drawing
+			</button>
+			<button
+				className="poser-btn"
+				title="Build the rig from these joints and attach the drawing to it"
 				onClick={() => {
 					const e = editor()
 					const joints = rigModeJoints.get()
 					if (e && joints) {
-						e.run(() => buildFigureFromJoints(e, joints))
+						// One click: build the fitted figure from the placed joints, then attach
+						// the drawing (strokes cut at joints, other shapes rigid) to those bones.
+						e.run(() => {
+							const figure = buildFigureFromJoints(e, joints)
+							if (figure) attachDrawing(e, figure)
+						})
 						exitRigMode()
 					}
 				}}
 			>
-				Build rig
+				Apply rig
 			</button>
 			<button className="poser-btn" onClick={() => exitRigMode()}>
 				Cancel

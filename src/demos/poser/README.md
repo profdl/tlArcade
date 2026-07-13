@@ -53,17 +53,22 @@ while letting it swing independently.
   - **Rig mode** ([rig/jointMarkers.ts](rig/jointMarkers.ts),
     [pose/RigModeOverlay.tsx](pose/RigModeOverlay.tsx),
     [rig/buildFigureFromJoints.ts](rig/buildFigureFromJoints.ts)) — Mixamo-style.
-    "Rig a drawing" drops draggable joint markers (with a live preview skeleton);
-    place them on the art and **Build rig** constructs a figure whose bone lengths
-    and shoulder/hip widths come from the markers. So a drawing with short legs
-    gets short leg bones — the rig fits the body type, no distortion.
-  - **Apply rig** ([poses/attachDrawing.ts](poses/attachDrawing.ts),
-    [poses/cutStrokeAtJoints.ts](poses/cutStrokeAtJoints.ts),
-    [bindings/](bindings/)) — binds the drawing to the bones. A **draw stroke** is
-    **cut at the joints** into per-bone pieces (so a limb drawn as one line folds at
-    the elbow/knee when posed); any **other shape** (geo, image…) is attached rigidly
-    to its nearest bone. Attachments are `bone-attachment` bindings storing each
-    piece's offset in its bone's local frame.
+    "Rig a drawing" drops draggable joint markers with a live preview skeleton,
+    **auto-aligned to the drawing** (the default skeleton is fitted to the combined
+    bounds of the free shapes, so markers start on the figure rather than at canvas
+    center). **Snap to drawing** refines the markers toward the ink (extremity
+    anchoring + a radius-limited snap-to-nearest-point, no fragile body-part
+    detection). Place the markers, then:
+  - **Apply rig** (rig mode) — one click: **builds** a figure whose bone lengths and
+    shoulder/hip widths come from the markers (so short drawn legs → short leg bones,
+    no distortion), **and attaches** the drawing to it
+    ([poses/attachDrawing.ts](poses/attachDrawing.ts),
+    [poses/cutStrokeAtJoints.ts](poses/cutStrokeAtJoints.ts), [bindings/](bindings/)).
+    A **draw stroke** is **cut at the joints** into per-bone pieces (so a limb drawn
+    as one line folds at the elbow/knee when posed); any **other shape** (geo, image…)
+    is attached rigidly to its nearest bone. Attachments are `bone-attachment`
+    bindings storing each piece's offset in its bone's local frame. (An **Apply rig**
+    on the per-figure context toolbar also attaches loose shapes to an existing rig.)
   - **Hide rig** then shows just the posed artwork (bones still exist and pose; only
     their rendering + IK handles are hidden). A "Show rig" button restores them.
 
