@@ -39,3 +39,18 @@
 .poser-btn:hover {
 	background: var(--tl-color-muted-2, #f0f0f0);
 }
+
+.poser-select {
+	max-width: 200px;
+	padding: 8px 12px;
+	border-radius: 8px;
+	border: 1px solid var(--tl-color-panel-contrast, #d3d3d3);
+	background: var(--tl-color-panel, white);
+	box-shadow: var(--tl-shadow-2);
+	cursor: pointer;
+	font: inherit;
+}
+
+.poser-select:hover {
+	background: var(--tl-color-muted-2, #f0f0f0);
+}

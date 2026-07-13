@@ -4,6 +4,7 @@ import 'tldraw/tldraw.css'
 import './App.css'
 import { BoneJointBindingUtil } from './bindings/BoneJointBindingUtil'
 import { IkHandlesOverlay } from './pose/IkHandlesOverlay'
+import { applyPose, POSES } from './poses/applyPose'
 import { buildFigure } from './rig/buildFigure'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
@@ -43,10 +44,24 @@ export default function App() {
 				onMount={handleMount}
 			/>
 			<div className="poser-toolbar">
-				<p className="poser-hint">
-					Drag a blue handle at a hand or foot to pose that limb (IK); drag a bone to swing it (FK); drag the pelvis to
-					move the whole figure.
-				</p>
+				<select
+					className="poser-select"
+					defaultValue=""
+					onChange={(e) => {
+						const pose = POSES[Number(e.target.value)]
+						if (pose && editorRef.current) applyPose(editorRef.current, pose)
+						e.target.value = '' // reset so re-picking the same pose fires again
+					}}
+				>
+					<option value="" disabled>
+						Choose a pose…
+					</option>
+					{POSES.map((pose, i) => (
+						<option key={i} value={i}>
+							{pose.name}
+						</option>
+					))}
+				</select>
 				<button
 					className="poser-btn"
 					onClick={() => {
