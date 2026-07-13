@@ -22,12 +22,31 @@ export class BoneAttachmentBindingUtil extends BindingUtil<BoneAttachmentBinding
 	}
 
 	override onAfterCreate({ binding }: { binding: BoneAttachmentBinding }) {
+		// Lock the attached shape so it's inert to direct interaction: it can't be
+		// selected or dragged, and a pointerdown over it passes THROUGH to the bone
+		// behind it — so dragging on the drawing poses the rig instead of moving the
+		// loose shape. This holds even when the rig is hidden (bones still exist and
+		// remain hit-testable via their geometry). The rig still repositions the shape
+		// via place(), which runs with ignoreShapeLock so the lock doesn't freeze it.
+		const shape = this.editor.getShape(binding.toId)
+		if (shape && !shape.isLocked) {
+			this.editor.updateShape({ id: binding.toId, type: shape.type, isLocked: true } as TLShapePartial)
+		}
 		this.place(binding)
 	}
 
 	override onAfterChangeFromShape({ binding }: BindingOnShapeChangeOptions<BoneAttachmentBinding>) {
 		// The bone (fromId) moved or rotated — re-place the attached shape.
 		this.place(binding)
+	}
+
+	override onAfterDelete({ binding }: { binding: BoneAttachmentBinding }) {
+		// Attachment removed (e.g. the bone was deleted) — release the shape's lock so
+		// it becomes a normal, selectable drawing again.
+		const shape = this.editor.getShape(binding.toId)
+		if (shape?.isLocked) {
+			this.editor.updateShape({ id: binding.toId, type: shape.type, isLocked: false } as TLShapePartial)
+		}
 	}
 
 	/**
@@ -53,13 +72,22 @@ export class BoneAttachmentBindingUtil extends BindingUtil<BoneAttachmentBinding
 		const sameRot = Math.abs(normalizeAngle(shape.rotation - pageRotation)) < 0.0001
 		if (samePos && sameRot) return // already placed — avoid thrash
 
-		this.editor.updateShape({
-			id: binding.toId,
-			type: shape.type,
-			x: parentPoint.x,
-			y: parentPoint.y,
-			rotation: pageRotation,
-		} as TLShapePartial)
+		// The attached shape is LOCKED (so the user can't grab it directly and drags
+		// pass through to the bone). But updateShape refuses to move a locked shape, so
+		// the rig's own reposition must run with ignoreShapeLock — otherwise the drawing
+		// freezes while the bone moves away from it.
+		this.editor.run(
+			() => {
+				this.editor.updateShape({
+					id: binding.toId,
+					type: shape.type,
+					x: parentPoint.x,
+					y: parentPoint.y,
+					rotation: pageRotation,
+				} as TLShapePartial)
+			},
+			{ ignoreShapeLock: true }
+		)
 	}
 }
 
