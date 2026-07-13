@@ -88,6 +88,32 @@ const FIGURE: BoneSpec[] = [
 ]
 
 /**
+ * The rig-template neutral pose ("rest"), derived from FIGURE's own template angles
+ * so it can never drift from how the figure is built. This is the frame edit-mode
+ * snaps a figure to before unbinding its artwork, so re-attach captures each piece's
+ * offset against the same neutral baseline the rig was authored at.
+ *
+ * Shaped as a PoseFrame (see applyPose.ts) so applyFrame can apply it directly:
+ * - `angles` — page-space degrees for the posable bones only (the ones applyFrame
+ *   touches). Built by name-lookup into FIGURE so adding/re-angling a template bone
+ *   updates rest automatically.
+ * - `pelvis` — the root sits at its standing baseline: no drop, and lean = the
+ *   pelvis template's own page-space angle.
+ *
+ * Kept as a plain object (not importing PoseFrame's type, to avoid a rig→pose import
+ * cycle); applyFrame accepts this structurally.
+ */
+const templateAngle = (name: string): number => FIGURE.find((b) => b.name === name)?.angle ?? 0
+export const REST_FRAME: { angles: Record<string, number>; pelvis: { drop: number; lean: number } } = {
+	angles: Object.fromEntries(
+		['spine', 'neck', 'head', 'upper-arm-l', 'forearm-l', 'upper-arm-r', 'forearm-r', 'thigh-l', 'shin-l', 'thigh-r', 'shin-r'].map(
+			(n) => [n, templateAngle(n)]
+		)
+	),
+	pelvis: { drop: 0, lean: templateAngle('pelvis') },
+}
+
+/**
  * Builds one humanoid figure centered near `origin` (page coords) and returns
  * the root bone's id (which doubles as the figure's stable `figureId`). Bones are
  * created top-down so a parent exists before its children pin to it; each child's

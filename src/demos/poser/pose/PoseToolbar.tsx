@@ -16,6 +16,7 @@ import {
 	toggleLoopMode,
 } from './posePlayer'
 import { rigVisible, toggleRig } from './rigVisibility'
+import { editingFigures, toggleEdit } from './editMode'
 
 /**
  * A floating pose picker that appears above a figure's HEAD when one or more of its
@@ -126,6 +127,16 @@ export function PoseToolbar() {
 	)
 	const loop = useValue('loop-mode', () => loopMode.get(), [])
 
+	// Whether THIS figure is in "edit the drawing" mode: its artwork is detached and
+	// unlocked for direct editing. Reactive, so the button toggles Edit↔Done and the
+	// pose picker / Play disable while editing (posing a figure mid-edit makes no sense —
+	// its art isn't riding the bones right now).
+	const editing = useValue(
+		'editing',
+		() => (selectedFigure ? editingFigures.get().has(selectedFigure) : false),
+		[selectedFigure]
+	)
+
 	const onPlayStop = useCallback(() => {
 		if (!selectedFigure) return
 		if (isPlaying(selectedFigure)) {
@@ -144,6 +155,7 @@ export function PoseToolbar() {
 				<select
 					className="poser-select"
 					defaultValue=""
+					disabled={editing}
 					onChange={(e) => {
 						const pose = POSES[Number(e.target.value)]
 						if (pose) {
@@ -175,7 +187,7 @@ export function PoseToolbar() {
 								: 'Play this pose’s motion'
 							: 'Pick a pose with motion to play'
 					}
-					disabled={!canPlay}
+					disabled={!canPlay || editing}
 					onClick={onPlayStop}
 				>
 					{playing ? '■ Stop' : '▶ Play'}
@@ -192,11 +204,24 @@ export function PoseToolbar() {
 				</button>
 				<button
 					className="poser-btn2"
-					title="Attach nearby drawn shapes to this figure's bones so they pose with the rig"
-					onClick={() => attachDrawing(editor, selectedFigure)}
+					title={
+						editing
+							? 'Finish editing: re-attach the drawing to the rig and lock it'
+							: 'Edit the drawing: snap to rest and unlock the artwork so you can redraw it'
+					}
+					onClick={() => toggleEdit(editor, selectedFigure)}
 				>
-					Apply rig
+					{editing ? '✓ Done' : '✎ Edit'}
 				</button>
+				{!editing && (
+					<button
+						className="poser-btn2"
+						title="Attach nearby drawn shapes to this figure's bones so they pose with the rig"
+						onClick={() => attachDrawing(editor, selectedFigure)}
+					>
+						Apply rig
+					</button>
+				)}
 				<button
 					className="poser-btn2"
 					title="Show or hide the bones (attached artwork keeps posing either way)"
