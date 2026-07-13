@@ -24,14 +24,25 @@ export interface PoseFrame {
 }
 
 /**
+ * A pose's catalog category. `locomotion` clips are cyclic (walk / run / idle /
+ * jump), seam-blended so they loop cleanly; `action` clips are one-shot expressive
+ * motions. The picker groups the two into separate `<optgroup>`s. Optional — older
+ * catalogs without the field fall back to `action` (see `poseCategory`).
+ */
+export type PoseCategory = 'locomotion' | 'action'
+
+/**
  * One entry in the bundled pose catalog. A `Pose` IS a `PoseFrame` (its static
  * mid-frame — what the picker applies) plus catalog metadata.
  *
- * - `name`   — display label (from the source motion's caption).
- * - `frames` — the full downsampled motion sequence for playback (rest → action →
+ * - `name`     — display label (from the source motion's caption).
+ * - `category` — `locomotion` vs `action`, for grouping in the picker (see
+ *   `PoseCategory`). Optional; absent → treated as `action`.
+ * - `frames`   — the full downsampled motion sequence for playback (rest → action →
  *   rest), each frame a `PoseFrame`. Optional: older catalogs (and any pose without
- *   motion) have none, so playback is simply unavailable for them.
- * - `fps`    — playback rate for `frames` (effective post-downsample fps). The
+ *   motion) have none, so playback is simply unavailable for them. For `locomotion`
+ *   clips the sequence is one seam-blended cycle, so looping it reads continuously.
+ * - `fps`      — playback rate for `frames` (effective post-downsample fps). The
  *   player advances by wall-clock time using this, so different stride lengths
  *   still play at real speed.
  *
@@ -39,8 +50,14 @@ export interface PoseFrame {
  */
 export interface Pose extends PoseFrame {
 	name: string
+	category?: PoseCategory
 	frames?: PoseFrame[]
 	fps?: number
+}
+
+/** A pose's category, defaulting to `action` for older catalog entries. */
+export function poseCategory(pose: Pose): PoseCategory {
+	return pose.category ?? 'action'
 }
 
 /** The bundled catalog, typed. */

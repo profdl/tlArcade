@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { Box, TldrawUiContextualToolbar, useEditor, useValue } from 'tldraw'
 import { useDragGesture } from './useDragGesture'
-import { applyPose, POSES } from '../poses/applyPose'
+import { applyPose, poseCategory, POSES } from '../poses/applyPose'
 import { attachDrawing } from '../poses/attachDrawing'
 import { bonesByName, figureId } from '../rig/buildFigure'
 import {
@@ -17,6 +17,19 @@ import {
 } from './posePlayer'
 import { rigVisible, toggleRig } from './rigVisibility'
 import { editingFigures, toggleEdit } from './editMode'
+
+// The picker splits poses into Locomotion (cyclic, seam-blended loops) and Actions
+// (one-shot). Each option's `value` stays the pose's index in the flat POSES array —
+// the onChange handler looks poses up by that index — so grouping is display-only.
+// Computed once at module scope since POSES is constant.
+const POSE_GROUPS: { label: string; items: { index: number; name: string }[] }[] = [
+	{ label: 'Locomotion', items: [] },
+	{ label: 'Actions', items: [] },
+]
+POSES.forEach((pose, index) => {
+	const group = poseCategory(pose) === 'locomotion' ? POSE_GROUPS[0] : POSE_GROUPS[1]
+	group.items.push({ index, name: pose.name })
+})
 
 /**
  * A floating pose picker that appears above a figure's HEAD when one or more of its
@@ -172,11 +185,17 @@ export function PoseToolbar() {
 					<option value="" disabled>
 						Choose a pose…
 					</option>
-					{POSES.map((pose, i) => (
-						<option key={i} value={i}>
-							{pose.name}
-						</option>
-					))}
+					{POSE_GROUPS.map((group) =>
+						group.items.length === 0 ? null : (
+							<optgroup key={group.label} label={group.label}>
+								{group.items.map(({ index, name }) => (
+									<option key={index} value={index}>
+										{name}
+									</option>
+								))}
+							</optgroup>
+						)
+					)}
 				</select>
 				<button
 					className="poser-btn2"

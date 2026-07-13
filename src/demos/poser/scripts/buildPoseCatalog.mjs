@@ -33,9 +33,26 @@ import { join } from 'node:path'
 const DATASET = 'TeoGchx/HumanML3D'
 const CONFIG = 'default'
 const SPLIT = 'test' // smaller split, plenty of variety for a demo catalog
-const POOL_SIZE = 400 // rows to consider
-const TARGET = 28 // poses to keep
+const POOL_SIZE = 600 // rows to consider (larger, so locomotion buckets fill reliably)
+const TARGET_ACTIONS = 22 // one-shot expressive poses to keep
 const MIN_DISTINCT = 55 // min angle-space distance (deg, RMS) between kept poses
+
+// Locomotion buckets — cyclic motions we always want represented, each with a caption
+// matcher and a guaranteed number of slots. These are pulled BEFORE the diverse-action
+// pass and seam-blended (see `loopify`) so they loop cleanly, unlike a raw mocap clip
+// whose settle-at-each-end start/end poses don't match. A bucket's `frames` become one
+// continuous cycle. `slots` is the max kept per bucket; fewer is fine if the pool is thin.
+const LOCOMOTION = [
+	{ key: 'walk', label: 'Walk', slots: 2, re: /\bwalk(s|ing)?\b/, exclude: /(backward|sit|stop|around|crouch)/ },
+	{ key: 'run', label: 'Run', slots: 2, re: /\b(run|runs|running|jog|jogs|jogging|sprint\w*)\b/, exclude: /sit/ },
+	{ key: 'jump', label: 'Jump', slots: 2, re: /\b(jump|jumps|jumping|hop|hops|leap\w*)\b/, exclude: null },
+	{ key: 'idle', label: 'Idle', slots: 2, re: /\b(idle|stand(s|ing)? (still|in place)|shifts? (his|her|their) weight)\b/, exclude: null },
+]
+
+// Fraction of a locomotion clip's frames to cross-blend across the loop seam, so the
+// last frame eases back into the first with no visible pop. 0.25 = blend the final
+// quarter of the cycle toward the opening quarter.
+const SEAM_BLEND = 0.25
 
 // Motion-playback sampling. HumanML3D is captured at 20fps. We downsample each
 // motion to at most MAX_FRAMES evenly-spaced keyframes (stride chosen per motion)
@@ -142,6 +159,54 @@ function framesFromMotion(m) {
 	return { frames, fps: +(SRC_FPS / stride).toFixed(2) }
 }
 
+// ── Seam-blending for looping locomotion ─────────────────────────────────────
+// A raw mocap clip settles to a rest pose at each end, so its first and last frames
+// don't match — looping it pops. For cyclic motions (walk/run/idle/jump) we cross-
+// blend the tail of the clip back toward its head so frame N-1 → frame 0 is continuous.
+
+// Shortest-path circular interpolation between two angles (deg). Lerping raw degrees
+// would take the long way around the +180/-180 seam; this always eases the short arc.
+function lerpAngle(a, b, t) {
+	let d = ((b - a) % 360 + 540) % 360 - 180 // signed shortest delta in (-180, 180]
+	return a + d * t
+}
+
+// Blend one PoseFrame toward another by t∈[0,1] — every bone angle plus the pelvis
+// drop/lean. Bones present in only one frame are carried through unchanged.
+function blendFrames(a, b, t) {
+	const angles = { ...a.angles }
+	for (const k in b.angles) {
+		angles[k] = k in a.angles ? +lerpAngle(a.angles[k], b.angles[k], t).toFixed(1) : b.angles[k]
+	}
+	let pelvis = a.pelvis ?? b.pelvis
+	if (a.pelvis && b.pelvis) {
+		pelvis = {
+			drop: +(a.pelvis.drop + (b.pelvis.drop - a.pelvis.drop) * t).toFixed(0),
+			lean: +lerpAngle(a.pelvis.lean, b.pelvis.lean, t).toFixed(1),
+		}
+	}
+	return { angles, pelvis }
+}
+
+// Make `frames` loop seamlessly: cross-blend the final SEAM_BLEND fraction of the clip
+// toward the opening frames, ramping the blend weight from 0 (start of the seam window)
+// to full (last frame) so the clip eases into its own start. Returns a new frame array.
+// A clip too short to blend (<4 frames) is returned unchanged.
+function loopify(frames) {
+	const n = frames.length
+	if (n < 4) return frames
+	const window = Math.max(1, Math.round(n * SEAM_BLEND))
+	const out = frames.map((f) => ({ angles: { ...f.angles }, pelvis: f.pelvis ? { ...f.pelvis } : undefined }))
+	for (let i = 0; i < window; i++) {
+		const idx = n - window + i // frame being adjusted, walking toward the end
+		const t = (i + 1) / window // 0 → 1 across the window, full blend at the last frame
+		// Pull toward the head of the clip: the earlier the head frame, the more the tail
+		// resembles the true loop point. Blend against the mirror-position opening frame.
+		out[idx] = blendFrames(out[idx], frames[i], t * 0.5)
+	}
+	return out
+}
+
 // HumanML3D captions carry POS-tagged tokens after a `#`; keep the plain sentence.
 function cleanCaption(c) {
 	const plain = String(c).split('#')[0].trim().replace(/\.$/, '')
@@ -160,11 +225,12 @@ function poseDistance(a, b) {
 	return Math.sqrt(sum)
 }
 
-// Caption heuristics: promote recognizable, expressive actions; demote plain walking
-// (whose mid-frame reads as a near-neutral stand and clutters the dropdown).
+// Caption heuristics for the ACTION pass: promote recognizable, expressive actions.
+// (Plain locomotion is no longer demoted here — walk/run/jump/idle are pulled first by
+// the dedicated LOCOMOTION buckets and removed from this pass, so what's left is the
+// grounded/expressive one-shots this scoring is meant to rank.)
 const EXPRESSIVE =
-	/(jump|kick|punch|dance|sit|squat|kneel|throw|wave|clap|reach|bend|stretch|salute|bow|crouch|lunge|balance|climb|swing|pick|raise|arms|hands up|cross|point|golf|box)/
-const PLAIN = /\b(walk|walks|walking)\b/
+	/(kick|punch|dance|sit|squat|kneel|throw|wave|clap|reach|bend|stretch|salute|bow|crouch|lunge|balance|climb|swing|pick|raise|arms|hands up|cross|point|golf|box)/
 
 // ── Source 1: HF datasets-server REST API ────────────────────────────────────
 // The datasets-server API is occasionally flaky (transient 502/503). Retry with
@@ -264,28 +330,81 @@ async function main() {
 		}
 	})
 
-	// Priority score: expressive actions rank up, plain walking ranks down, and
-	// genuinely grounded poses (meaningful pelvis drop) get an extra boost so the
-	// catalog actually includes sitting / kneeling / crouching now that the rig can
-	// render them.
-	const score = (c) =>
-		(EXPRESSIVE.test(c.caption) ? 2 : 0) - (PLAIN.test(c.caption) ? 1 : 0) + (c.pelvis.drop > 60 ? 2 : 0)
-	candidates.sort((a, b) => score(b) - score(a))
+	// Emit a chosen entry from a candidate, tagged with its category. For `locomotion`
+	// we seam-blend the frames into one clean loop (`loopify`) and use a mid-clip frame
+	// as the STATIC preview — a walk's true mid-stride reads as walking, whereas its
+	// settle-frame mid-point reads as a plain stand. Actions keep their settled mid-frame.
+	function toEntry(c, category) {
+		if (category === 'locomotion') {
+			const frames = loopify(c.frames)
+			const mid = frames[Math.floor(frames.length / 2)] ?? frames[0]
+			return {
+				name: c.name,
+				category,
+				angles: mid.angles,
+				pelvis: mid.pelvis,
+				frames,
+				fps: c.fps,
+			}
+		}
+		return { name: c.name, category, angles: c.angles, pelvis: c.pelvis, frames: c.frames, fps: c.fps }
+	}
 
 	const chosen = []
 	const seenNames = new Set()
-	for (const c of candidates) {
-		if (chosen.length >= TARGET) break
+	const usedCaptions = new Set() // captions consumed by locomotion, skipped by the action pass
+
+	// A candidate is admissible if it's not a near-duplicate NAME and its pose is angle-
+	// distinct from everything kept so far. Shared by both passes.
+	const admissible = (c) => {
 		const key = c.name.slice(0, 40)
-		if (seenNames.has(key)) continue
-		if (chosen.every((x) => poseDistance(x.angles, c.angles) > MIN_DISTINCT)) {
-			seenNames.add(key)
-			chosen.push({ name: c.name, angles: c.angles, pelvis: c.pelvis, frames: c.frames, fps: c.fps })
-		}
+		if (seenNames.has(key)) return false
+		return chosen.every((x) => poseDistance(x.angles, c.angles) > MIN_DISTINCT)
+	}
+	const keep = (c, category) => {
+		seenNames.add(c.name.slice(0, 40))
+		usedCaptions.add(c.caption)
+		chosen.push(toEntry(c, category))
 	}
 
+	// ── Pass 1: locomotion buckets ──────────────────────────────────────────────
+	// Fill each bucket up to its slot count with clips whose caption matches (and isn't
+	// excluded). Prefer clips with more frames — a longer capture gives a fuller cycle
+	// to blend into a loop than a 2-frame stub.
+	for (const bucket of LOCOMOTION) {
+		const matches = candidates
+			.filter((c) => bucket.re.test(c.caption) && !(bucket.exclude && bucket.exclude.test(c.caption)))
+			.sort((a, b) => b.frames.length - a.frames.length)
+		let filled = 0
+		for (const c of matches) {
+			if (filled >= bucket.slots) break
+			if (!admissible(c)) continue
+			keep(c, 'locomotion')
+			filled++
+		}
+		process.stderr.write(`  ${bucket.label}: ${filled}/${bucket.slots}\n`)
+	}
+
+	// ── Pass 2: diverse expressive actions ──────────────────────────────────────
+	// Rank by expressiveness + grounded-ness (pelvis drop), skipping captions already
+	// consumed by locomotion, and keep an angle-distinct spread up to TARGET_ACTIONS.
+	const score = (c) => (EXPRESSIVE.test(c.caption) ? 2 : 0) + (c.pelvis.drop > 60 ? 2 : 0)
+	const actions = candidates.filter((c) => !usedCaptions.has(c.caption)).sort((a, b) => score(b) - score(a))
+	let actionCount = 0
+	for (const c of actions) {
+		if (actionCount >= TARGET_ACTIONS) break
+		if (!admissible(c)) continue
+		keep(c, 'action')
+		actionCount++
+	}
+
+	// Sort output so locomotion leads (matching the picker's optgroup order); within a
+	// category, preserve insertion order (bucket order for locomotion, score for actions).
+	chosen.sort((a, b) => (a.category === b.category ? 0 : a.category === 'locomotion' ? -1 : 1))
+
+	const loco = chosen.filter((c) => c.category === 'locomotion').length
 	const grounded = chosen.filter((c) => c.pelvis.drop > 60).length
-	process.stderr.write(`kept ${chosen.length} distinct poses (${grounded} grounded)\n`)
+	process.stderr.write(`kept ${chosen.length} poses (${loco} locomotion, ${grounded} grounded)\n`)
 	process.stdout.write(JSON.stringify(chosen, null, 2) + '\n')
 }
 

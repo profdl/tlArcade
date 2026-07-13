@@ -1,5 +1,1925 @@
 [
   {
+    "name": "Walk (loop)",
+    "category": "locomotion",
+    "angles": {
+      "spine": -90,
+      "neck": -90,
+      "head": -90,
+      "upper-arm-r": 95,
+      "forearm-r": 100,
+      "upper-arm-l": 95,
+      "forearm-l": 100,
+      "thigh-r": 90,
+      "shin-r": 95,
+      "thigh-l": 90,
+      "shin-l": 95
+    },
+    "pelvis": {
+      "drop": 12,
+      "lean": -88
+    },
+    "frames": [
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 95,
+          "forearm-r": 100,
+          "upper-arm-l": 95,
+          "forearm-l": 100,
+          "thigh-r": 90,
+          "shin-r": 95,
+          "thigh-l": 90,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 12,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 90.3,
+          "forearm-r": 100,
+          "upper-arm-l": 99.7,
+          "forearm-l": 102.1,
+          "thigh-r": 95.7,
+          "shin-r": 95,
+          "thigh-l": 84.3,
+          "shin-l": 102.8
+        },
+        "pelvis": {
+          "drop": 11.8,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 86,
+          "forearm-r": 100,
+          "upper-arm-l": 104,
+          "forearm-l": 104,
+          "thigh-r": 101,
+          "shin-r": 95,
+          "thigh-l": 79,
+          "shin-l": 110
+        },
+        "pelvis": {
+          "drop": 11.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 82.3,
+          "forearm-r": 100,
+          "upper-arm-l": 107.7,
+          "forearm-l": 105.7,
+          "thigh-r": 105.6,
+          "shin-r": 95,
+          "thigh-l": 74.4,
+          "shin-l": 116.2
+        },
+        "pelvis": {
+          "drop": 10.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 79.4,
+          "forearm-r": 100,
+          "upper-arm-l": 110.6,
+          "forearm-l": 106.9,
+          "thigh-r": 109.1,
+          "shin-r": 95,
+          "thigh-l": 70.9,
+          "shin-l": 121
+        },
+        "pelvis": {
+          "drop": 9,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 77.6,
+          "forearm-r": 100,
+          "upper-arm-l": 112.4,
+          "forearm-l": 107.7,
+          "thigh-r": 111.3,
+          "shin-r": 95,
+          "thigh-l": 68.7,
+          "shin-l": 124
+        },
+        "pelvis": {
+          "drop": 7.6,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 77,
+          "forearm-r": 100,
+          "upper-arm-l": 113,
+          "forearm-l": 108,
+          "thigh-r": 112,
+          "shin-r": 95,
+          "thigh-l": 68,
+          "shin-l": 125
+        },
+        "pelvis": {
+          "drop": 6,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 77.6,
+          "forearm-r": 100,
+          "upper-arm-l": 112.4,
+          "forearm-l": 107.7,
+          "thigh-r": 111.3,
+          "shin-r": 95,
+          "thigh-l": 68.7,
+          "shin-l": 124
+        },
+        "pelvis": {
+          "drop": 7.6,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 79.4,
+          "forearm-r": 100,
+          "upper-arm-l": 110.6,
+          "forearm-l": 106.9,
+          "thigh-r": 109.1,
+          "shin-r": 95,
+          "thigh-l": 70.9,
+          "shin-l": 121
+        },
+        "pelvis": {
+          "drop": 9,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 82.3,
+          "forearm-r": 100,
+          "upper-arm-l": 107.7,
+          "forearm-l": 105.7,
+          "thigh-r": 105.6,
+          "shin-r": 95,
+          "thigh-l": 74.4,
+          "shin-l": 116.2
+        },
+        "pelvis": {
+          "drop": 10.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 86,
+          "forearm-r": 100,
+          "upper-arm-l": 104,
+          "forearm-l": 104,
+          "thigh-r": 101,
+          "shin-r": 95,
+          "thigh-l": 79,
+          "shin-l": 110
+        },
+        "pelvis": {
+          "drop": 11.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 90.3,
+          "forearm-r": 100,
+          "upper-arm-l": 99.7,
+          "forearm-l": 102.1,
+          "thigh-r": 95.7,
+          "shin-r": 95,
+          "thigh-l": 84.3,
+          "shin-l": 102.8
+        },
+        "pelvis": {
+          "drop": 11.8,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 95,
+          "forearm-r": 100,
+          "upper-arm-l": 95,
+          "forearm-l": 100,
+          "thigh-r": 90,
+          "shin-r": 95,
+          "thigh-l": 90,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 12,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 99.7,
+          "forearm-r": 102.1,
+          "upper-arm-l": 90.3,
+          "forearm-l": 100,
+          "thigh-r": 84.3,
+          "shin-r": 102.8,
+          "thigh-l": 95.7,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 11.8,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 104,
+          "forearm-r": 104,
+          "upper-arm-l": 86,
+          "forearm-l": 100,
+          "thigh-r": 79,
+          "shin-r": 110,
+          "thigh-l": 101,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 11.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 107.7,
+          "forearm-r": 105.7,
+          "upper-arm-l": 82.3,
+          "forearm-l": 100,
+          "thigh-r": 74.4,
+          "shin-r": 116.2,
+          "thigh-l": 105.6,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 10.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 110.6,
+          "forearm-r": 106.9,
+          "upper-arm-l": 79.4,
+          "forearm-l": 100,
+          "thigh-r": 70.9,
+          "shin-r": 121,
+          "thigh-l": 109.1,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 9,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 112.4,
+          "forearm-r": 107.7,
+          "upper-arm-l": 77.6,
+          "forearm-l": 100,
+          "thigh-r": 68.7,
+          "shin-r": 124,
+          "thigh-l": 111.3,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 7.6,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 113,
+          "forearm-r": 108,
+          "upper-arm-l": 77,
+          "forearm-l": 100,
+          "thigh-r": 68,
+          "shin-r": 125,
+          "thigh-l": 112,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 6,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 112.4,
+          "forearm-r": 107.7,
+          "upper-arm-l": 77.6,
+          "forearm-l": 100,
+          "thigh-r": 68.7,
+          "shin-r": 124,
+          "thigh-l": 111.3,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 7.6,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 110.6,
+          "forearm-r": 106.9,
+          "upper-arm-l": 79.4,
+          "forearm-l": 100,
+          "thigh-r": 70.9,
+          "shin-r": 121,
+          "thigh-l": 109.1,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 9,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 107.7,
+          "forearm-r": 105.7,
+          "upper-arm-l": 82.3,
+          "forearm-l": 100,
+          "thigh-r": 74.4,
+          "shin-r": 116.2,
+          "thigh-l": 105.6,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 10.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 104,
+          "forearm-r": 104,
+          "upper-arm-l": 86,
+          "forearm-l": 100,
+          "thigh-r": 79,
+          "shin-r": 110,
+          "thigh-l": 101,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 11.2,
+          "lean": -88
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 99.7,
+          "forearm-r": 102.1,
+          "upper-arm-l": 90.3,
+          "forearm-l": 100,
+          "thigh-r": 84.3,
+          "shin-r": 102.8,
+          "thigh-l": 95.7,
+          "shin-l": 95
+        },
+        "pelvis": {
+          "drop": 11.8,
+          "lean": -88
+        }
+      }
+    ],
+    "fps": 12
+  },
+  {
+    "name": "Run (loop)",
+    "category": "locomotion",
+    "angles": {
+      "spine": -78,
+      "neck": -82,
+      "head": -82,
+      "upper-arm-r": 70,
+      "forearm-r": 55,
+      "upper-arm-l": 70,
+      "forearm-l": 55,
+      "thigh-r": 90,
+      "shin-r": 80,
+      "thigh-l": 90,
+      "shin-l": 80
+    },
+    "pelvis": {
+      "drop": 10,
+      "lean": -78
+    },
+    "frames": [
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 70,
+          "forearm-r": 55,
+          "upper-arm-l": 70,
+          "forearm-l": 55,
+          "thigh-r": 90,
+          "shin-r": 80,
+          "thigh-l": 90,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 10,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 58.4,
+          "forearm-r": 55,
+          "upper-arm-l": 81.6,
+          "forearm-l": 55,
+          "thigh-r": 100.4,
+          "shin-r": 80,
+          "thigh-l": 79.6,
+          "shin-l": 94.2
+        },
+        "pelvis": {
+          "drop": 9.7,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 47.5,
+          "forearm-r": 55,
+          "upper-arm-l": 92.5,
+          "forearm-l": 55,
+          "thigh-r": 110,
+          "shin-r": 80,
+          "thigh-l": 70,
+          "shin-l": 107.5
+        },
+        "pelvis": {
+          "drop": 8.7,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 38.2,
+          "forearm-r": 55,
+          "upper-arm-l": 101.8,
+          "forearm-l": 55,
+          "thigh-r": 118.3,
+          "shin-r": 80,
+          "thigh-l": 61.7,
+          "shin-l": 118.9
+        },
+        "pelvis": {
+          "drop": 7.1,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 31,
+          "forearm-r": 55,
+          "upper-arm-l": 109,
+          "forearm-l": 55,
+          "thigh-r": 124.6,
+          "shin-r": 80,
+          "thigh-l": 55.4,
+          "shin-l": 127.6
+        },
+        "pelvis": {
+          "drop": 5,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 26.5,
+          "forearm-r": 55,
+          "upper-arm-l": 113.5,
+          "forearm-l": 55,
+          "thigh-r": 128.6,
+          "shin-r": 80,
+          "thigh-l": 51.4,
+          "shin-l": 133.1
+        },
+        "pelvis": {
+          "drop": 2.6,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 25,
+          "forearm-r": 55,
+          "upper-arm-l": 115,
+          "forearm-l": 55,
+          "thigh-r": 130,
+          "shin-r": 80,
+          "thigh-l": 50,
+          "shin-l": 135
+        },
+        "pelvis": {
+          "drop": 0,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 26.5,
+          "forearm-r": 55,
+          "upper-arm-l": 113.5,
+          "forearm-l": 55,
+          "thigh-r": 128.6,
+          "shin-r": 80,
+          "thigh-l": 51.4,
+          "shin-l": 133.1
+        },
+        "pelvis": {
+          "drop": 2.6,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 31,
+          "forearm-r": 55,
+          "upper-arm-l": 109,
+          "forearm-l": 55,
+          "thigh-r": 124.6,
+          "shin-r": 80,
+          "thigh-l": 55.4,
+          "shin-l": 127.6
+        },
+        "pelvis": {
+          "drop": 5,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 38.2,
+          "forearm-r": 55,
+          "upper-arm-l": 101.8,
+          "forearm-l": 55,
+          "thigh-r": 118.3,
+          "shin-r": 80,
+          "thigh-l": 61.7,
+          "shin-l": 118.9
+        },
+        "pelvis": {
+          "drop": 7.1,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 47.5,
+          "forearm-r": 55,
+          "upper-arm-l": 92.5,
+          "forearm-l": 55,
+          "thigh-r": 110,
+          "shin-r": 80,
+          "thigh-l": 70,
+          "shin-l": 107.5
+        },
+        "pelvis": {
+          "drop": 8.7,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 58.4,
+          "forearm-r": 55,
+          "upper-arm-l": 81.6,
+          "forearm-l": 55,
+          "thigh-r": 100.4,
+          "shin-r": 80,
+          "thigh-l": 79.6,
+          "shin-l": 94.2
+        },
+        "pelvis": {
+          "drop": 9.7,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 70,
+          "forearm-r": 55,
+          "upper-arm-l": 70,
+          "forearm-l": 55,
+          "thigh-r": 90,
+          "shin-r": 80,
+          "thigh-l": 90,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 10,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 81.6,
+          "forearm-r": 55,
+          "upper-arm-l": 58.4,
+          "forearm-l": 55,
+          "thigh-r": 79.6,
+          "shin-r": 94.2,
+          "thigh-l": 100.4,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 9.7,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 92.5,
+          "forearm-r": 55,
+          "upper-arm-l": 47.5,
+          "forearm-l": 55,
+          "thigh-r": 70,
+          "shin-r": 107.5,
+          "thigh-l": 110,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 8.7,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 101.8,
+          "forearm-r": 55,
+          "upper-arm-l": 38.2,
+          "forearm-l": 55,
+          "thigh-r": 61.7,
+          "shin-r": 118.9,
+          "thigh-l": 118.3,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 7.1,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 109,
+          "forearm-r": 55,
+          "upper-arm-l": 31,
+          "forearm-l": 55,
+          "thigh-r": 55.4,
+          "shin-r": 127.6,
+          "thigh-l": 124.6,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 5,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 113.5,
+          "forearm-r": 55,
+          "upper-arm-l": 26.5,
+          "forearm-l": 55,
+          "thigh-r": 51.4,
+          "shin-r": 133.1,
+          "thigh-l": 128.6,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 2.6,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 115,
+          "forearm-r": 55,
+          "upper-arm-l": 25,
+          "forearm-l": 55,
+          "thigh-r": 50,
+          "shin-r": 135,
+          "thigh-l": 130,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 0,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 113.5,
+          "forearm-r": 55,
+          "upper-arm-l": 26.5,
+          "forearm-l": 55,
+          "thigh-r": 51.4,
+          "shin-r": 133.1,
+          "thigh-l": 128.6,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 2.6,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 109,
+          "forearm-r": 55,
+          "upper-arm-l": 31,
+          "forearm-l": 55,
+          "thigh-r": 55.4,
+          "shin-r": 127.6,
+          "thigh-l": 124.6,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 5,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 101.8,
+          "forearm-r": 55,
+          "upper-arm-l": 38.2,
+          "forearm-l": 55,
+          "thigh-r": 61.7,
+          "shin-r": 118.9,
+          "thigh-l": 118.3,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 7.1,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 92.5,
+          "forearm-r": 55,
+          "upper-arm-l": 47.5,
+          "forearm-l": 55,
+          "thigh-r": 70,
+          "shin-r": 107.5,
+          "thigh-l": 110,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 8.7,
+          "lean": -78
+        }
+      },
+      {
+        "angles": {
+          "spine": -78,
+          "neck": -82,
+          "head": -82,
+          "upper-arm-r": 81.6,
+          "forearm-r": 55,
+          "upper-arm-l": 58.4,
+          "forearm-l": 55,
+          "thigh-r": 79.6,
+          "shin-r": 94.2,
+          "thigh-l": 100.4,
+          "shin-l": 80
+        },
+        "pelvis": {
+          "drop": 9.7,
+          "lean": -78
+        }
+      }
+    ],
+    "fps": 16
+  },
+  {
+    "name": "Idle (loop)",
+    "category": "locomotion",
+    "angles": {
+      "spine": -90,
+      "neck": -90,
+      "head": -90,
+      "upper-arm-r": 100,
+      "forearm-r": 102,
+      "upper-arm-l": 100,
+      "forearm-l": 102,
+      "thigh-r": 90,
+      "shin-r": 92,
+      "thigh-l": 90,
+      "shin-l": 92
+    },
+    "pelvis": {
+      "drop": 2,
+      "lean": -90
+    },
+    "frames": [
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 100,
+          "forearm-r": 102,
+          "upper-arm-l": 100,
+          "forearm-l": 102,
+          "thigh-r": 90,
+          "shin-r": 92,
+          "thigh-l": 90,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 2,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.8,
+          "neck": -90,
+          "head": -89.6,
+          "upper-arm-r": 100.3,
+          "forearm-r": 102,
+          "upper-arm-l": 100.3,
+          "forearm-l": 102,
+          "thigh-r": 90.4,
+          "shin-r": 92,
+          "thigh-l": 89.6,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 2.5,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.6,
+          "neck": -90,
+          "head": -89.3,
+          "upper-arm-r": 100.6,
+          "forearm-r": 102,
+          "upper-arm-l": 100.6,
+          "forearm-l": 102,
+          "thigh-r": 90.8,
+          "shin-r": 92,
+          "thigh-l": 89.3,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.5,
+          "neck": -90,
+          "head": -88.9,
+          "upper-arm-r": 100.8,
+          "forearm-r": 102,
+          "upper-arm-l": 100.8,
+          "forearm-l": 102,
+          "thigh-r": 91.1,
+          "shin-r": 92,
+          "thigh-l": 88.9,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3.4,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.4,
+          "neck": -90,
+          "head": -88.7,
+          "upper-arm-r": 101,
+          "forearm-r": 102,
+          "upper-arm-l": 101,
+          "forearm-l": 102,
+          "thigh-r": 91.3,
+          "shin-r": 92,
+          "thigh-l": 88.7,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3.7,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.3,
+          "neck": -90,
+          "head": -88.6,
+          "upper-arm-r": 101.2,
+          "forearm-r": 102,
+          "upper-arm-l": 101.2,
+          "forearm-l": 102,
+          "thigh-r": 91.4,
+          "shin-r": 92,
+          "thigh-l": 88.6,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3.9,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.3,
+          "neck": -90,
+          "head": -88.5,
+          "upper-arm-r": 101.2,
+          "forearm-r": 102,
+          "upper-arm-l": 101.2,
+          "forearm-l": 102,
+          "thigh-r": 91.5,
+          "shin-r": 92,
+          "thigh-l": 88.5,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 4,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.3,
+          "neck": -90,
+          "head": -88.6,
+          "upper-arm-r": 101.2,
+          "forearm-r": 102,
+          "upper-arm-l": 101.2,
+          "forearm-l": 102,
+          "thigh-r": 91.4,
+          "shin-r": 92,
+          "thigh-l": 88.6,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3.9,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.4,
+          "neck": -90,
+          "head": -88.7,
+          "upper-arm-r": 101,
+          "forearm-r": 102,
+          "upper-arm-l": 101,
+          "forearm-l": 102,
+          "thigh-r": 91.3,
+          "shin-r": 92,
+          "thigh-l": 88.7,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3.7,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.5,
+          "neck": -90,
+          "head": -88.9,
+          "upper-arm-r": 100.8,
+          "forearm-r": 102,
+          "upper-arm-l": 100.8,
+          "forearm-l": 102,
+          "thigh-r": 91.1,
+          "shin-r": 92,
+          "thigh-l": 88.9,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3.4,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.6,
+          "neck": -90,
+          "head": -89.3,
+          "upper-arm-r": 100.6,
+          "forearm-r": 102,
+          "upper-arm-l": 100.6,
+          "forearm-l": 102,
+          "thigh-r": 90.8,
+          "shin-r": 92,
+          "thigh-l": 89.3,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.8,
+          "neck": -90,
+          "head": -89.6,
+          "upper-arm-r": 100.3,
+          "forearm-r": 102,
+          "upper-arm-l": 100.3,
+          "forearm-l": 102,
+          "thigh-r": 90.4,
+          "shin-r": 92,
+          "thigh-l": 89.6,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 2.5,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 100,
+          "forearm-r": 102,
+          "upper-arm-l": 100,
+          "forearm-l": 102,
+          "thigh-r": 90,
+          "shin-r": 92,
+          "thigh-l": 90,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 2,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.2,
+          "neck": -90,
+          "head": -90.4,
+          "upper-arm-r": 99.7,
+          "forearm-r": 102,
+          "upper-arm-l": 99.7,
+          "forearm-l": 102,
+          "thigh-r": 89.6,
+          "shin-r": 92,
+          "thigh-l": 90.4,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 1.5,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.4,
+          "neck": -90,
+          "head": -90.8,
+          "upper-arm-r": 99.4,
+          "forearm-r": 102,
+          "upper-arm-l": 99.4,
+          "forearm-l": 102,
+          "thigh-r": 89.3,
+          "shin-r": 92,
+          "thigh-l": 90.8,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 1,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.5,
+          "neck": -90,
+          "head": -91.1,
+          "upper-arm-r": 99.2,
+          "forearm-r": 102,
+          "upper-arm-l": 99.2,
+          "forearm-l": 102,
+          "thigh-r": 88.9,
+          "shin-r": 92,
+          "thigh-l": 91.1,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 0.6,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.6,
+          "neck": -90,
+          "head": -91.3,
+          "upper-arm-r": 99,
+          "forearm-r": 102,
+          "upper-arm-l": 99,
+          "forearm-l": 102,
+          "thigh-r": 88.7,
+          "shin-r": 92,
+          "thigh-l": 91.3,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 0.3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.7,
+          "neck": -90,
+          "head": -91.4,
+          "upper-arm-r": 98.8,
+          "forearm-r": 102,
+          "upper-arm-l": 98.8,
+          "forearm-l": 102,
+          "thigh-r": 88.6,
+          "shin-r": 92,
+          "thigh-l": 91.4,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 0.1,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.8,
+          "neck": -90,
+          "head": -91.5,
+          "upper-arm-r": 98.8,
+          "forearm-r": 102,
+          "upper-arm-l": 98.8,
+          "forearm-l": 102,
+          "thigh-r": 88.5,
+          "shin-r": 92,
+          "thigh-l": 91.5,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 0,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.7,
+          "neck": -90,
+          "head": -91.4,
+          "upper-arm-r": 98.8,
+          "forearm-r": 102,
+          "upper-arm-l": 98.8,
+          "forearm-l": 102,
+          "thigh-r": 88.6,
+          "shin-r": 92,
+          "thigh-l": 91.4,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 0.1,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.6,
+          "neck": -90,
+          "head": -91.3,
+          "upper-arm-r": 99,
+          "forearm-r": 102,
+          "upper-arm-l": 99,
+          "forearm-l": 102,
+          "thigh-r": 88.7,
+          "shin-r": 92,
+          "thigh-l": 91.3,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 0.3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.5,
+          "neck": -90,
+          "head": -91.1,
+          "upper-arm-r": 99.2,
+          "forearm-r": 102,
+          "upper-arm-l": 99.2,
+          "forearm-l": 102,
+          "thigh-r": 88.9,
+          "shin-r": 92,
+          "thigh-l": 91.1,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 0.6,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.4,
+          "neck": -90,
+          "head": -90.8,
+          "upper-arm-r": 99.4,
+          "forearm-r": 102,
+          "upper-arm-l": 99.4,
+          "forearm-l": 102,
+          "thigh-r": 89.3,
+          "shin-r": 92,
+          "thigh-l": 90.8,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 1,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90.2,
+          "neck": -90,
+          "head": -90.4,
+          "upper-arm-r": 99.7,
+          "forearm-r": 102,
+          "upper-arm-l": 99.7,
+          "forearm-l": 102,
+          "thigh-r": 89.6,
+          "shin-r": 92,
+          "thigh-l": 90.4,
+          "shin-l": 92
+        },
+        "pelvis": {
+          "drop": 1.5,
+          "lean": -90
+        }
+      }
+    ],
+    "fps": 8
+  },
+  {
+    "name": "Jump (loop)",
+    "category": "locomotion",
+    "angles": {
+      "spine": -90,
+      "neck": -90,
+      "head": -90,
+      "upper-arm-r": -80,
+      "forearm-r": 70,
+      "upper-arm-l": -80,
+      "forearm-l": 70,
+      "thigh-r": 95,
+      "shin-r": 85,
+      "thigh-l": 95,
+      "shin-l": 85
+    },
+    "pelvis": {
+      "drop": 0,
+      "lean": -90
+    },
+    "frames": [
+      {
+        "angles": {
+          "spine": -82,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 90,
+          "forearm-r": 90,
+          "upper-arm-l": 90,
+          "forearm-l": 90,
+          "thigh-r": 75,
+          "shin-r": 145,
+          "thigh-l": 75,
+          "shin-l": 145
+        },
+        "pelvis": {
+          "drop": 70,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -82.1,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 87.1,
+          "forearm-r": 89.7,
+          "upper-arm-l": 87.1,
+          "forearm-l": 89.7,
+          "thigh-r": 75.3,
+          "shin-r": 144,
+          "thigh-l": 75.3,
+          "shin-l": 144
+        },
+        "pelvis": {
+          "drop": 68.8,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -82.5,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 78.6,
+          "forearm-r": 88.7,
+          "upper-arm-l": 78.6,
+          "forearm-l": 88.7,
+          "thigh-r": 76.3,
+          "shin-r": 141,
+          "thigh-l": 76.3,
+          "shin-l": 141
+        },
+        "pelvis": {
+          "drop": 65.3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -83.2,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 65.1,
+          "forearm-r": 87.1,
+          "upper-arm-l": 65.1,
+          "forearm-l": 87.1,
+          "thigh-r": 77.9,
+          "shin-r": 136.2,
+          "thigh-l": 77.9,
+          "shin-l": 136.2
+        },
+        "pelvis": {
+          "drop": 59.7,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -84,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 47.5,
+          "forearm-r": 85,
+          "upper-arm-l": 47.5,
+          "forearm-l": 85,
+          "thigh-r": 80,
+          "shin-r": 130,
+          "thigh-l": 80,
+          "shin-l": 130
+        },
+        "pelvis": {
+          "drop": 52.5,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -85,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 27,
+          "forearm-r": 82.6,
+          "upper-arm-l": 27,
+          "forearm-l": 82.6,
+          "thigh-r": 82.4,
+          "shin-r": 122.8,
+          "thigh-l": 82.4,
+          "shin-l": 122.8
+        },
+        "pelvis": {
+          "drop": 44.1,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -86,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 5,
+          "forearm-r": 80,
+          "upper-arm-l": 5,
+          "forearm-l": 80,
+          "thigh-r": 85,
+          "shin-r": 115,
+          "thigh-l": 85,
+          "shin-l": 115
+        },
+        "pelvis": {
+          "drop": 35,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -87,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -17,
+          "forearm-r": 77.4,
+          "upper-arm-l": -17,
+          "forearm-l": 77.4,
+          "thigh-r": 87.6,
+          "shin-r": 107.2,
+          "thigh-l": 87.6,
+          "shin-l": 107.2
+        },
+        "pelvis": {
+          "drop": 25.9,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -88,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -37.5,
+          "forearm-r": 75,
+          "upper-arm-l": -37.5,
+          "forearm-l": 75,
+          "thigh-r": 90,
+          "shin-r": 100,
+          "thigh-l": 90,
+          "shin-l": 100
+        },
+        "pelvis": {
+          "drop": 17.5,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -88.8,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -55.1,
+          "forearm-r": 72.9,
+          "upper-arm-l": -55.1,
+          "forearm-l": 72.9,
+          "thigh-r": 92.1,
+          "shin-r": 93.8,
+          "thigh-l": 92.1,
+          "shin-l": 93.8
+        },
+        "pelvis": {
+          "drop": 10.3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.5,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -68.6,
+          "forearm-r": 71.3,
+          "upper-arm-l": -68.6,
+          "forearm-l": 71.3,
+          "thigh-r": 93.7,
+          "shin-r": 89,
+          "thigh-l": 93.7,
+          "shin-l": 89
+        },
+        "pelvis": {
+          "drop": 4.7,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.9,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -77.1,
+          "forearm-r": 70.3,
+          "upper-arm-l": -77.1,
+          "forearm-l": 70.3,
+          "thigh-r": 94.7,
+          "shin-r": 86,
+          "thigh-l": 94.7,
+          "shin-l": 86
+        },
+        "pelvis": {
+          "drop": 1.2,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -90,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -80,
+          "forearm-r": 70,
+          "upper-arm-l": -80,
+          "forearm-l": 70,
+          "thigh-r": 95,
+          "shin-r": 85,
+          "thigh-l": 95,
+          "shin-l": 85
+        },
+        "pelvis": {
+          "drop": 0,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.9,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -77.1,
+          "forearm-r": 70.3,
+          "upper-arm-l": -77.1,
+          "forearm-l": 70.3,
+          "thigh-r": 94.7,
+          "shin-r": 86,
+          "thigh-l": 94.7,
+          "shin-l": 86
+        },
+        "pelvis": {
+          "drop": 1.2,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -89.5,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -68.6,
+          "forearm-r": 71.3,
+          "upper-arm-l": -68.6,
+          "forearm-l": 71.3,
+          "thigh-r": 93.7,
+          "shin-r": 89,
+          "thigh-l": 93.7,
+          "shin-l": 89
+        },
+        "pelvis": {
+          "drop": 4.7,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -88.8,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -55.1,
+          "forearm-r": 72.9,
+          "upper-arm-l": -55.1,
+          "forearm-l": 72.9,
+          "thigh-r": 92.1,
+          "shin-r": 93.8,
+          "thigh-l": 92.1,
+          "shin-l": 93.8
+        },
+        "pelvis": {
+          "drop": 10.3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -88,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -37.5,
+          "forearm-r": 75,
+          "upper-arm-l": -37.5,
+          "forearm-l": 75,
+          "thigh-r": 90,
+          "shin-r": 100,
+          "thigh-l": 90,
+          "shin-l": 100
+        },
+        "pelvis": {
+          "drop": 17.5,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -87,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": -17,
+          "forearm-r": 77.4,
+          "upper-arm-l": -17,
+          "forearm-l": 77.4,
+          "thigh-r": 87.6,
+          "shin-r": 107.2,
+          "thigh-l": 87.6,
+          "shin-l": 107.2
+        },
+        "pelvis": {
+          "drop": 25.9,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -86,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 5,
+          "forearm-r": 80,
+          "upper-arm-l": 5,
+          "forearm-l": 80,
+          "thigh-r": 85,
+          "shin-r": 115,
+          "thigh-l": 85,
+          "shin-l": 115
+        },
+        "pelvis": {
+          "drop": 35,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -85,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 27,
+          "forearm-r": 82.6,
+          "upper-arm-l": 27,
+          "forearm-l": 82.6,
+          "thigh-r": 82.4,
+          "shin-r": 122.8,
+          "thigh-l": 82.4,
+          "shin-l": 122.8
+        },
+        "pelvis": {
+          "drop": 44.1,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -84,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 47.5,
+          "forearm-r": 85,
+          "upper-arm-l": 47.5,
+          "forearm-l": 85,
+          "thigh-r": 80,
+          "shin-r": 130,
+          "thigh-l": 80,
+          "shin-l": 130
+        },
+        "pelvis": {
+          "drop": 52.5,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -83.2,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 65.1,
+          "forearm-r": 87.1,
+          "upper-arm-l": 65.1,
+          "forearm-l": 87.1,
+          "thigh-r": 77.9,
+          "shin-r": 136.2,
+          "thigh-l": 77.9,
+          "shin-l": 136.2
+        },
+        "pelvis": {
+          "drop": 59.7,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -82.5,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 78.6,
+          "forearm-r": 88.7,
+          "upper-arm-l": 78.6,
+          "forearm-l": 88.7,
+          "thigh-r": 76.3,
+          "shin-r": 141,
+          "thigh-l": 76.3,
+          "shin-l": 141
+        },
+        "pelvis": {
+          "drop": 65.3,
+          "lean": -90
+        }
+      },
+      {
+        "angles": {
+          "spine": -82.1,
+          "neck": -90,
+          "head": -90,
+          "upper-arm-r": 87.1,
+          "forearm-r": 89.7,
+          "upper-arm-l": 87.1,
+          "forearm-l": 89.7,
+          "thigh-r": 75.3,
+          "shin-r": 144,
+          "thigh-l": 75.3,
+          "shin-l": 144
+        },
+        "pelvis": {
+          "drop": 68.8,
+          "lean": -90
+        }
+      }
+    ],
+    "fps": 14
+  },
+  {
     "name": "Person is bent down trying to pick up stuff, left…",
     "angles": {
       "spine": -72,

@@ -54,6 +54,27 @@ while letting it swing independently.
   > a throwaway venv) when the datasets-server is down — so the build is
   > outage-proof. Re-run it to refresh the catalog; no runtime code changes needed.
 
+- **Locomotion vs. actions** — each pose carries a `category`
+  (`'locomotion' | 'action'`, see [poses/applyPose.ts](poses/applyPose.ts)) and the
+  picker groups the two into `<optgroup>`s. `locomotion` clips (walk / run / idle /
+  jump) are **cyclic** — meant to be looped — so they're seam-blended into one clean
+  cycle, whereas `action` clips are one-shot expressive motions.
+
+  Two ways to add clips:
+  1. **Mocap (realistic):** [scripts/buildPoseCatalog.mjs](scripts/buildPoseCatalog.mjs)
+     now runs a two-pass selection — it first fills the `LOCOMOTION` buckets (caption-
+     matched, `slots`-capped) and seam-blends each clip's tail back into its head via
+     `loopify` so it loops without a pop, then fills the diverse `action` set. To add a
+     locomotion category or widen one, edit the `LOCOMOTION` table (its `re` / `exclude`
+     caption matchers and `slots`); re-run the script to regenerate `poseCatalog.json`.
+  2. **Procedural (perfectly loopable, offline):**
+     [scripts/synthLocomotion.mjs](scripts/synthLocomotion.mjs) synthesizes walk / run /
+     idle / jump as sinusoidal, phase-driven cycles — every channel is a function of a
+     phase that closes on itself, so the loop is seamless by construction and needs no
+     network/HF access. It **prepends** its clips to the catalog (idempotent: re-running
+     replaces its own entries, leaves mocap ones alone). Copy one of its `makeClip`
+     generators to author a new hand-tuned cycle.
+
 - **Multiple figures** — "Add figure" spawns more. Every bone carries
   `meta.figureId` (its pelvis id), so pose application, IK discovery, and the
   toolbar all group/filter by figure. Bone `name`s repeat across figures; the
