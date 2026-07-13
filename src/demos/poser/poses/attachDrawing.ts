@@ -1,26 +1,27 @@
-import { createBindingId, type Editor, type TLShapeId } from 'tldraw'
+import { createBindingId, type Editor, type TLDrawShape, type TLShapeId } from 'tldraw'
 import { boneTailLocal, type BoneShape } from '../shapes/boneShape'
 import { bonesByName } from '../rig/buildFigure'
+import { cutStrokeAtJoints, distToSegment, type ResolvedBone } from './cutStrokeAtJoints'
 
 /**
- * "Apply rig": bind every free-drawn shape near a figure to the nearest bone, so the
- * drawing rides the rig and poses with it.
+ * "Apply rig": bind every free-drawn shape near a figure to the rig so the drawing
+ * rides it and poses with it.
  *
- * Flow (the chosen UX): the user drags the rig over their drawing, lines the bones
- * up with the limbs, then calls this. For each non-bone shape we find the bone whose
- * centerline (head→tail segment) passes closest to the shape's center, capture the
- * shape's rigid offset in that bone's local frame, and create a `bone-attachment`
- * binding. From then on the BoneAttachmentBindingUtil keeps the shape glued to that
- * bone through every pose.
+ * Two behaviors by shape type:
+ * - **Draw strokes** are CUT at the joints (cutStrokeAtJoints): a limb drawn as one
+ *   line is split into per-bone pieces so it folds at the elbow/knee when posed.
+ * - **Everything else** (geo, image, text…) is attached rigidly to the single
+ *   nearest bone, keeping its shape and riding that bone.
  *
- * Returns the number of shapes attached.
+ * Flow (the chosen UX): drag the rig over the drawing, line the bones up, then call
+ * this. Returns the number of pieces/shapes now attached.
  */
 export function attachDrawing(editor: Editor, figure: TLShapeId): number {
 	const boneIds = [...bonesByName(editor, figure).values()]
 	if (boneIds.length === 0) return 0
 
-	// Pre-resolve each bone's page-space segment (head→tail) + transform once.
-	const bones = boneIds.map((id) => {
+	// Pre-resolve each bone's page-space centerline (head→tail) + transform once.
+	const bones: ResolvedBone[] = boneIds.map((id) => {
 		const bone = editor.getShape(id) as BoneShape
 		const t = editor.getShapePageTransform(id)
 		return {
@@ -31,64 +32,68 @@ export function attachDrawing(editor: Editor, figure: TLShapeId): number {
 		}
 	})
 
-	// Candidate shapes: everything on the page that isn't a bone and isn't already
-	// attached. (A shape already riding a bone shouldn't be re-grabbed.)
+	// Shapes already riding this figure's bones shouldn't be re-grabbed.
 	const attachedShapeIds = new Set<TLShapeId>()
 	for (const b of editor.getBindingsInvolvingShape(figure)) {
 		if (b.type === 'bone-attachment') attachedShapeIds.add(b.toId)
 	}
 
+	// Snapshot the candidate list up front: cutStrokeAtJoints creates new draw shapes,
+	// and we must not re-process those in the same pass.
+	const candidates = editor
+		.getCurrentPageShapes()
+		.filter((s) => s.type !== 'poser-bone' && !attachedShapeIds.has(s.id))
+
 	let count = 0
 	editor.run(() => {
-		for (const shape of editor.getCurrentPageShapes()) {
-			if (shape.type === 'poser-bone') continue
-			if (attachedShapeIds.has(shape.id)) continue
-
-			const bounds = editor.getShapePageBounds(shape.id)
-			if (!bounds) continue
-			const center = { x: bounds.midX, y: bounds.midY }
-
-			// Nearest bone by distance from the shape center to the bone's centerline.
-			let best = bones[0]
-			let bestDist = Infinity
-			for (const b of bones) {
-				const d = distToSegment(center, b.head, b.tail)
-				if (d < bestDist) {
-					bestDist = d
-					best = b
+		for (const shape of candidates) {
+			if (shape.type === 'draw') {
+				const pieces = cutStrokeAtJoints(editor, shape as TLDrawShape, bones)
+				if (pieces > 0) {
+					count += pieces
+					continue
 				}
+				// Fell through (unreadable stroke) → rigid-attach as a fallback.
 			}
-
-			// Capture the shape origin in the bone's LOCAL frame (invert the bone's page
-			// transform), plus the shape's rotation relative to the bone's.
-			const shapePagePoint = editor.getShapePageTransform(shape.id).applyToPoint({ x: 0, y: 0 })
-			const local = best.transform.clone().invert().applyToPoint(shapePagePoint)
-			const rot = shape.rotation - best.transform.rotation()
-
-			editor.createBinding({
-				id: createBindingId(),
-				type: 'bone-attachment',
-				fromId: best.id, // the bone drives
-				toId: shape.id, // the drawing rides
-				props: { dx: local.x, dy: local.y, rot },
-			})
-			count++
+			if (rigidAttach(editor, shape.id, bones)) count++
 		}
 	})
 
 	return count
 }
 
-/** Perpendicular distance from point `p` to the segment `a`–`b` (page space). */
-function distToSegment(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
-	const abx = b.x - a.x
-	const aby = b.y - a.y
-	const apx = p.x - a.x
-	const apy = p.y - a.y
-	const lenSq = abx * abx + aby * aby
-	// t = clamped projection of ap onto ab, so we measure to the nearest point on the segment.
-	const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / lenSq))
-	const cx = a.x + t * abx
-	const cy = a.y + t * aby
-	return Math.hypot(p.x - cx, p.y - cy)
+/**
+ * Rigidly attach one shape to its single nearest bone: capture the shape's origin in
+ * that bone's local frame + its relative rotation, create a bone-attachment binding.
+ * Returns true if attached.
+ */
+function rigidAttach(editor: Editor, shapeId: TLShapeId, bones: ResolvedBone[]): boolean {
+	const bounds = editor.getShapePageBounds(shapeId)
+	if (!bounds) return false
+	const center = { x: bounds.midX, y: bounds.midY }
+
+	let best = bones[0]
+	let bestDist = Infinity
+	for (const b of bones) {
+		const d = distToSegment(center, b.head, b.tail)
+		if (d < bestDist) {
+			bestDist = d
+			best = b
+		}
+	}
+
+	const shape = editor.getShape(shapeId)
+	if (!shape) return false
+	const shapePagePoint = editor.getShapePageTransform(shapeId).applyToPoint({ x: 0, y: 0 })
+	const local = best.transform.clone().invert().applyToPoint(shapePagePoint)
+	const rot = shape.rotation - best.transform.rotation()
+
+	editor.createBinding({
+		id: createBindingId(),
+		type: 'bone-attachment',
+		fromId: best.id, // the bone drives
+		toId: shapeId, // the drawing rides
+		props: { dx: local.x, dy: local.y, rot },
+	})
+	return true
 }

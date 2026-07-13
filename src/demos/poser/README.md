@@ -48,12 +48,24 @@ while letting it swing independently.
   **Move** handle (drags the whole figure by its pelvis root), **Apply rig**, and
   **Show/Hide rig**.
 
-- **Rig a drawing** ([poses/attachDrawing.ts](poses/attachDrawing.ts),
-  [bindings/](bindings/)) — draw a figure with the normal tldraw tools, drag the
-  bone rig over it, then **Apply rig**: each drawn shape binds (`bone-attachment`)
-  to the nearest bone and stores its offset in that bone's local frame, so the art
-  poses along with the rig. **Hide rig** then shows just the posed artwork (bones
-  still exist and pose; only their rendering + IK handles are hidden).
+- **Rig a drawing** — draw a figure with the normal tldraw tools, then two ways to
+  fit a rig to it:
+  - **Rig mode** ([rig/jointMarkers.ts](rig/jointMarkers.ts),
+    [pose/RigModeOverlay.tsx](pose/RigModeOverlay.tsx),
+    [rig/buildFigureFromJoints.ts](rig/buildFigureFromJoints.ts)) — Mixamo-style.
+    "Rig a drawing" drops draggable joint markers (with a live preview skeleton);
+    place them on the art and **Build rig** constructs a figure whose bone lengths
+    and shoulder/hip widths come from the markers. So a drawing with short legs
+    gets short leg bones — the rig fits the body type, no distortion.
+  - **Apply rig** ([poses/attachDrawing.ts](poses/attachDrawing.ts),
+    [poses/cutStrokeAtJoints.ts](poses/cutStrokeAtJoints.ts),
+    [bindings/](bindings/)) — binds the drawing to the bones. A **draw stroke** is
+    **cut at the joints** into per-bone pieces (so a limb drawn as one line folds at
+    the elbow/knee when posed); any **other shape** (geo, image…) is attached rigidly
+    to its nearest bone. Attachments are `bone-attachment` bindings storing each
+    piece's offset in its bone's local frame.
+  - **Hide rig** then shows just the posed artwork (bones still exist and pose; only
+    their rendering + IK handles are hidden). A "Show rig" button restores them.
 
 ## Notes
 

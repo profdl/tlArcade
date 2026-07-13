@@ -1,3 +1,4 @@
+import { b64Vecs } from '@tldraw/tlschema'
 import { useCallback, useRef } from 'react'
 import { Tldraw, useValue, type Editor, type TLComponents } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -107,8 +108,8 @@ export default function App() {
 		}
 		if (import.meta.env.DEV) {
 			;(window as unknown as { __editor: Editor }).__editor = editor
-			// Test hooks for the headless-browser verification of rig mode.
-			;(window as unknown as { __rig: unknown }).__rig = { rigModeJoints, enterRigMode, exitRigMode }
+			// Test hooks for the headless-browser verification of rig mode + stroke cutting.
+			;(window as unknown as { __rig: unknown }).__rig = { rigModeJoints, enterRigMode, exitRigMode, b64Vecs }
 		}
 	}, [])
 
