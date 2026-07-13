@@ -110,7 +110,10 @@ export function playPose(
 			// Advance by however many frame-durations have elapsed (robust to a slow/
 			// backgrounded tab producing a large gap), but never skip past the end.
 			const advance = Math.floor(elapsed / frameDurationMs)
-			state.frameStart = now
+			// Carry the sub-frame remainder forward instead of resetting to `now`, so
+			// playback keeps real-time pace instead of drifting slow by up to one frame
+			// each advance.
+			state.frameStart += advance * frameDurationMs
 			index += advance
 
 			if (index >= frames.length) {

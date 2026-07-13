@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
-import { stopEventPropagation, useEditor, useValue } from 'tldraw'
+import { useEditor, useValue } from 'tldraw'
 import { JOINTS, rigModeJoints, setJoint, type JointKey } from '../rig/jointMarkers'
+import { useDragGesture } from './useDragGesture'
 
 const MARKER_RADIUS = 8 // px, screen-space
 
@@ -44,22 +45,14 @@ export function RigModeOverlay() {
 		[editor]
 	)
 
+	const startDragGesture = useDragGesture()
 	const startDrag = useCallback(
-		(key: JointKey) => (e: React.PointerEvent) => {
-			stopEventPropagation(e)
-			;(e.target as Element).setPointerCapture(e.pointerId)
-			const onMove = (ev: PointerEvent) => {
+		(key: JointKey) =>
+			startDragGesture((ev) => {
 				const p = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
 				setJoint(key, p.x, p.y)
-			}
-			const onUp = () => {
-				window.removeEventListener('pointermove', onMove)
-				window.removeEventListener('pointerup', onUp)
-			}
-			window.addEventListener('pointermove', onMove)
-			window.addEventListener('pointerup', onUp)
-		},
-		[editor]
+			}),
+		[editor, startDragGesture]
 	)
 
 	if (!view) return null

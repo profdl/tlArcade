@@ -115,6 +115,9 @@ export function buildFigureFromJoints(editor: Editor, joints: JointPositions): T
 				meta: { figureId },
 				props: {
 					length,
+					// Uniform Small so the rig reads as thin, subtle guide-bones (matches
+					// the default rig; see the "Style rig bones" decision). The per-spec
+					// `size` below is kept only as proportion documentation.
 					size: 's',
 					color: spec.color,
 					dash: 'dotted',

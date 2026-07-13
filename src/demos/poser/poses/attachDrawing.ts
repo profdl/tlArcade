@@ -32,10 +32,15 @@ export function attachDrawing(editor: Editor, figure: TLShapeId): number {
 		}
 	})
 
-	// Shapes already riding this figure's bones shouldn't be re-grabbed.
+	// Shapes already riding this figure's bones shouldn't be re-grabbed. A
+	// bone-attachment binds a single bone (fromId) to a drawing (toId), so we must
+	// scan every bone of the figure — not the figure/pelvis id, which is just one
+	// bone and would miss art attached to arms, legs, torso, etc.
 	const attachedShapeIds = new Set<TLShapeId>()
-	for (const b of editor.getBindingsInvolvingShape(figure)) {
-		if (b.type === 'bone-attachment') attachedShapeIds.add(b.toId)
+	for (const boneId of boneIds) {
+		for (const b of editor.getBindingsInvolvingShape(boneId)) {
+			if (b.type === 'bone-attachment') attachedShapeIds.add(b.toId)
+		}
 	}
 
 	// Snapshot the candidate list up front: cutStrokeAtJoints creates new draw shapes,

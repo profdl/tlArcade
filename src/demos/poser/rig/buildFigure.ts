@@ -128,6 +128,9 @@ export function buildFigure(editor: Editor, origin: { x: number; y: number }): T
 				meta: { figureId },
 				props: {
 					length: spec.length,
+					// Uniform Small so the rig reads as thin, subtle guide-bones (see the
+					// "Style rig bones: small, semi-fill, dotted outline" decision). The
+					// per-spec `size` below is kept only as proportion documentation.
 					size: 's',
 					color: spec.color,
 					dash: 'dotted',

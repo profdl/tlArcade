@@ -1,8 +1,9 @@
 import { useCallback } from 'react'
-import { stopEventPropagation, useEditor, useValue } from 'tldraw'
+import { useEditor, useValue } from 'tldraw'
 import { getIkChains } from './effectors'
 import { rigVisible } from './rigVisibility'
 import { effectorTipPage, solveTwoBoneIk } from './solveTwoBoneIk'
+import { useDragGesture } from './useDragGesture'
 
 const HANDLE_RADIUS = 9 // px, screen-space (constant regardless of zoom)
 
@@ -42,28 +43,18 @@ export function IkHandlesOverlay() {
 		[editor]
 	)
 
+	const startDragGesture = useDragGesture()
 	const startDrag = useCallback(
 		(rootBoneId: (typeof handles)[number]['rootBoneId'], effectorBoneId: (typeof handles)[number]['effectorBoneId']) =>
-			(e: React.PointerEvent) => {
-				// Don't let tldraw start its own marquee/translate on this pointerdown.
-				stopEventPropagation(e)
-				;(e.target as Element).setPointerCapture(e.pointerId)
-
-				// One undo step for the whole drag gesture (the per-move solves use history:'ignore').
-				editor.markHistoryStoppingPoint('ik-pose')
-
-				const onMove = (ev: PointerEvent) => {
+			startDragGesture(
+				(ev) => {
 					const targetPage = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
 					solveTwoBoneIk(editor, rootBoneId, effectorBoneId, targetPage)
-				}
-				const onUp = () => {
-					window.removeEventListener('pointermove', onMove)
-					window.removeEventListener('pointerup', onUp)
-				}
-				window.addEventListener('pointermove', onMove)
-				window.addEventListener('pointerup', onUp)
-			},
-		[editor]
+				},
+				// One undo step for the whole drag gesture (the per-move solves use history:'ignore').
+				{ onStart: () => editor.markHistoryStoppingPoint('ik-pose') }
+			),
+		[editor, startDragGesture]
 	)
 
 	return (

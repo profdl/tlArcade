@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
-import { Box, stopEventPropagation, TldrawUiContextualToolbar, useEditor, useValue } from 'tldraw'
+import { Box, TldrawUiContextualToolbar, useEditor, useValue } from 'tldraw'
+import { useDragGesture } from './useDragGesture'
 import { applyPose, POSES } from '../poses/applyPose'
 import { attachDrawing } from '../poses/attachDrawing'
 import { bonesByName, figureId } from '../rig/buildFigure'
@@ -65,37 +66,40 @@ export function PoseToolbar() {
 
 	// Drag the Move handle → translate the whole figure by moving its pelvis (= the
 	// figureId shape). We track pointer deltas in page space so the move is 1:1 with
-	// the cursor at any zoom, and wrap the gesture in one undo step.
+	// the cursor at any zoom, and wrap the gesture in one undo step (the per-move
+	// updates use history:'ignore' so only the stopping point below records).
+	const startDragGesture = useDragGesture()
 	const startMove = useCallback(
 		(e: React.PointerEvent) => {
 			if (!selectedFigure) return
-			stopEventPropagation(e)
-			;(e.target as Element).setPointerCapture(e.pointerId)
-			editor.markHistoryStoppingPoint('move-figure')
-
-			const startPage = editor.screenToPage({ x: e.clientX, y: e.clientY })
 			const pelvis = editor.getShape(selectedFigure)
 			if (!pelvis) return
+
+			// Capture the gesture's anchor: where the pointer went down (page space) and
+			// where the pelvis started, so each move applies an absolute delta.
+			const startPage = editor.screenToPage({ x: e.clientX, y: e.clientY })
 			const originX = pelvis.x
 			const originY = pelvis.y
 
-			const onMove = (ev: PointerEvent) => {
-				const p = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
-				editor.updateShape({
-					id: selectedFigure,
-					type: 'poser-bone',
-					x: originX + (p.x - startPage.x),
-					y: originY + (p.y - startPage.y),
-				})
-			}
-			const onUp = () => {
-				window.removeEventListener('pointermove', onMove)
-				window.removeEventListener('pointerup', onUp)
-			}
-			window.addEventListener('pointermove', onMove)
-			window.addEventListener('pointerup', onUp)
+			startDragGesture(
+				(ev) => {
+					const p = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
+					editor.run(
+						() => {
+							editor.updateShape({
+								id: selectedFigure,
+								type: 'poser-bone',
+								x: originX + (p.x - startPage.x),
+								y: originY + (p.y - startPage.y),
+							})
+						},
+						{ history: 'ignore' }
+					)
+				},
+				{ onStart: () => editor.markHistoryStoppingPoint('move-figure') }
+			)(e)
 		},
-		[editor, selectedFigure]
+		[editor, selectedFigure, startDragGesture]
 	)
 
 	// Whether the rig is currently shown (drives the Show/Hide button label).
