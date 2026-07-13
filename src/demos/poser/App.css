@@ -1,0 +1,41 @@
+/* Unique .poser-* prefix — see repo CLAUDE.md on cross-demo CSS collisions. */
+.poser-root {
+	position: fixed;
+	inset: 0;
+}
+
+.poser-toolbar {
+	position: absolute;
+	bottom: 44px;
+	right: 8px;
+	z-index: 400;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.poser-hint {
+	margin: 0;
+	max-width: 260px;
+	padding: 6px 10px;
+	border-radius: 8px;
+	font: 12px/1.4 inherit;
+	color: var(--tl-color-text, #1d1d1d);
+	background: var(--tl-color-panel, white);
+	box-shadow: var(--tl-shadow-2);
+}
+
+.poser-btn {
+	padding: 8px 12px;
+	border-radius: 8px;
+	border: 1px solid var(--tl-color-panel-contrast, #d3d3d3);
+	background: var(--tl-color-panel, white);
+	box-shadow: var(--tl-shadow-2);
+	cursor: pointer;
+	font: inherit;
+	white-space: nowrap;
+}
+
+.poser-btn:hover {
+	background: var(--tl-color-muted-2, #f0f0f0);
+}

@@ -10,6 +10,7 @@ running out of one app. `/` lists them; each one lazy-loads at its own route.
 | Line Rider: Side Mode | `/demos/line-rider-side` | Diverged variant: draw ramps live while riding | [`side-rider-mode`](../../tree/side-rider-mode) |
 | Busytown | `/demos/busytown` | An ambient ECS town sim — characters, jobs, whims | [`simtown-busytown`](../../tree/simtown-busytown)\* |
 | Face Mask | `/demos/face-mask` | Pin native tldraw shapes to webcam-tracked face landmarks | [`simtown-face-mask`](../../tree/simtown-face-mask)\* |
+| Poser | `/demos/poser` | Pose an articulated stick figure of native tldraw bones — drag a joint, the chain follows (FK) | [`poser`](../../tree/poser) |
 | Toolkit | `/demos/toolkit/*` | Multiplayer tabletop toolkit — synced tokens/dice/cards/creatures, server-authoritative referee | [`toolkit-master`](../../tree/toolkit-master)\* |
 
 \* Local-only branch (not pushed to `origin`) — kept for history/reference.
