@@ -12,6 +12,7 @@ import { rigVisible, toggleRig } from './pose/rigVisibility'
 import { attachDrawing } from './poses/attachDrawing'
 import { buildFigure } from './rig/buildFigure'
 import { buildFigureFromJoints } from './rig/buildFigureFromJoints'
+import { stopAll } from './pose/posePlayer'
 import { enterRigMode, exitRigMode, rigModeJoints, snapJointsToDrawing } from './rig/jointMarkers'
 import { BoneShapeUtil } from './shapes/BoneShapeUtil'
 
@@ -128,6 +129,8 @@ export default function App() {
 			// Test hooks for the headless-browser verification of rig mode + stroke cutting.
 			;(window as unknown as { __rig: unknown }).__rig = { rigModeJoints, enterRigMode, exitRigMode, b64Vecs }
 		}
+		// Cancel any in-flight motion-playback rAF loops when the demo unmounts.
+		return () => stopAll()
 	}, [])
 
 	return (

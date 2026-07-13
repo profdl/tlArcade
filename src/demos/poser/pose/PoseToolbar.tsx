@@ -3,6 +3,17 @@ import { Box, stopEventPropagation, TldrawUiContextualToolbar, useEditor, useVal
 import { applyPose, POSES } from '../poses/applyPose'
 import { attachDrawing } from '../poses/attachDrawing'
 import { bonesByName, figureId } from '../rig/buildFigure'
+import {
+	getSelectedPose,
+	isPlaying,
+	loopMode,
+	playingFigures,
+	playPose,
+	selectedPose,
+	setSelectedPose,
+	stopPlaying,
+	toggleLoopMode,
+} from './posePlayer'
 import { rigVisible, toggleRig } from './rigVisibility'
 
 /**
@@ -90,6 +101,37 @@ export function PoseToolbar() {
 	// Whether the rig is currently shown (drives the Show/Hide button label).
 	const shown = useValue('rigVisible', () => rigVisible.get(), [])
 
+	// Playback state for THIS figure, reactive so Play↔Stop and the enabled/disabled
+	// state track the player. `playingFigures`/`selectedPose` are read (not just their
+	// helpers) so useValue re-runs when either atom changes.
+	const playing = useValue(
+		'playing',
+		() => (selectedFigure ? (playingFigures.get(), isPlaying(selectedFigure)) : false),
+		[selectedFigure]
+	)
+	// The picked pose has a motion clip → Play is available.
+	const canPlay = useValue(
+		'can-play',
+		() => {
+			if (!selectedFigure) return false
+			selectedPose.get() // subscribe
+			const pose = getSelectedPose(selectedFigure)
+			return !!pose?.frames?.length
+		},
+		[selectedFigure]
+	)
+	const loop = useValue('loop-mode', () => loopMode.get(), [])
+
+	const onPlayStop = useCallback(() => {
+		if (!selectedFigure) return
+		if (isPlaying(selectedFigure)) {
+			stopPlaying(selectedFigure)
+			return
+		}
+		const pose = getSelectedPose(selectedFigure)
+		if (pose?.frames?.length) playPose(editor, selectedFigure, pose, { loop: loopMode.get() })
+	}, [editor, selectedFigure])
+
 	if (!selectedFigure) return null
 
 	return (
@@ -100,7 +142,14 @@ export function PoseToolbar() {
 					defaultValue=""
 					onChange={(e) => {
 						const pose = POSES[Number(e.target.value)]
-						if (pose) applyPose(editor, selectedFigure, pose)
+						if (pose) {
+							// Picking a pose snaps to its static frame; stop any clip that was
+							// playing on this figure so the two don't fight, and remember the
+							// pick so Play knows what to animate.
+							stopPlaying(selectedFigure)
+							setSelectedPose(selectedFigure, pose)
+							applyPose(editor, selectedFigure, pose)
+						}
 						e.target.value = '' // reset so re-picking the same pose fires again
 					}}
 				>
@@ -113,6 +162,27 @@ export function PoseToolbar() {
 						</option>
 					))}
 				</select>
+				<button
+					className="poser-btn2"
+					title={
+						canPlay
+							? playing
+								? 'Stop playback'
+								: 'Play this pose’s motion'
+							: 'Pick a pose with motion to play'
+					}
+					disabled={!canPlay}
+					onClick={onPlayStop}
+				>
+					{playing ? '■ Stop' : '▶ Play'}
+				</button>
+				<button
+					className="poser-btn2"
+					title={loop ? 'Looping — click to play once' : 'Play once — click to loop'}
+					onClick={toggleLoopMode}
+				>
+					{loop ? '⟳ Loop' : '→ Once'}
+				</button>
 				<button className="poser-move" title="Drag to move the whole figure" onPointerDown={startMove}>
 					✥ Move
 				</button>

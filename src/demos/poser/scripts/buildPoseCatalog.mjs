@@ -22,6 +22,13 @@ const POOL_SIZE = 400 // rows to consider
 const TARGET = 28 // poses to keep
 const MIN_DISTINCT = 55 // min angle-space distance (deg, RMS) between kept poses
 
+// Motion-playback sampling. HumanML3D is captured at 20fps. We downsample each
+// motion to at most MAX_FRAMES evenly-spaced keyframes (stride chosen per motion)
+// so the bundled JSON stays modest, and store the effective playback fps so the
+// runtime player advances at the right wall-clock speed regardless of stride.
+const SRC_FPS = 20
+const MAX_FRAMES = 40
+
 // ── HumanML3D 263-dim feature decode ─────────────────────────────────────────
 const N_JOINTS = 22
 // [0] root angular vel · [1:3] root XZ vel · [3] root height Y · [4:67] ric_data
@@ -103,6 +110,23 @@ function pelvisFromFrame(frame) {
 	return { drop: Math.max(0, drop), lean }
 }
 
+// Decode a whole motion into a downsampled sequence of {angles, pelvis} keyframes
+// for playback. We pick an integer stride so the kept frame count is ≤ MAX_FRAMES,
+// always including the last frame, and return the effective post-stride fps.
+function framesFromMotion(m) {
+	const stride = Math.max(1, Math.ceil(m.length / MAX_FRAMES))
+	const frames = []
+	for (let i = 0; i < m.length; i += stride) {
+		frames.push({ angles: poseFromFrame(m[i]), pelvis: pelvisFromFrame(m[i]) })
+	}
+	// Ensure the final frame is present so a play-once ends on the true last pose.
+	const last = m.length - 1
+	if ((last % stride) !== 0) {
+		frames.push({ angles: poseFromFrame(m[last]), pelvis: pelvisFromFrame(m[last]) })
+	}
+	return { frames, fps: +(SRC_FPS / stride).toFixed(2) }
+}
+
 // HumanML3D captions carry POS-tagged tokens after a `#`; keep the plain sentence.
 function cleanCaption(c) {
 	const plain = String(c).split('#')[0].trim().replace(/\.$/, '')
@@ -151,15 +175,19 @@ async function main() {
 	}
 	process.stderr.write(`\npool ${pool.length}\n`)
 
-	// One candidate per motion, sampled at a settled mid-frame.
+	// One candidate per motion: a settled mid-frame for the static pose/preview, plus
+	// the full downsampled sequence for playback.
 	const candidates = pool.map((r) => {
 		const m = r.motion
 		const frame = m[Math.floor(m.length / 2)]
+		const { frames, fps } = framesFromMotion(m)
 		return {
 			name: cleanCaption(r.caption),
 			caption: String(r.caption).split('#')[0].toLowerCase(),
 			angles: poseFromFrame(frame),
 			pelvis: pelvisFromFrame(frame),
+			frames,
+			fps,
 		}
 	})
 
@@ -179,7 +207,7 @@ async function main() {
 		if (seenNames.has(key)) continue
 		if (chosen.every((x) => poseDistance(x.angles, c.angles) > MIN_DISTINCT)) {
 			seenNames.add(key)
-			chosen.push({ name: c.name, angles: c.angles, pelvis: c.pelvis })
+			chosen.push({ name: c.name, angles: c.angles, pelvis: c.pelvis, frames: c.frames, fps: c.fps })
 		}
 	}
 

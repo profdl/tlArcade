@@ -37,6 +37,22 @@ while letting it swing independently.
   kneeling) read — the data encodes a sit as a root-height drop, not articulated
   hips. `applyPose(editor, figureId, pose)` targets one figure.
 
+- **Motion playback** ([pose/posePlayer.ts](pose/posePlayer.ts)) — each catalog
+  entry also carries the full downsampled motion (`frames: PoseFrame[]` + `fps`),
+  not just the static mid-frame. The **▶ Play / ■ Stop** button in the pose toolbar
+  animates the selected figure through those frames on a `requestAnimationFrame`
+  loop that advances by wall-clock time at the clip's `fps`; a **⟳ Loop / → Once**
+  toggle picks repeat vs. play-once (which lands on the final frame). Playback is
+  per-figure (`meta.figureId`-keyed), reuses the exact `applyFrame` write path the
+  picker uses (so the bone-joint binding never mistakes it for a drag), and stops
+  cleanly if the figure is deleted or the demo unmounts.
+  > **Note:** the shipped `frames` are currently **synthesized** (rest → pose → rest
+  > ease, [scripts/synthPoseFrames.mjs](scripts/synthPoseFrames.mjs)) because
+  > HuggingFace's datasets-server was unavailable at build time. The build script
+  > already emits real HumanML3D per-frame motion in the identical schema — re-run
+  > `buildPoseCatalog.mjs` when the server is back to swap in the authentic clips
+  > (no code changes), then delete `synthPoseFrames.mjs`.
+
 - **Multiple figures** — "Add figure" spawns more. Every bone carries
   `meta.figureId` (its pelvis id), so pose application, IK discovery, and the
   toolbar all group/filter by figure. Bone `name`s repeat across figures; the
