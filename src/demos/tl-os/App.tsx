@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-	Tldraw,
-	createShapeId,
-	type Editor,
-	type TLComponents,
-	type TLShapePartial,
-} from 'tldraw'
+import { Tldraw, createShapeId, type Editor, type TLComponents } from 'tldraw'
 import { isShapeId } from '@tldraw/tlschema'
 import 'tldraw/tldraw.css'
 import './App.css'
@@ -17,6 +11,12 @@ import {
 	type FileShape,
 	type ThumbResolver,
 } from './FileShapeUtil'
+import {
+	BrowserShapeUtil,
+	BrowserServicesProvider,
+	type BrowserEntry,
+	type BrowserServices,
+} from './BrowserShapeUtil'
 import { BindPanel, TlosUiProvider, useOpenImportDialog, type TlosUi } from './ui'
 import {
 	fsAccessSupported,
@@ -27,25 +27,18 @@ import {
 	readFileBlob,
 	getFileHandle,
 	type DirHandle,
-	type DirEntry,
 } from './fs'
 
-const shapeUtils = [FileShapeUtil]
+const shapeUtils = [FileShapeUtil, BrowserShapeUtil]
 
-// Grid layout for the initial dump into a frame. Files start on a tidy grid (a
-// sensible *starting* position — the point is the user rearranges afterward).
-// Sizes match FileShapeUtil's default icon box.
-const ICON_W = 96
-const ICON_H = 104
-const GAP = 16
-const COLS = 6
-const FRAME_PAD = 24
-const HEADER = 40 // rough frame-header height, so icons don't sit under the label
-const FRAME_GAP = 48 // page-space gap between a parent frame and a child it opens
+// Page-space gap between a window and the next one placed to its right / below.
+const FRAME_GAP = 48
 
-/** tl-os — a spatial file workspace. Bind a local folder (Chrome/Edge), read it
- *  into a frame as icon-shapes you can lay out, annotate, and relate on the
- *  canvas. The canvas owns *layout*; disk owns *bytes*; they join by path. */
+/** tl-os — a spatial file workspace. Bind a local folder (Chrome/Edge), then
+ *  browse it in movable, resizable macOS-Finder-style column-view windows drawn
+ *  in a hand-drawn Perfect-Freehand style. Files can still be dragged out of a
+ *  window onto the canvas. The canvas owns *layout*; disk owns *bytes*; they
+ *  join by path. */
 export default function App() {
 	const editorRef = useRef<Editor | null>(null)
 	const rootRef = useRef<DirHandle | null>(null)
@@ -70,6 +63,21 @@ export default function App() {
 		return blob ? URL.createObjectURL(blob) : null
 	}, [])
 
+	// --- open a file's bytes in a new tab -----------------------------------
+	// The shared leaf-open path: read the file and hand it to a new browser tab
+	// (images/pdf/text preview inline; others download). Used by both a file-icon
+	// double-click and a browser-window file row.
+	const openFilePath = useCallback(async (path: string) => {
+		const root = rootRef.current
+		if (!root) return
+		const blob = await readFileBlob(root, path)
+		if (!blob) return
+		const url = URL.createObjectURL(blob)
+		window.open(url, '_blank', 'noopener')
+		// Give the tab time to grab the URL before revoking.
+		setTimeout(() => URL.revokeObjectURL(url), 60_000)
+	}, [])
+
 	// --- open a file / navigate a folder on double-click --------------------
 	const openShape = useCallback(async (shape: FileShape) => {
 		const root = rootRef.current
@@ -77,9 +85,9 @@ export default function App() {
 		if (!root || !editor) return
 		const { kind, path } = shape.props
 		if (kind === 'directory') {
-			// Open the folder into a new frame placed just to the RIGHT of the
-			// frame this icon lives in (a file-shape's x/y are relative to its
-			// parent frame, so anchor off the parent's *page* bounds, not the
+			// Open the folder as a column-view browser window, placed just to the
+			// RIGHT of the frame this icon lives in (a file-shape's x/y are relative
+			// to its parent frame, so anchor off the parent's *page* bounds, not the
 			// icon's local coords). Fall back to the icon's own page point if it
 			// somehow has no parent frame.
 			const parentId = editor.getShape(shape.id)?.parentId
@@ -92,17 +100,11 @@ export default function App() {
 			const at = parentBounds
 				? { x: parentBounds.maxX + FRAME_GAP, y: parentBounds.y }
 				: { x: 0, y: 0 }
-			await dumpDirectory(editor, root, path, at.x, at.y, true)
+			openBrowser(editor, path, at.x, at.y, true)
 			return
 		}
-		const blob = await readFileBlob(root, path)
-		if (!blob) return
-		// Open in a new tab (images/pdf/text preview inline; others download).
-		const url = URL.createObjectURL(blob)
-		window.open(url, '_blank', 'noopener')
-		// Give the tab time to grab the URL before revoking.
-		setTimeout(() => URL.revokeObjectURL(url), 60_000)
-	}, [])
+		await openFilePath(path)
+	}, [openFilePath])
 
 	// --- import-vs-reference, for a file dragged out of its frame -----------
 	// "Import": read the file's bytes and run tldraw's own file→asset→shape
@@ -129,7 +131,7 @@ export default function App() {
 		setRootName(root.name)
 		setStatus('bound')
 		const editor = editorRef.current
-		if (editor) await dumpDirectory(editor, root, '', 0, 0)
+		if (editor) openBrowser(editor, '', 0, 0, true)
 	}, [])
 
 	const handleGrant = useCallback(async () => {
@@ -174,7 +176,7 @@ export default function App() {
 			if (cancelled) return
 			if (granted) {
 				setStatus('bound')
-				if (editorRef.current) await dumpDirectory(editorRef.current, remembered, '', 0, 0)
+				if (editorRef.current) openBrowser(editorRef.current, '', 0, 0, true)
 			} else {
 				setStatus('reconnect')
 			}
@@ -217,7 +219,7 @@ export default function App() {
 
 		// If a root got bound before the editor mounted, dump it now.
 		const root = rootRef.current
-		if (root && status === 'bound') void dumpDirectory(editor, root, '', 0, 0)
+		if (root && status === 'bound') openBrowser(editor, '', 0, 0, true)
 	}, [status])
 
 	// Shared with the tldraw-mounted UI (BindPanel, import dialog) via context.
@@ -233,13 +235,29 @@ export default function App() {
 		[status, rootName, busy, handleGrant, handleReconnect, importDrop],
 	)
 
+	// What the browser-shape needs from the App: list a directory, open a file
+	// leaf. Both go through the disk layer here; the shape never imports it.
+	const browserServices = useMemo<BrowserServices>(
+		() => ({
+			readDir: async (subPath) => {
+				const root = rootRef.current
+				if (!root) return []
+				return readDirectory(root, subPath) as Promise<BrowserEntry[]>
+			},
+			openFile: (entry) => void openFilePath(entry.path),
+		}),
+		[openFilePath],
+	)
+
 	return (
 		<div className="tlos-root">
 			<TlosUiProvider value={ui}>
 				<ThumbProvider value={resolveThumb}>
-					<Tldraw persistenceKey="tl-os" shapeUtils={shapeUtils} components={components} onMount={handleMount}>
-						<DialogBridge openRef={openImportDialogRef} />
-					</Tldraw>
+					<BrowserServicesProvider value={browserServices}>
+						<Tldraw persistenceKey="tl-os" shapeUtils={shapeUtils} components={components} onMount={handleMount}>
+							<DialogBridge openRef={openImportDialogRef} />
+						</Tldraw>
+					</BrowserServicesProvider>
 				</ThumbProvider>
 			</TlosUiProvider>
 		</div>
@@ -265,71 +283,49 @@ function DialogBridge({ openRef }: { openRef: React.RefObject<((s: FileShape) =>
 	return null
 }
 
+// Default size of a freshly-opened browser window (matches the shape util's
+// getDefaultProps: three columns wide, a comfortable browsing height).
+const BROWSER_W = 176 * 3 + 20
+const BROWSER_H = 320
+
 /**
- * Read `subPath` of `root` and lay its entries on a grid inside a titled frame
- * at page (fx, fy). Re-dumping the same subPath removes the old frame first (via
- * a `meta.tlosPath` tag) so a re-read reconciles rather than piling duplicates.
- * Layout is only the *starting* position — the user rearranges freely.
+ * Open the folder at `subPath` as a column-view browser window at page (fx, fy).
+ * Reconciles by `meta.tlosPath`: re-opening the same folder replaces the old
+ * window (and its scroll/selection state) rather than piling up duplicates —
+ * the same rule the icon-grid used, so re-reads stay idempotent. The window's
+ * `selection` starts empty (just the root column); the disk is read lazily by
+ * each column inside the shape via BrowserServices.
  */
-async function dumpDirectory(
+function openBrowser(
 	editor: Editor,
-	root: DirHandle,
 	subPath: string,
 	fx: number,
 	fy: number,
-	// Pan the camera to centre the new frame (used when a folder is opened by
-	// double-click; the initial root dump leaves the camera where it is).
+	// Pan the camera to centre the new window (folder-open / bind); the mount
+	// re-dump leaves the camera where it is is handled by the caller passing false.
 	centerCamera = false,
-): Promise<void> {
-	const entries = await readDirectory(root, subPath)
-	const label = subPath ? subPath.split('/').pop()! : root.name
-
-	// Remove any existing frame for this subPath so a re-read replaces it. Its
-	// children (the file-shapes) are deleted with it.
+): void {
+	// Replace any existing window for this folder.
 	const existing = editor
 		.getCurrentPageShapes()
-		.find((s) => s.type === 'frame' && (s.meta as { tlosPath?: string }).tlosPath === subPath)
+		.find((s) => s.type === 'tlos-browser' && (s.meta as { tlosPath?: string }).tlosPath === subPath)
 	if (existing) editor.deleteShapes([existing.id])
 
-	const cols = Math.min(COLS, Math.max(1, entries.length))
-	const rows = Math.max(1, Math.ceil(entries.length / cols))
-	// Frame is sized to fit exactly cols×rows of icon boxes plus padding + header,
-	// so every file lands inside its frame with no clipping or empty overflow.
-	const frameW = FRAME_PAD * 2 + cols * ICON_W + (cols - 1) * GAP
-	const frameH = HEADER + FRAME_PAD * 2 + rows * ICON_H + (rows - 1) * GAP
+	// Stack below any window it would overlap, so a second open lands clear.
+	const y = avoidOverlap(editor, fx, fy, BROWSER_W, BROWSER_H)
 
-	// Nudge the target rect down past any existing frame it would overlap, so a
-	// second opened folder stacks below rather than on top of the first.
-	const y = avoidOverlap(editor, fx, fy, frameW, frameH)
-
-	const frameId = createShapeId()
 	editor.createShape({
-		id: frameId,
-		type: 'frame',
+		id: createShapeId(),
+		type: 'tlos-browser',
 		x: fx,
 		y,
-		props: { w: frameW, h: frameH, name: label },
+		props: { w: BROWSER_W, h: BROWSER_H, rootPath: subPath, selection: [] },
 		meta: { tlosPath: subPath },
 	})
 
-	const shapes: TLShapePartial<FileShape>[] = entries.map((entry, i) => {
-		const col = i % cols
-		const row = Math.floor(i / cols)
-		return {
-			id: createShapeId(),
-			type: 'tlos-file',
-			parentId: frameId,
-			x: FRAME_PAD + col * (ICON_W + GAP),
-			y: HEADER + FRAME_PAD + row * (ICON_H + GAP),
-			props: entryToProps(entry),
-		}
-	})
-	if (shapes.length) editor.createShapes(shapes)
-
-	// Pan (keeping the current zoom) so the new frame sits centred in view.
 	if (centerCamera) {
 		editor.centerOnPoint(
-			{ x: fx + frameW / 2, y: y + frameH / 2 },
+			{ x: fx + BROWSER_W / 2, y: y + BROWSER_H / 2 },
 			{ animation: { duration: 300 } },
 		)
 	}
@@ -337,21 +333,21 @@ async function dumpDirectory(
 
 /**
  * Given a target rect at (x, y, w, h) in page space, return a y pushed down just
- * far enough to clear every existing frame it would overlap. x stays fixed (we
- * only ever place new frames in a rightward column, stacking downward). Iterates
- * because clearing one frame can reveal an overlap with the next below it.
+ * far enough to clear every existing browser window it would overlap. x stays
+ * fixed (new windows open in a rightward column, stacking downward). Iterates
+ * because clearing one window can reveal an overlap with the next below it.
  */
 function avoidOverlap(editor: Editor, x: number, y: number, w: number, h: number): number {
-	const frames = editor
+	const boxes = editor
 		.getCurrentPageShapes()
-		.filter((s) => s.type === 'frame')
+		.filter((s) => s.type === 'tlos-browser' || s.type === 'frame')
 		.map((s) => editor.getShapePageBounds(s.id))
 		.filter((b): b is NonNullable<typeof b> => b != null)
 	let moved = true
 	let guard = 0
 	while (moved && guard++ < 100) {
 		moved = false
-		for (const b of frames) {
+		for (const b of boxes) {
 			const overlaps = x < b.maxX && x + w > b.x && y < b.maxY && y + h > b.y
 			if (overlaps) {
 				y = b.maxY + FRAME_GAP
@@ -360,15 +356,4 @@ function avoidOverlap(editor: Editor, x: number, y: number, w: number, h: number
 		}
 	}
 	return y
-}
-
-function entryToProps(entry: DirEntry): FileShape['props'] {
-	return {
-		w: ICON_W,
-		h: ICON_H,
-		path: entry.path,
-		name: entry.name,
-		kind: entry.kind,
-		ext: entry.ext,
-	}
 }

@@ -6,9 +6,12 @@ fact here drifts from the source, fix the code and update this file.
 ## What this is
 
 A **spatial file workspace** on the **tldraw v5** canvas — *not* a windows-and-
-dock desktop sim. Bind a real local folder and read it in as icon-shapes you can
-lay out, annotate, and relate spatially. Think "a canvas that beats nested
-folders for organising a project," not "Finder reimplemented."
+dock desktop sim. Bind a real local folder and browse it in movable, resizable
+**macOS-Finder column-view windows**, each a native tldraw shape drawn in a
+hand-drawn Perfect-Freehand style. Files can still be dragged out of a window
+onto the canvas to lay out, annotate, and relate spatially. Think "a canvas that
+beats nested folders for organising a project," with a Finder you can *also*
+scatter across the page.
 
 ## The one architectural rule
 
@@ -20,7 +23,7 @@ features. A file-shape is a *pointer* (`{ path, name, kind, ext }` + its canvas
 position/meta); **no bytes live in the shape store**. `path` is root-relative,
 POSIX-style, and is the join key back to disk.
 
-## What's built (steps 1–4 of the plan)
+## What's built
 
 - [fs.ts](fs.ts) — the disk-binding layer. Grants a directory via the **File
   System Access API** (`showDirectoryPicker`), persists the handle in IndexedDB
@@ -28,18 +31,37 @@ POSIX-style, and is the join key back to disk.
   dep), re-authorises on reload, and reads directories into `DirEntry`
   pointers. Minimal FS-Access API types are declared inline (no
   `@types/wicg-file-system-access` dep).
+- [BrowserShapeUtil.tsx](BrowserShapeUtil.tsx) — the **`tlos-browser` custom
+  shape**: a movable/resizable macOS-Finder **column view**. Each open folder is
+  one window; several can sit on the canvas at once. Props are a *pointer*:
+  `rootPath` (the folder it opens) + `selection: Picked[]` (`{path,kind,ext}`
+  per column, driving what the next column shows). **No bytes/handles in props** —
+  directories are read on demand through a `BrowserServices` context (`readDir`
+  + `openFile`) the App wires up, so this file never imports the disk layer.
+  Selecting a folder extends the chain (opens the next column); selecting a
+  **file** shows a trailing **preview pane** (image thumbnail via the shared
+  `useThumbResolver`, else a file-info card). Chrome is fully Perfect-Freehand:
+  rough window outline, wobbly column dividers, hand-drawn selection boxes, and
+  freehand disclosure chevrons. All text uses `var(--tl-font-sans)`.
 - [FileShapeUtil.tsx](FileShapeUtil.tsx) — the `tlos-file` custom shape (one
-  util for files *and* folders; `props.kind` selects). Renders a hand-drawn
-  file/folder glyph (see [freehand.ts](freehand.ts) and the "Looking & feeling"
-  section), name, extension badge, and lazy image thumbnails. Thumbnails load
-  via a `ThumbProvider` context resolver so the util never imports the disk
-  layer or root handle. Double-click → `setOpenHandler` module callback.
-- [freehand.ts](freehand.ts) — a tiny perfect-freehand helper (`strokePath`,
-  `poly`) producing tldraw Draw-dash-style rough outlines for the glyphs.
-- [App.tsx](App.tsx) — owns all bind/open/import state and effects; reads the
-  root into a titled frame on a starting grid, provides the thumb resolver, sets
-  the open handler. Double-click opens files in a new tab and navigates folders
-  into a new frame. Shares state with the tldraw-native UI via `TlosUiProvider`.
+  util for files *and* folders; `props.kind` selects). A file dragged onto the
+  page uses this. Renders a hand-drawn file/folder glyph (see
+  [freehand.ts](freehand.ts) and "Looking & feeling"), name, extension badge,
+  and lazy image thumbnails. Thumbnails load via a `ThumbProvider` context
+  resolver (also exported as `useThumbResolver`, reused by the browser preview
+  pane) so the util never imports the disk layer or root handle. Double-click →
+  `setOpenHandler` module callback.
+- [freehand.ts](freehand.ts) — a tiny perfect-freehand helper. `strokePath` /
+  `poly` build the fixed 0–100 glyph outlines; `line` / `roughRect` / `chevron`
+  stroke live-sized chrome (window frame, dividers, selection boxes, chevrons)
+  from the shape's current w/h. All tldraw Draw-dash-style rough outlines.
+- [App.tsx](App.tsx) — owns all bind/open/import state and effects. Binding a
+  root (or re-binding a remembered one) opens a `tlos-browser` window via
+  `openBrowser` (reconciles by `meta.tlosPath`, stacks with `avoidOverlap`).
+  Provides the thumb resolver and `BrowserServices`, sets the open handler.
+  A folder-icon double-click also opens a browser window at that folder; a file
+  opens in a new tab (`openFilePath`, shared by icon + browser row). Shares
+  state with the tldraw-native UI via `TlosUiProvider`.
 - [ui.tsx](ui.tsx) — the **tldraw-native UI**. `BindPanel` is injected as
   tldraw's `SharePanel` (top-right) so the folder-bind control reads as app
   chrome, not a floating overlay. The import-vs-reference prompt is a real
@@ -58,13 +80,18 @@ The demo deliberately leans on tldraw's own UI system instead of bespoke chrome:
   dialog is a `useDialogs` dialog; buttons are `TldrawUiButton`. Selection is
   tldraw's own indicator (`getIndicatorPath`); only *hover* is added, as a faint
   `--tl-color-muted-2` highlight on `.tlos-file`.
-- **Hand-drawn glyphs.** The file & folder icons are drawn with perfect-freehand
+- **Hand-drawn glyphs *and* window chrome.** The file/folder glyphs and the
+  `tlos-browser` window's whole chrome (outline, column dividers, header rule,
+  selection boxes, disclosure chevrons) are drawn with perfect-freehand
   ([freehand.ts](freehand.ts)) using the same even-nib / no-pressure options
   busytown uses to match tldraw's geo "Dash: Draw" look — so they read as
-  drawn-on-canvas, not like macOS icons. Outline paths are computed once at
-  module load (fixed 0–100 art box) and filled; the SVG uses `overflow:visible`
-  so the freehand wobble past the box edge isn't clipped. `freehand.ts` is a
-  local copy on purpose (demos stay isolated — no cross-demo import).
+  drawn-on-canvas, not like macOS icons. Glyph outlines are computed once at
+  module load (fixed 0–100 art box); the chrome's `line`/`roughRect`/`chevron`
+  are stroked from the shape's *live* w/h each render (cheap; a few short
+  strokes) so the wobble tracks a resize. `line()` jitters its midpoints so a
+  straight rule still visibly wobbles. Every freehand SVG uses `overflow:visible`
+  so the wobble past the box edge isn't clipped. `freehand.ts` is a local copy on
+  purpose (demos stay isolated — no cross-demo import).
 
 **Browser reality: the directory picker is Chrome/Edge/Opera only** — Safari and
 Firefox have no `showDirectoryPicker` (they ship only the Origin-Private FS). The
@@ -72,24 +99,25 @@ UI feature-detects and shows an "unsupported" note rather than breaking.
 
 ## Semantics locked (design decisions)
 
-- **Frames = canvas-only grouping, never disk folders.** Dragging a file-shape
-  into a frame does *nothing* to disk. Real moves must be an *explicit* action
-  (a "Move to folder…" menu item + confirm), never a side effect of a drag —
-  this keeps dragging playful and non-destructive, and lets the canvas group
-  files *across* real folders (something Finder can't do). Preserve this when
-  building step 6.
-- **Re-reading a directory reconciles, it doesn't pile up.** A frame is tagged
-  `meta.tlosPath`; `dumpDirectory` deletes the prior frame for that path before
-  re-creating it. The planned full "rescan" (new / missing / matched by path)
-  extends this — and must *never* delete a user's annotated layout for a
-  missing file; gray it out instead.
-- **Dragging a file-shape OUT of its frame onto the page prompts import-vs-
-  reference.** A `registerAfterChangeHandler('shape')` side-effect (in
-  `handleMount`) detects the reparent (frame → page, `source === 'user'`) and
-  opens a dialog. *Import into tldraw* → `putExternalContent({type:'files'})`
-  runs tldraw's own file→asset→shape pipeline at the icon's spot and deletes the
-  pointer (content now lives in the doc, survives without the disk binding).
-  *Keep as reference* → the `tlos-file` pointer just stays where it was dropped.
+- **Browsing lives *inside* a window; the disk is never mutated by canvas
+  moves.** Navigating columns, moving/resizing a window, and dragging a file out
+  do *nothing* to disk. Real moves must be an *explicit* action (a "Move to
+  folder…" menu + confirm), never a drag side effect — this keeps the canvas
+  playful and lets it group files *across* real folders (something Finder can't
+  do). Preserve this.
+- **Opening a folder reconciles, it doesn't pile up.** A `tlos-browser` window is
+  tagged `meta.tlosPath`; `openBrowser` deletes the prior window for that path
+  before re-creating it, so re-opening a folder replaces (not duplicates) it. A
+  window's own column navigation lives entirely in its `selection` prop — no new
+  shapes are spawned per folder (that's the point of a column view).
+- **Dragging a file-shape (a `tlos-file` dropped from a window) onto the page
+  prompts import-vs-reference.** A `registerAfterChangeHandler('shape')` side-
+  effect (in `handleMount`) detects the reparent (frame → page,
+  `source === 'user'`) and opens a dialog. *Import into tldraw* →
+  `putExternalContent({type:'files'})` runs tldraw's own file→asset→shape
+  pipeline at the icon's spot and deletes the pointer (content now lives in the
+  doc, survives without the disk binding). *Keep as reference* → the `tlos-file`
+  pointer just stays where it was dropped.
 
 ## Gotcha: blob: URLs crash the default bookmark handler
 

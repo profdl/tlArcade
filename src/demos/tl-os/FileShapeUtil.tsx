@@ -52,6 +52,9 @@ declare module '@tldraw/tlschema' {
 export type ThumbResolver = (path: string, ext: string) => Promise<string | null>
 const ThumbContext = createContext<ThumbResolver | null>(null)
 export const ThumbProvider = ThumbContext.Provider
+/** The wired-up thumbnail resolver, for anything that needs image previews (the
+ *  file icons and the browser window's preview pane both read the same one). */
+export const useThumbResolver = () => useContext(ThumbContext)
 
 /**
  * Double-click "open" side-effect. `onDoubleClick` runs in the util (outside
