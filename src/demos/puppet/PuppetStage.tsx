@@ -1,0 +1,119 @@
+import { useEffect, useRef, useState } from 'react'
+import type { Editor } from 'tldraw'
+import { PuppetDriver } from './rig/driver'
+import { NEUTRAL_PARAMS, paramsFromFace, smoothParams, type PuppetParams } from './rig/params'
+import { getPuppetMeta } from './rig/roles'
+import { setTrackingLive } from './rig/trackingState'
+import { trackFace } from './tracking/faceTracker'
+
+/**
+ * The webcam control panel: runs the tracking loop, turns each frame into
+ * PuppetParams, smooths them, and drives the on-canvas rig through the shared
+ * PuppetDriver. It renders only a small camera preview + status; the puppet
+ * itself lives on the tldraw canvas as tagged native shapes.
+ */
+export function PuppetStage({ editor }: { editor: Editor }) {
+	const previewRef = useRef<HTMLVideoElement | null>(null)
+	const [status, setStatus] = useState('starting camera…')
+	const [tracking, setTracking] = useState(true)
+	const trackingRef = useRef(tracking)
+	useEffect(() => {
+		trackingRef.current = tracking
+		// Mirror tracking state into the module flag the geo shape util reads to
+		// decide whether a rig feature may be resized (blocked while tracking is live).
+		setTrackingLive(tracking)
+	}, [tracking])
+
+	useEffect(() => {
+		const driver = new PuppetDriver(editor)
+		driver.scan()
+		// Re-scan when the user edits the document, so a redrawn/assigned feature
+		// binds live. Rest pose lives immutably in each shape's meta.rest, so
+		// re-scanning can NOT recapture a deformed shape (that was the old runaway
+		// bug); this listener only needs to skip the driver's own per-frame writes.
+		const unsub = editor.store.listen(
+			(entry) => {
+				if (driver.isApplying) return
+				// Re-bake rest ONLY while tracking is paused. Rest is immutable authored
+				// data the driver deforms *from*; re-capturing it from a LIVE shape while
+				// tracking is deforming that shape recreates the compounding runaway the
+				// rest invariant exists to prevent (see driver.ts + the "rest immutable"
+				// note). When paused the live pose IS the neutral pose, so re-baking a
+				// user's move/resize/rotate is exact and safe — that's the only time we do it.
+				if (!trackingRef.current) {
+					for (const [from, to] of Object.values(entry.changes.updated)) {
+						if (from.typeName !== 'shape' || to.typeName !== 'shape') continue
+						if (!getPuppetMeta(to)) continue
+						const moved = from.x !== to.x || from.y !== to.y || from.rotation !== to.rotation
+						const fp = from.props as { w?: number; h?: number }
+						const tp = to.props as { w?: number; h?: number }
+						const resized = fp.w !== tp.w || fp.h !== tp.h
+						if (moved || resized) driver.reanchor(to.id)
+					}
+				}
+				driver.scan()
+			},
+			{ scope: 'document', source: 'user' }
+		)
+
+		let raf = 0
+		let stopped = false
+		let params: PuppetParams = NEUTRAL_PARAMS
+		const video = document.createElement('video')
+		video.autoplay = true
+		video.playsInline = true
+		video.muted = true
+		if (previewRef.current) previewRef.current.srcObject = null
+
+		navigator.mediaDevices
+			.getUserMedia({ video: { width: 640, height: 480 }, audio: false })
+			.then((stream) => {
+				video.srcObject = stream
+				if (previewRef.current) previewRef.current.srcObject = stream
+				return video.play()
+			})
+			.then(() => {
+				setStatus('tracking')
+				const loop = async (t: number) => {
+					if (stopped) return
+					if (trackingRef.current && video.readyState >= 2) {
+						const frame = await trackFace(video, t)
+						const target = paramsFromFace(frame)
+						params = smoothParams(params, target, 0.4)
+						driver.apply(params)
+					}
+					raf = requestAnimationFrame(loop)
+				}
+				raf = requestAnimationFrame(loop)
+			})
+			.catch((err) => setStatus(`camera error: ${err?.message ?? err}`))
+
+		return () => {
+			stopped = true
+			cancelAnimationFrame(raf)
+			unsub()
+			// Panel gone → tracking is no longer live; let features be resized again.
+			setTrackingLive(false)
+			const s = video.srcObject as MediaStream | null
+			s?.getTracks().forEach((tr) => tr.stop())
+		}
+	}, [editor])
+
+	return (
+		<div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 8 }}>
+			<video
+				ref={previewRef}
+				autoPlay
+				playsInline
+				muted
+				style={{ width: '100%', borderRadius: 8, transform: 'scaleX(-1)', background: '#0002' }}
+			/>
+			<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+				<span style={{ font: '12px system-ui', opacity: 0.7 }}>{status}</span>
+				<button onClick={() => setTracking((v) => !v)} style={{ font: '12px system-ui', cursor: 'pointer' }}>
+					{tracking ? 'Pause' : 'Track'}
+				</button>
+			</div>
+		</div>
+	)
+}
