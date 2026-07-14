@@ -42,6 +42,22 @@ function makeClip({ name, fps, pose }) {
 // Shorthands. A limb angle is built from a base (rest direction, deg) plus a swing.
 const sin = (t, phase = 0) => Math.sin((t + phase) * 2 * Math.PI)
 
+// One striding leg for a SIDE-READ 2D gait. `swing` is the thigh's fore/aft position
+// this frame (−1 = fully back, +1 = fully forward); the whole figure faces one way, so
+// BOTH legs' knees must bend the SAME screen direction — never mirrored (that reads as a
+// front-view jumping-jack, not a walk). We enforce that here: the shin is always the
+// thigh angle plus a NON-NEGATIVE bend (knee only ever folds one way), and it folds most
+// as the leg lifts/passes under the body (mid-swing), least when planted and extended.
+//   thigh: +90° = straight down; more forward = smaller angle, more back = larger.
+//   shin:  thigh + bend, bend ≥ 0, so the lower leg always trails to the same side.
+function strideLeg(swing, thighAmp, kneeAmp) {
+	const thigh = 90 - thighAmp * swing // forward (swing>0) lifts the thigh toward front
+	// Knee folds through the lift: peak bend near mid-swing (|swing|→0 as it passes under),
+	// straightening at the extremes of the stride where the foot reaches out/plants.
+	const bend = kneeAmp * (0.5 + 0.5 * Math.cos(swing * Math.PI)) // 0..kneeAmp, max at swing=0
+	return { thigh: round(thigh), shin: round(thigh + bend) }
+}
+
 // ── Walk ──────────────────────────────────────────────────────────────────────
 // Legs alternate (half-cycle out of phase); arms counter-swing to the legs; a gentle
 // two-per-cycle vertical bob on the pelvis. Down-pointing rest ≈ +90°; we swing the
@@ -51,9 +67,12 @@ const walk = makeClip({
 	fps: 12,
 	pose: (t) => {
 		const s = sin(t) // right side leads
-		const s2 = sin(t, 0.5) // left side (opposite)
-		const thighSwing = 22
+		const s2 = sin(t, 0.5) // left side (opposite half of the stride)
 		const armSwing = 18
+		// Right and left legs are half a cycle apart; each uses the SAME strideLeg model,
+		// so both knees fold the same screen direction (side-read gait, not a jack).
+		const legR = strideLeg(s, 24, 34)
+		const legL = strideLeg(s2, 24, 34)
 		return {
 			angles: {
 				spine: -90,
@@ -64,11 +83,10 @@ const walk = makeClip({
 				'forearm-r': round(100 + 8 * Math.max(0, s2)),
 				'upper-arm-l': round(95 + armSwing * s),
 				'forearm-l': round(100 + 8 * Math.max(0, s)),
-				// Legs swing around straight-down (+90°); shin bends most as the leg lifts.
-				'thigh-r': round(90 + thighSwing * s),
-				'shin-r': round(95 + 30 * Math.max(0, -s)),
-				'thigh-l': round(90 + thighSwing * s2),
-				'shin-l': round(95 + 30 * Math.max(0, -s2)),
+				'thigh-r': legR.thigh,
+				'shin-r': legR.shin,
+				'thigh-l': legL.thigh,
+				'shin-l': legL.shin,
 			},
 			// Bob down twice per stride (once per foot-plant); small.
 			pelvis: { drop: round(6 + 6 * Math.abs(sin(t, 0.25))), lean: -88 },
@@ -93,10 +111,11 @@ const run = makeClip({
 				'forearm-r': round(55),
 				'upper-arm-l': round(70 + 45 * s),
 				'forearm-l': round(55),
-				'thigh-r': round(90 + 40 * s),
-				'shin-r': round(80 + 55 * Math.max(0, -s)),
-				'thigh-l': round(90 + 40 * s2),
-				'shin-l': round(80 + 55 * Math.max(0, -s2)),
+				// Bigger stride + deeper knee fold than walk, same one-way-bend model.
+				'thigh-r': strideLeg(s, 42, 62).thigh,
+				'shin-r': strideLeg(s, 42, 62).shin,
+				'thigh-l': strideLeg(s2, 42, 62).thigh,
+				'shin-l': strideLeg(s2, 42, 62).shin,
 			},
 			pelvis: { drop: round(10 * Math.abs(sin(t, 0.25))), lean: -78 },
 		}

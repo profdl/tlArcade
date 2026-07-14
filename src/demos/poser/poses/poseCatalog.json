@@ -11,9 +11,9 @@
       "upper-arm-l": 95,
       "forearm-l": 100,
       "thigh-r": 90,
-      "shin-r": 95,
+      "shin-r": 124,
       "thigh-l": 90,
-      "shin-l": 95
+      "shin-l": 124
     },
     "pelvis": {
       "drop": 12,
@@ -30,9 +30,9 @@
           "upper-arm-l": 95,
           "forearm-l": 100,
           "thigh-r": 90,
-          "shin-r": 95,
+          "shin-r": 124,
           "thigh-l": 90,
-          "shin-l": 95
+          "shin-l": 124
         },
         "pelvis": {
           "drop": 12,
@@ -48,10 +48,10 @@
           "forearm-r": 100,
           "upper-arm-l": 99.7,
           "forearm-l": 102.1,
-          "thigh-r": 95.7,
-          "shin-r": 95,
-          "thigh-l": 84.3,
-          "shin-l": 102.8
+          "thigh-r": 83.8,
+          "shin-r": 112.5,
+          "thigh-l": 96.2,
+          "shin-l": 124.9
         },
         "pelvis": {
           "drop": 11.8,
@@ -67,10 +67,10 @@
           "forearm-r": 100,
           "upper-arm-l": 104,
           "forearm-l": 104,
-          "thigh-r": 101,
+          "thigh-r": 78,
           "shin-r": 95,
-          "thigh-l": 79,
-          "shin-l": 110
+          "thigh-l": 102,
+          "shin-l": 119
         },
         "pelvis": {
           "drop": 11.2,
@@ -86,10 +86,10 @@
           "forearm-r": 100,
           "upper-arm-l": 107.7,
           "forearm-l": 105.7,
-          "thigh-r": 105.6,
-          "shin-r": 95,
-          "thigh-l": 74.4,
-          "shin-l": 116.2
+          "thigh-r": 73,
+          "shin-r": 79.7,
+          "thigh-l": 107,
+          "shin-l": 113.7
         },
         "pelvis": {
           "drop": 10.2,
@@ -105,10 +105,10 @@
           "forearm-r": 100,
           "upper-arm-l": 110.6,
           "forearm-l": 106.9,
-          "thigh-r": 109.1,
-          "shin-r": 95,
-          "thigh-l": 70.9,
-          "shin-l": 121
+          "thigh-r": 69.2,
+          "shin-r": 70.7,
+          "thigh-l": 110.8,
+          "shin-l": 112.3
         },
         "pelvis": {
           "drop": 9,
@@ -124,10 +124,10 @@
           "forearm-r": 100,
           "upper-arm-l": 112.4,
           "forearm-l": 107.7,
-          "thigh-r": 111.3,
-          "shin-r": 95,
-          "thigh-l": 68.7,
-          "shin-l": 124
+          "thigh-r": 66.8,
+          "shin-r": 66.9,
+          "thigh-l": 113.2,
+          "shin-l": 113.3
         },
         "pelvis": {
           "drop": 7.6,
@@ -143,10 +143,10 @@
           "forearm-r": 100,
           "upper-arm-l": 113,
           "forearm-l": 108,
-          "thigh-r": 112,
-          "shin-r": 95,
-          "thigh-l": 68,
-          "shin-l": 125
+          "thigh-r": 66,
+          "shin-r": 66,
+          "thigh-l": 114,
+          "shin-l": 114
         },
         "pelvis": {
           "drop": 6,
@@ -162,10 +162,10 @@
           "forearm-r": 100,
           "upper-arm-l": 112.4,
           "forearm-l": 107.7,
-          "thigh-r": 111.3,
-          "shin-r": 95,
-          "thigh-l": 68.7,
-          "shin-l": 124
+          "thigh-r": 66.8,
+          "shin-r": 66.9,
+          "thigh-l": 113.2,
+          "shin-l": 113.3
         },
         "pelvis": {
           "drop": 7.6,
@@ -181,10 +181,10 @@
           "forearm-r": 100,
           "upper-arm-l": 110.6,
           "forearm-l": 106.9,
-          "thigh-r": 109.1,
-          "shin-r": 95,
-          "thigh-l": 70.9,
-          "shin-l": 121
+          "thigh-r": 69.2,
+          "shin-r": 70.7,
+          "thigh-l": 110.8,
+          "shin-l": 112.3
         },
         "pelvis": {
           "drop": 9,
@@ -200,10 +200,10 @@
           "forearm-r": 100,
           "upper-arm-l": 107.7,
           "forearm-l": 105.7,
-          "thigh-r": 105.6,
-          "shin-r": 95,
-          "thigh-l": 74.4,
-          "shin-l": 116.2
+          "thigh-r": 73,
+          "shin-r": 79.7,
+          "thigh-l": 107,
+          "shin-l": 113.7
         },
         "pelvis": {
           "drop": 10.2,
@@ -219,10 +219,10 @@
           "forearm-r": 100,
           "upper-arm-l": 104,
           "forearm-l": 104,
-          "thigh-r": 101,
+          "thigh-r": 78,
           "shin-r": 95,
-          "thigh-l": 79,
-          "shin-l": 110
+          "thigh-l": 102,
+          "shin-l": 119
         },
         "pelvis": {
           "drop": 11.2,
@@ -238,10 +238,10 @@
           "forearm-r": 100,
           "upper-arm-l": 99.7,
           "forearm-l": 102.1,
-          "thigh-r": 95.7,
-          "shin-r": 95,
-          "thigh-l": 84.3,
-          "shin-l": 102.8
+          "thigh-r": 83.8,
+          "shin-r": 112.5,
+          "thigh-l": 96.2,
+          "shin-l": 124.9
         },
         "pelvis": {
           "drop": 11.8,
@@ -258,9 +258,9 @@
           "upper-arm-l": 95,
           "forearm-l": 100,
           "thigh-r": 90,
-          "shin-r": 95,
+          "shin-r": 124,
           "thigh-l": 90,
-          "shin-l": 95
+          "shin-l": 124
         },
         "pelvis": {
           "drop": 12,
@@ -276,10 +276,10 @@
           "forearm-r": 102.1,
           "upper-arm-l": 90.3,
           "forearm-l": 100,
-          "thigh-r": 84.3,
-          "shin-r": 102.8,
-          "thigh-l": 95.7,
-          "shin-l": 95
+          "thigh-r": 96.2,
+          "shin-r": 124.9,
+          "thigh-l": 83.8,
+          "shin-l": 112.5
         },
         "pelvis": {
           "drop": 11.8,
@@ -295,9 +295,9 @@
           "forearm-r": 104,
           "upper-arm-l": 86,
           "forearm-l": 100,
-          "thigh-r": 79,
-          "shin-r": 110,
-          "thigh-l": 101,
+          "thigh-r": 102,
+          "shin-r": 119,
+          "thigh-l": 78,
           "shin-l": 95
         },
         "pelvis": {
@@ -314,10 +314,10 @@
           "forearm-r": 105.7,
           "upper-arm-l": 82.3,
           "forearm-l": 100,
-          "thigh-r": 74.4,
-          "shin-r": 116.2,
-          "thigh-l": 105.6,
-          "shin-l": 95
+          "thigh-r": 107,
+          "shin-r": 113.7,
+          "thigh-l": 73,
+          "shin-l": 79.7
         },
         "pelvis": {
           "drop": 10.2,
@@ -333,10 +333,10 @@
           "forearm-r": 106.9,
           "upper-arm-l": 79.4,
           "forearm-l": 100,
-          "thigh-r": 70.9,
-          "shin-r": 121,
-          "thigh-l": 109.1,
-          "shin-l": 95
+          "thigh-r": 110.8,
+          "shin-r": 112.3,
+          "thigh-l": 69.2,
+          "shin-l": 70.7
         },
         "pelvis": {
           "drop": 9,
@@ -352,10 +352,10 @@
           "forearm-r": 107.7,
           "upper-arm-l": 77.6,
           "forearm-l": 100,
-          "thigh-r": 68.7,
-          "shin-r": 124,
-          "thigh-l": 111.3,
-          "shin-l": 95
+          "thigh-r": 113.2,
+          "shin-r": 113.3,
+          "thigh-l": 66.8,
+          "shin-l": 66.9
         },
         "pelvis": {
           "drop": 7.6,
@@ -371,10 +371,10 @@
           "forearm-r": 108,
           "upper-arm-l": 77,
           "forearm-l": 100,
-          "thigh-r": 68,
-          "shin-r": 125,
-          "thigh-l": 112,
-          "shin-l": 95
+          "thigh-r": 114,
+          "shin-r": 114,
+          "thigh-l": 66,
+          "shin-l": 66
         },
         "pelvis": {
           "drop": 6,
@@ -390,10 +390,10 @@
           "forearm-r": 107.7,
           "upper-arm-l": 77.6,
           "forearm-l": 100,
-          "thigh-r": 68.7,
-          "shin-r": 124,
-          "thigh-l": 111.3,
-          "shin-l": 95
+          "thigh-r": 113.2,
+          "shin-r": 113.3,
+          "thigh-l": 66.8,
+          "shin-l": 66.9
         },
         "pelvis": {
           "drop": 7.6,
@@ -409,10 +409,10 @@
           "forearm-r": 106.9,
           "upper-arm-l": 79.4,
           "forearm-l": 100,
-          "thigh-r": 70.9,
-          "shin-r": 121,
-          "thigh-l": 109.1,
-          "shin-l": 95
+          "thigh-r": 110.8,
+          "shin-r": 112.3,
+          "thigh-l": 69.2,
+          "shin-l": 70.7
         },
         "pelvis": {
           "drop": 9,
@@ -428,10 +428,10 @@
           "forearm-r": 105.7,
           "upper-arm-l": 82.3,
           "forearm-l": 100,
-          "thigh-r": 74.4,
-          "shin-r": 116.2,
-          "thigh-l": 105.6,
-          "shin-l": 95
+          "thigh-r": 107,
+          "shin-r": 113.7,
+          "thigh-l": 73,
+          "shin-l": 79.7
         },
         "pelvis": {
           "drop": 10.2,
@@ -447,9 +447,9 @@
           "forearm-r": 104,
           "upper-arm-l": 86,
           "forearm-l": 100,
-          "thigh-r": 79,
-          "shin-r": 110,
-          "thigh-l": 101,
+          "thigh-r": 102,
+          "shin-r": 119,
+          "thigh-l": 78,
           "shin-l": 95
         },
         "pelvis": {
@@ -466,10 +466,10 @@
           "forearm-r": 102.1,
           "upper-arm-l": 90.3,
           "forearm-l": 100,
-          "thigh-r": 84.3,
-          "shin-r": 102.8,
-          "thigh-l": 95.7,
-          "shin-l": 95
+          "thigh-r": 96.2,
+          "shin-r": 124.9,
+          "thigh-l": 83.8,
+          "shin-l": 112.5
         },
         "pelvis": {
           "drop": 11.8,
@@ -491,9 +491,9 @@
       "upper-arm-l": 70,
       "forearm-l": 55,
       "thigh-r": 90,
-      "shin-r": 80,
+      "shin-r": 152,
       "thigh-l": 90,
-      "shin-l": 80
+      "shin-l": 152
     },
     "pelvis": {
       "drop": 10,
@@ -510,9 +510,9 @@
           "upper-arm-l": 70,
           "forearm-l": 55,
           "thigh-r": 90,
-          "shin-r": 80,
+          "shin-r": 152,
           "thigh-l": 90,
-          "shin-l": 80
+          "shin-l": 152
         },
         "pelvis": {
           "drop": 10,
@@ -528,10 +528,10 @@
           "forearm-r": 55,
           "upper-arm-l": 81.6,
           "forearm-l": 55,
-          "thigh-r": 100.4,
-          "shin-r": 80,
-          "thigh-l": 79.6,
-          "shin-l": 94.2
+          "thigh-r": 79.1,
+          "shin-r": 131.4,
+          "thigh-l": 100.9,
+          "shin-l": 153.2
         },
         "pelvis": {
           "drop": 9.7,
@@ -547,10 +547,10 @@
           "forearm-r": 55,
           "upper-arm-l": 92.5,
           "forearm-l": 55,
-          "thigh-r": 110,
-          "shin-r": 80,
-          "thigh-l": 70,
-          "shin-l": 107.5
+          "thigh-r": 69,
+          "shin-r": 100,
+          "thigh-l": 111,
+          "shin-l": 142
         },
         "pelvis": {
           "drop": 8.7,
@@ -566,10 +566,10 @@
           "forearm-r": 55,
           "upper-arm-l": 101.8,
           "forearm-l": 55,
-          "thigh-r": 118.3,
-          "shin-r": 80,
-          "thigh-l": 61.7,
-          "shin-l": 118.9
+          "thigh-r": 60.3,
+          "shin-r": 72.5,
+          "thigh-l": 119.7,
+          "shin-l": 131.9
         },
         "pelvis": {
           "drop": 7.1,
@@ -585,10 +585,10 @@
           "forearm-r": 55,
           "upper-arm-l": 109,
           "forearm-l": 55,
-          "thigh-r": 124.6,
-          "shin-r": 80,
-          "thigh-l": 55.4,
-          "shin-l": 127.6
+          "thigh-r": 53.6,
+          "shin-r": 56.3,
+          "thigh-l": 126.4,
+          "shin-l": 129.1
         },
         "pelvis": {
           "drop": 5,
@@ -604,10 +604,10 @@
           "forearm-r": 55,
           "upper-arm-l": 113.5,
           "forearm-l": 55,
-          "thigh-r": 128.6,
-          "shin-r": 80,
-          "thigh-l": 51.4,
-          "shin-l": 133.1
+          "thigh-r": 49.4,
+          "shin-r": 49.6,
+          "thigh-l": 130.6,
+          "shin-l": 130.7
         },
         "pelvis": {
           "drop": 2.6,
@@ -623,10 +623,10 @@
           "forearm-r": 55,
           "upper-arm-l": 115,
           "forearm-l": 55,
-          "thigh-r": 130,
-          "shin-r": 80,
-          "thigh-l": 50,
-          "shin-l": 135
+          "thigh-r": 48,
+          "shin-r": 48,
+          "thigh-l": 132,
+          "shin-l": 132
         },
         "pelvis": {
           "drop": 0,
@@ -642,10 +642,10 @@
           "forearm-r": 55,
           "upper-arm-l": 113.5,
           "forearm-l": 55,
-          "thigh-r": 128.6,
-          "shin-r": 80,
-          "thigh-l": 51.4,
-          "shin-l": 133.1
+          "thigh-r": 49.4,
+          "shin-r": 49.6,
+          "thigh-l": 130.6,
+          "shin-l": 130.7
         },
         "pelvis": {
           "drop": 2.6,
@@ -661,10 +661,10 @@
           "forearm-r": 55,
           "upper-arm-l": 109,
           "forearm-l": 55,
-          "thigh-r": 124.6,
-          "shin-r": 80,
-          "thigh-l": 55.4,
-          "shin-l": 127.6
+          "thigh-r": 53.6,
+          "shin-r": 56.3,
+          "thigh-l": 126.4,
+          "shin-l": 129.1
         },
         "pelvis": {
           "drop": 5,
@@ -680,10 +680,10 @@
           "forearm-r": 55,
           "upper-arm-l": 101.8,
           "forearm-l": 55,
-          "thigh-r": 118.3,
-          "shin-r": 80,
-          "thigh-l": 61.7,
-          "shin-l": 118.9
+          "thigh-r": 60.3,
+          "shin-r": 72.5,
+          "thigh-l": 119.7,
+          "shin-l": 131.9
         },
         "pelvis": {
           "drop": 7.1,
@@ -699,10 +699,10 @@
           "forearm-r": 55,
           "upper-arm-l": 92.5,
           "forearm-l": 55,
-          "thigh-r": 110,
-          "shin-r": 80,
-          "thigh-l": 70,
-          "shin-l": 107.5
+          "thigh-r": 69,
+          "shin-r": 100,
+          "thigh-l": 111,
+          "shin-l": 142
         },
         "pelvis": {
           "drop": 8.7,
@@ -718,10 +718,10 @@
           "forearm-r": 55,
           "upper-arm-l": 81.6,
           "forearm-l": 55,
-          "thigh-r": 100.4,
-          "shin-r": 80,
-          "thigh-l": 79.6,
-          "shin-l": 94.2
+          "thigh-r": 79.1,
+          "shin-r": 131.4,
+          "thigh-l": 100.9,
+          "shin-l": 153.2
         },
         "pelvis": {
           "drop": 9.7,
@@ -738,9 +738,9 @@
           "upper-arm-l": 70,
           "forearm-l": 55,
           "thigh-r": 90,
-          "shin-r": 80,
+          "shin-r": 152,
           "thigh-l": 90,
-          "shin-l": 80
+          "shin-l": 152
         },
         "pelvis": {
           "drop": 10,
@@ -756,10 +756,10 @@
           "forearm-r": 55,
           "upper-arm-l": 58.4,
           "forearm-l": 55,
-          "thigh-r": 79.6,
-          "shin-r": 94.2,
-          "thigh-l": 100.4,
-          "shin-l": 80
+          "thigh-r": 100.9,
+          "shin-r": 153.2,
+          "thigh-l": 79.1,
+          "shin-l": 131.4
         },
         "pelvis": {
           "drop": 9.7,
@@ -775,10 +775,10 @@
           "forearm-r": 55,
           "upper-arm-l": 47.5,
           "forearm-l": 55,
-          "thigh-r": 70,
-          "shin-r": 107.5,
-          "thigh-l": 110,
-          "shin-l": 80
+          "thigh-r": 111,
+          "shin-r": 142,
+          "thigh-l": 69,
+          "shin-l": 100
         },
         "pelvis": {
           "drop": 8.7,
@@ -794,10 +794,10 @@
           "forearm-r": 55,
           "upper-arm-l": 38.2,
           "forearm-l": 55,
-          "thigh-r": 61.7,
-          "shin-r": 118.9,
-          "thigh-l": 118.3,
-          "shin-l": 80
+          "thigh-r": 119.7,
+          "shin-r": 131.9,
+          "thigh-l": 60.3,
+          "shin-l": 72.5
         },
         "pelvis": {
           "drop": 7.1,
@@ -813,10 +813,10 @@
           "forearm-r": 55,
           "upper-arm-l": 31,
           "forearm-l": 55,
-          "thigh-r": 55.4,
-          "shin-r": 127.6,
-          "thigh-l": 124.6,
-          "shin-l": 80
+          "thigh-r": 126.4,
+          "shin-r": 129.1,
+          "thigh-l": 53.6,
+          "shin-l": 56.3
         },
         "pelvis": {
           "drop": 5,
@@ -832,10 +832,10 @@
           "forearm-r": 55,
           "upper-arm-l": 26.5,
           "forearm-l": 55,
-          "thigh-r": 51.4,
-          "shin-r": 133.1,
-          "thigh-l": 128.6,
-          "shin-l": 80
+          "thigh-r": 130.6,
+          "shin-r": 130.7,
+          "thigh-l": 49.4,
+          "shin-l": 49.6
         },
         "pelvis": {
           "drop": 2.6,
@@ -851,10 +851,10 @@
           "forearm-r": 55,
           "upper-arm-l": 25,
           "forearm-l": 55,
-          "thigh-r": 50,
-          "shin-r": 135,
-          "thigh-l": 130,
-          "shin-l": 80
+          "thigh-r": 132,
+          "shin-r": 132,
+          "thigh-l": 48,
+          "shin-l": 48
         },
         "pelvis": {
           "drop": 0,
@@ -870,10 +870,10 @@
           "forearm-r": 55,
           "upper-arm-l": 26.5,
           "forearm-l": 55,
-          "thigh-r": 51.4,
-          "shin-r": 133.1,
-          "thigh-l": 128.6,
-          "shin-l": 80
+          "thigh-r": 130.6,
+          "shin-r": 130.7,
+          "thigh-l": 49.4,
+          "shin-l": 49.6
         },
         "pelvis": {
           "drop": 2.6,
@@ -889,10 +889,10 @@
           "forearm-r": 55,
           "upper-arm-l": 31,
           "forearm-l": 55,
-          "thigh-r": 55.4,
-          "shin-r": 127.6,
-          "thigh-l": 124.6,
-          "shin-l": 80
+          "thigh-r": 126.4,
+          "shin-r": 129.1,
+          "thigh-l": 53.6,
+          "shin-l": 56.3
         },
         "pelvis": {
           "drop": 5,
@@ -908,10 +908,10 @@
           "forearm-r": 55,
           "upper-arm-l": 38.2,
           "forearm-l": 55,
-          "thigh-r": 61.7,
-          "shin-r": 118.9,
-          "thigh-l": 118.3,
-          "shin-l": 80
+          "thigh-r": 119.7,
+          "shin-r": 131.9,
+          "thigh-l": 60.3,
+          "shin-l": 72.5
         },
         "pelvis": {
           "drop": 7.1,
@@ -927,10 +927,10 @@
           "forearm-r": 55,
           "upper-arm-l": 47.5,
           "forearm-l": 55,
-          "thigh-r": 70,
-          "shin-r": 107.5,
-          "thigh-l": 110,
-          "shin-l": 80
+          "thigh-r": 111,
+          "shin-r": 142,
+          "thigh-l": 69,
+          "shin-l": 100
         },
         "pelvis": {
           "drop": 8.7,
@@ -946,10 +946,10 @@
           "forearm-r": 55,
           "upper-arm-l": 58.4,
           "forearm-l": 55,
-          "thigh-r": 79.6,
-          "shin-r": 94.2,
-          "thigh-l": 100.4,
-          "shin-l": 80
+          "thigh-r": 100.9,
+          "shin-r": 153.2,
+          "thigh-l": 79.1,
+          "shin-l": 131.4
         },
         "pelvis": {
           "drop": 9.7,
