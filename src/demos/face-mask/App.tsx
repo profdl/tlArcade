@@ -14,6 +14,7 @@ import {
 	trySnapSelectedShapesToFace,
 	updateDragSnapPreview,
 } from './snapToFace'
+import { TLDRAW_LICENSE_KEY } from '../licenseKey'
 
 const shapeUtils = [FaceVideoShapeUtil, ArrowFaceFeatureShapeUtil]
 const bindingUtils = [FaceFeatureBindingUtil]
@@ -57,7 +58,7 @@ export default function App() {
 
 	return (
 		<div style={{ position: 'fixed', inset: 0 }}>
-			<Tldraw shapeUtils={shapeUtils} bindingUtils={bindingUtils} components={components} onMount={handleMount} />
+			<Tldraw licenseKey={TLDRAW_LICENSE_KEY} shapeUtils={shapeUtils} bindingUtils={bindingUtils} components={components} onMount={handleMount} />
 			<button
 				style={{
 					position: 'absolute',

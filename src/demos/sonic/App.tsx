@@ -5,6 +5,7 @@ import { Rider } from './game/Rider'
 import { LEGEND } from './game/geometry'
 import { loadGreenHill } from './game/greenHill'
 import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom, modeAtom, wonAtom, sideGroundY } from './game/state'
+import { TLDRAW_LICENSE_KEY } from '../licenseKey'
 import './App.css'
 
 // How far above the viewport center to drop the sled when "set start" is hit,
@@ -168,7 +169,7 @@ function App() {
 
 	return (
 		<div className="sonic-root">
-			<Tldraw persistenceKey="tlArcade-sonic" components={components} onMount={handleMount} />
+			<Tldraw licenseKey={TLDRAW_LICENSE_KEY} persistenceKey="tlArcade-sonic" components={components} onMount={handleMount} />
 
 			<div className="sonic-panel">
 				<button

@@ -31,6 +31,7 @@ import { GameRuntime, type GameState } from './game/engine'
 import { loadLevel } from './game/level'
 import { legModeAtom, playingAtom, tunablesAtom } from './game/state'
 import { draftRigAtom, dragBoneAtom, rigDebugAtom, rigModeAtom, rigTargetAtom, showRigDebugAtom } from './game/rig/state'
+import { TLDRAW_LICENSE_KEY } from '../licenseKey'
 import { makeTunables } from './game/physics'
 import { TEMPLATE_LIST } from './game/templates'
 import './App.css'
@@ -198,6 +199,7 @@ export default function App() {
   return (
     <div className="eng-root">
       <Tldraw
+        licenseKey={TLDRAW_LICENSE_KEY}
         persistenceKey="tlArcade-engine-native"
         components={components}
         tools={tools}

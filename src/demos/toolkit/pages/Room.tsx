@@ -14,6 +14,7 @@ import { onRefereePrivateMessage } from '../referee/privateReveals'
 import { gameBindingUtils, gameShapeUtils, gameTools } from '../shapes/registry'
 import { createGameComponents } from '../ui/components'
 import { creatureIconAssetUrls } from '../creature/variants'
+import { TLDRAW_LICENSE_KEY } from '../../licenseKey'
 
 export function Room() {
 	const { roomId } = useParams<{ roomId: string }>()
@@ -41,6 +42,7 @@ export function Room() {
 	return (
 		<RoomWrapper roomId={roomId}>
 			<Tldraw
+				licenseKey={TLDRAW_LICENSE_KEY}
 				// we can pass the connected store into the Tldraw component which will handle
 				// loading states & enable multiplayer UX like cursors & a presence menu
 				store={store}

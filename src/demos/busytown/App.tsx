@@ -10,6 +10,7 @@ import { resetSpeech } from './content/characters/speech'
 import { SCENES, SCENE_LIST, DEFAULT_SCENE_ID } from './content/scenes'
 import { Icon } from './render/icons'
 import { SKIN_OPTIONS, DEFAULT_SKIN } from './render/doodles'
+import { TLDRAW_LICENSE_KEY } from '../licenseKey'
 import type { InteractionTally } from './sim/systems'
 
 const shapeUtils = [SpriteShapeUtil]
@@ -132,7 +133,7 @@ export default function App() {
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
-      <Tldraw shapeUtils={shapeUtils} onMount={handleMount} />
+      <Tldraw licenseKey={TLDRAW_LICENSE_KEY} shapeUtils={shapeUtils} onMount={handleMount} />
       <Hud
         tally={tally}
         paused={paused}

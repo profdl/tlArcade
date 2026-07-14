@@ -12,6 +12,7 @@ import { RunController } from "./game/RunController";
 import { FIELD } from "./game/geometry";
 import { designateObject } from "./game/shapes";
 import { playingAtom, resetNonceAtom, scriptedCountAtom } from "./game/state";
+import { TLDRAW_LICENSE_KEY } from "../licenseKey";
 import "./App.css";
 
 // The overlay + sim driver render on top of the canvas. Defined ONCE at module
@@ -61,7 +62,7 @@ function App() {
     <div className="am-root">
       <Tldraw
         persistenceKey="tlArcade-ant-mover"
-        licenseKey="tldraw-daniel-lefcourt-r-d-2026-09-30/WyJVcnBLUDQ0RSIsWyIqLmRsZWZjb3VydC53b3JrZXJzLmRldiJdLDE5MywiMjAyNi0wOS0zMCJd.IWG61i+ciw4uR7oOpjDKuOcQkIeNakkk6Bc59DPRl41LgVzGv9e5LBtjENKTX8B8ExUHgoXj/i3kMUGtIT8R5w"
+        licenseKey={TLDRAW_LICENSE_KEY}
         components={components}
         onMount={handleMount}
       />

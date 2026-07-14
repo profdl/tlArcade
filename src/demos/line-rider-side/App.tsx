@@ -4,6 +4,7 @@ import 'tldraw/tldraw.css'
 import { Rider } from './game/Rider'
 import { LEGEND } from './game/geometry'
 import { playingAtom, followAtom, startPointAtom, statsAtom, scoreAtom, resetNonceAtom, mutedAtom, showCollisionsAtom, modeAtom, sideGroundY } from './game/state'
+import { TLDRAW_LICENSE_KEY } from '../licenseKey'
 import './App.css'
 
 // How far above the viewport center to drop the sled when "set start" is hit,
@@ -148,7 +149,7 @@ function App() {
 
 	return (
 		<div className="lrs-root">
-			<Tldraw persistenceKey="line-rider-side" components={components} onMount={handleMount} />
+			<Tldraw licenseKey={TLDRAW_LICENSE_KEY} persistenceKey="line-rider-side" components={components} onMount={handleMount} />
 
 			<div className="lrs-panel">
 				<button
