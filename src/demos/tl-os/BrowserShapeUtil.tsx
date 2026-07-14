@@ -418,31 +418,17 @@ function PreviewColumn({ entry, height }: { entry: Picked; height: number }) {
 			}}
 		>
 			{isImage && url ? (
-				<img
-					src={url}
-					alt={name}
-					// A blob: <img> is natively draggable and, if dragged onto the
-					// canvas, crashes tldraw's bookmark handler (see the demo CLAUDE.md).
-					// Disable native drag + pointer events so the drag hits the shape.
-					draggable={false}
-					style={{
-						maxWidth: '100%',
-						maxHeight: '55%',
-						objectFit: 'contain',
-						borderRadius: 6,
-						boxShadow: 'var(--tl-shadow-1, 0 1px 3px rgba(0,0,0,0.25))',
-						pointerEvents: 'none',
-						userSelect: 'none',
-					}}
-				/>
+				<FreehandImage src={url} alt={name} />
 			) : (
 				<PreviewGlyph tint={tint} />
 			)}
 			<div
 				style={{
-					fontFamily: 'var(--tl-font-sans)',
-					fontSize: 13,
-					fontWeight: 600,
+					// tldraw's native handwriting ("Draw") font, matching the
+					// hand-drawn chrome.
+					fontFamily: 'var(--tl-font-draw)',
+					fontSize: 15,
+					fontWeight: 500,
 					color: 'var(--tl-color-text)',
 					wordBreak: 'break-word',
 					lineHeight: 1.25,
@@ -453,9 +439,9 @@ function PreviewColumn({ entry, height }: { entry: Picked; height: number }) {
 			{entry.ext && (
 				<span
 					style={{
-						fontFamily: 'var(--tl-font-sans)',
-						fontSize: 9,
-						fontWeight: 700,
+						fontFamily: 'var(--tl-font-draw)',
+						fontSize: 11,
+						fontWeight: 500,
 						letterSpacing: 0.4,
 						textTransform: 'uppercase',
 						color: '#fff',
@@ -480,6 +466,75 @@ function PreviewColumn({ entry, height }: { entry: Picked; height: number }) {
 				{entry.path}
 			</div>
 		</div>
+	)
+}
+
+/**
+ * An image preview wrapped in a hand-drawn Perfect-Freehand border (instead of a
+ * drop shadow). The image's rendered size isn't known until it loads and depends
+ * on its aspect ratio, so we measure the shrink-wrapped box with a ResizeObserver
+ * and stroke a `roughRect` sized to it — the wobbly ink ring hugs the picture's
+ * actual edges. `overflow:visible` lets the wobble sit just outside the frame.
+ */
+function FreehandImage({ src, alt }: { src: string; alt: string }) {
+	const boxRef = useRef<HTMLSpanElement | null>(null)
+	const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+
+	useEffect(() => {
+		const el = boxRef.current
+		if (!el || typeof ResizeObserver === 'undefined') return
+		const ro = new ResizeObserver(() => {
+			setSize({ w: el.offsetWidth, h: el.offsetHeight })
+		})
+		ro.observe(el)
+		return () => ro.disconnect()
+	}, [])
+
+	// Trace the border a hair outside the image box so the ink frames it.
+	const border = useMemo(() => {
+		if (!size || size.w < 2 || size.h < 2) return null
+		return roughRect(-3, -3, size.w + 6, size.h + 6, 8, 2)
+	}, [size])
+
+	return (
+		<span
+			ref={boxRef}
+			style={{
+				position: 'relative',
+				display: 'inline-block',
+				maxWidth: '100%',
+				maxHeight: '55%',
+				lineHeight: 0,
+			}}
+		>
+			<img
+				src={src}
+				alt={alt}
+				// A blob: <img> is natively draggable and, if dragged onto the canvas,
+				// crashes tldraw's bookmark handler (see the demo CLAUDE.md). Disable
+				// native drag + pointer events so the drag hits the shape.
+				draggable={false}
+				style={{
+					display: 'block',
+					maxWidth: '100%',
+					maxHeight: '100%',
+					objectFit: 'contain',
+					borderRadius: 5,
+					pointerEvents: 'none',
+					userSelect: 'none',
+				}}
+			/>
+			{border && (
+				<svg
+					width={size!.w}
+					height={size!.h}
+					viewBox={`0 0 ${size!.w} ${size!.h}`}
+					style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}
+				>
+					<path d={border} fill="var(--tl-color-text)" opacity={0.85} stroke="none" />
+				</svg>
+			)}
+		</span>
 	)
 }
 

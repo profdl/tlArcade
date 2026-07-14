@@ -10,6 +10,13 @@
 .tlos-root {
 	position: absolute;
 	inset: 0;
+	/* tldraw's own UI (menus, toolbar, panels) uses `font-family: inherit`, so
+	   without a base font on an ANCESTOR it inherits the browser's document
+	   default — a serif (Times) — which is why the main menu read as serif.
+	   `--tl-font-sans` is defined on `.tl-container` (a descendant here), so a
+	   `var()` reference at this level wouldn't resolve; use tldraw's literal sans
+	   stack instead so the whole demo, chrome included, is sans-serif. */
+	font-family: 'tldraw_sans', ui-sans-serif, system-ui, sans-serif;
 }
 
 /* The folder-bind control, sitting in tldraw's top-right SharePanel slot. Uses
