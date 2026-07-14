@@ -80,6 +80,10 @@ export interface BrowserServices {
 	readDir(subPath: string): Promise<BrowserEntry[]>
 	/** Open a file leaf (double-click). Folders navigate in-place, not here. */
 	openFile(entry: BrowserEntry): void
+	/** A file row was dragged out of the window and dropped on the canvas at the
+	 *  given *page* point. The App materialises a `tlos-file` pointer there and
+	 *  prompts import-vs-reference. Only files drop this way (folders navigate). */
+	onDropFile(entry: BrowserEntry, pagePoint: { x: number; y: number }): void
 }
 const ServicesContext = createContext<BrowserServices | null>(null)
 export const BrowserServicesProvider = ServicesContext.Provider
@@ -355,10 +359,12 @@ function Column({
 				entries.map((entry) => (
 					<Row
 						key={entry.path}
+						shape={shape}
 						entry={entry}
 						selected={entry.path === selectedInThisColumn}
 						onSelect={() => select(entry)}
 						onOpen={() => services?.openFile(entry)}
+						onDropOut={(pagePoint) => services?.onDropFile(entry, pagePoint)}
 					/>
 				))
 			)}
@@ -553,19 +559,124 @@ function PreviewGlyph({ tint }: { tint: string }) {
 	)
 }
 
+/** How far the pointer must travel from press before a click becomes a drag-out.
+ *  Below this we treat the gesture as a plain select; at or above it we start
+ *  dragging the file out of the window. */
+const DRAG_THRESHOLD = 6
+
+/**
+ * Arm a file-row drag-out. Called on pointer-down over a file row (after the
+ * plain select). Attaches window pointer listeners: once the pointer moves past
+ * `DRAG_THRESHOLD` from the press point the drag is "lifted" (the row dims, a
+ * floating ghost follows the cursor). On release we convert the cursor to a
+ * *page* point and, if it landed **outside this window's page bounds** (a real
+ * drop on the canvas, not back into the list), hand it to `onDropOut`; the App
+ * materialises a `tlos-file` pointer there and prompts import-vs-reference.
+ *
+ * We drive this with raw window listeners rather than pointer capture so a
+ * release anywhere on the page is caught, and so we never interfere with
+ * tldraw's own pointer handling on the canvas (the press already
+ * `stopPropagation`'d, so the canvas never sees this gesture at all).
+ */
+function armDragOut(
+	e: React.PointerEvent,
+	editor: ReturnType<typeof useEditor>,
+	shape: BrowserShape,
+	onDropOut: (pagePoint: { x: number; y: number }) => void,
+	setDragging: (v: boolean) => void,
+): void {
+	const startX = e.clientX
+	const startY = e.clientY
+	let lifted = false
+	let ghost: HTMLDivElement | null = null
+
+	const move = (ev: PointerEvent) => {
+		const dx = ev.clientX - startX
+		const dy = ev.clientY - startY
+		if (!lifted) {
+			if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return
+			lifted = true
+			setDragging(true)
+			ghost = makeDragGhost()
+			document.body.appendChild(ghost)
+		}
+		if (ghost) {
+			ghost.style.left = `${ev.clientX + 10}px`
+			ghost.style.top = `${ev.clientY + 10}px`
+		}
+	}
+
+	const up = (ev: PointerEvent) => {
+		window.removeEventListener('pointermove', move)
+		window.removeEventListener('pointerup', up)
+		if (ghost) ghost.remove()
+		if (!lifted) return
+		setDragging(false)
+		// Drop point in page space; only accept a release that left the window.
+		const page = editor.screenToPage({ x: ev.clientX, y: ev.clientY })
+		const bounds = editor.getShapePageBounds(shape.id)
+		const insideWindow =
+			bounds != null &&
+			page.x >= bounds.x &&
+			page.x <= bounds.maxX &&
+			page.y >= bounds.y &&
+			page.y <= bounds.maxY
+		if (!insideWindow) onDropOut(page)
+	}
+
+	window.addEventListener('pointermove', move)
+	window.addEventListener('pointerup', up)
+}
+
+/** A small floating chip that follows the cursor while a file is dragged out of
+ *  the window, so the drag reads as "carrying the file to the canvas." Plain DOM
+ *  (appended to <body>) since it lives above everything during the drag. */
+function makeDragGhost(): HTMLDivElement {
+	const el = document.createElement('div')
+	el.style.cssText = [
+		'position:fixed',
+		'z-index:99999',
+		'pointer-events:none',
+		'padding:4px 10px',
+		'border-radius:6px',
+		'font-family:var(--tl-font-sans, sans-serif)',
+		'font-size:12px',
+		'color:#fff',
+		`background:${TINT_FOLDER}`,
+		'box-shadow:0 2px 8px rgba(0,0,0,0.3)',
+		'opacity:0.9',
+	].join(';')
+	el.textContent = '＋ Add to canvas'
+	return el
+}
+
 /** One row: a hand-drawn glyph, the name, and — for folders — a freehand
- *  disclosure chevron. When selected, a rough freehand box is drawn behind it. */
+ *  disclosure chevron. When selected, a rough freehand box is drawn behind it.
+ *
+ *  A *file* row can also be **dragged out of the window onto the canvas**: press
+ *  and move past a small threshold to lift a floating ghost; release over the
+ *  canvas (outside this window's page bounds) to drop it. The App then
+ *  materialises a `tlos-file` pointer at the drop point and prompts
+ *  import-vs-reference. A press that never passes the threshold is a plain
+ *  select, exactly as before, so single-clicking to navigate still works.
+ *  Folders don't drag (they navigate columns), so the gesture is file-only. */
 function Row({
+	shape,
 	entry,
 	selected,
 	onSelect,
 	onOpen,
+	onDropOut,
 }: {
+	shape: BrowserShape
 	entry: BrowserEntry
 	selected: boolean
 	onSelect: () => void
 	onOpen: () => void
+	onDropOut: (pagePoint: { x: number; y: number }) => void
 }) {
+	const editor = useEditor()
+	const [dragging, setDragging] = useState(false)
 	const isDir = entry.kind === 'directory'
 	const tint = isDir ? TINT_FOLDER : isImageExt(entry.ext) ? TINT_IMAGE : TINT_DEFAULT
 
@@ -583,9 +694,16 @@ function Row({
 	return (
 		<div
 			onPointerDown={(e) => {
-				// Don't let the click start a canvas box-select / shape drag.
+				// Don't let the press start a canvas box-select / shape drag.
 				stopEventPropagation(e)
+				// Selecting happens immediately (drives the next column / preview),
+				// exactly as before. A file row *also* arms a drag-out: if the
+				// pointer then travels past the threshold we lift a ghost and, on
+				// release over the canvas, drop a pointer there. A folder just
+				// selects (navigates), so it never arms the drag.
 				onSelect()
+				if (entry.kind !== 'file') return
+				armDragOut(e, editor, shape, onDropOut, setDragging)
 			}}
 			onDoubleClick={(e) => {
 				stopEventPropagation(e)
@@ -600,8 +718,9 @@ function Row({
 				alignItems: 'center',
 				gap: 6,
 				padding: `0 ${ROW_PAD_X}px`,
-				cursor: 'default',
+				cursor: entry.kind === 'file' ? 'grab' : 'default',
 				userSelect: 'none',
+				opacity: dragging ? 0.4 : 1,
 			}}
 		>
 			{/* Solid selection fill (so white text reads), with the freehand ring

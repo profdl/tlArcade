@@ -235,8 +235,35 @@ export default function App() {
 		[status, rootName, busy, handleGrant, handleReconnect, importDrop],
 	)
 
+	// A file was dragged out of a browser window and dropped on the canvas: drop a
+	// `tlos-file` pointer at that page point (centred under the cursor) and prompt
+	// import-vs-reference — the same dialog the drag-out-of-a-frame gesture opens.
+	// This is a fresh page-level shape (no frame→page reparent), so it doesn't trip
+	// the reparent side-effect in handleMount; the two drop paths are independent
+	// and both land on the import dialog. Creating the pointer respects the "canvas
+	// owns layout, disk owns bytes" rule — nothing touches disk until the user
+	// picks "Import into tldraw".
+	const dropFile = useCallback((entry: BrowserEntry, pagePoint: { x: number; y: number }) => {
+		const editor = editorRef.current
+		if (!editor) return
+		const ext = entry.ext
+		const w = 96
+		const h = 104
+		const id = createShapeId()
+		editor.createShape<FileShape>({
+			id,
+			type: 'tlos-file',
+			x: pagePoint.x - w / 2,
+			y: pagePoint.y - h / 2,
+			props: { w, h, path: entry.path, name: entry.name, kind: 'file', ext },
+		})
+		const shape = editor.getShape(id) as FileShape | undefined
+		if (shape) openImportDialogRef.current?.(shape)
+	}, [])
+
 	// What the browser-shape needs from the App: list a directory, open a file
-	// leaf. Both go through the disk layer here; the shape never imports it.
+	// leaf, and receive a file dragged out onto the canvas. All go through this
+	// layer; the shape itself never imports the disk layer.
 	const browserServices = useMemo<BrowserServices>(
 		() => ({
 			readDir: async (subPath) => {
@@ -245,8 +272,9 @@ export default function App() {
 				return readDirectory(root, subPath) as Promise<BrowserEntry[]>
 			},
 			openFile: (entry) => void openFilePath(entry.path),
+			onDropFile: dropFile,
 		}),
-		[openFilePath],
+		[openFilePath, dropFile],
 	)
 
 	return (

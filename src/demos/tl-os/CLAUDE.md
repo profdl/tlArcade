@@ -110,14 +110,23 @@ UI feature-detects and shows an "unsupported" note rather than breaking.
   before re-creating it, so re-opening a folder replaces (not duplicates) it. A
   window's own column navigation lives entirely in its `selection` prop — no new
   shapes are spawned per folder (that's the point of a column view).
-- **Dragging a file-shape (a `tlos-file` dropped from a window) onto the page
-  prompts import-vs-reference.** A `registerAfterChangeHandler('shape')` side-
-  effect (in `handleMount`) detects the reparent (frame → page,
-  `source === 'user'`) and opens a dialog. *Import into tldraw* →
-  `putExternalContent({type:'files'})` runs tldraw's own file→asset→shape
-  pipeline at the icon's spot and deletes the pointer (content now lives in the
-  doc, survives without the disk binding). *Keep as reference* → the `tlos-file`
-  pointer just stays where it was dropped.
+- **Two gestures land a file on the canvas; both prompt import-vs-reference.**
+  (1) *Dragging a file row **out of a browser window** onto the canvas.* The row
+  arms a drag on pointer-down (`armDragOut` in `BrowserShapeUtil`): past a small
+  threshold it lifts a floating "Add to canvas" ghost, and a release **outside
+  the window's page bounds** calls `BrowserServices.onDropFile(entry, pagePoint)`.
+  The App (`dropFile`) creates a fresh page-level `tlos-file` pointer centred at
+  the drop point and opens the dialog. A press that never passes the threshold is
+  a plain select (column navigation still works); folders don't arm the drag.
+  (2) *Dragging an existing `tlos-file` icon out of a frame onto the page.* A
+  `registerAfterChangeHandler('shape')` side-effect (in `handleMount`) detects
+  the reparent (frame → page, `source === 'user'`) and opens the same dialog.
+  Because gesture (1) creates the pointer *directly on the page* (no frame→page
+  reparent), the two paths never double-fire — they're independent. Both share
+  the one dialog: *Import into tldraw* → `putExternalContent({type:'files'})`
+  runs tldraw's own file→asset→shape pipeline at the pointer's spot and deletes
+  the pointer (content now lives in the doc, survives without the disk binding);
+  *Keep as reference* → the `tlos-file` pointer just stays where it was dropped.
 
 ## Gotcha: blob: URLs crash the default bookmark handler
 
