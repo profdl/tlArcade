@@ -1,0 +1,56 @@
+/* tl-os demo styles. Prefix every global class with `.tlos-` so a stale
+   lazy-loaded stylesheet can't collide with another demo's classes after a
+   route change (see the repo CLAUDE.md on CSS collisions).
+
+   The bind bar, buttons, and import dialog are now tldraw-native (SharePanel +
+   TldrawUiButton + a real dialog via useDialogs), so they inherit the SDK's
+   theme and dark mode automatically. Only the thin wrapper around the SharePanel
+   content is styled here, using tldraw's own --tl-color-* vars so it matches. */
+
+.tlos-root {
+	position: absolute;
+	inset: 0;
+	/* tldraw's own UI (menus, toolbar, panels) uses `font-family: inherit`, so
+	   without a base font on an ANCESTOR it inherits the browser's document
+	   default — a serif (Times) — which is why the main menu read as serif.
+	   `--tl-font-sans` is defined on `.tl-container` (a descendant here), so a
+	   `var()` reference at this level wouldn't resolve; use tldraw's literal sans
+	   stack instead so the whole demo, chrome included, is sans-serif. */
+	font-family: 'tldraw_sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* The folder-bind control, sitting in tldraw's top-right SharePanel slot. Uses
+   the same panel surface/shadow as the rest of the tldraw chrome so it reads as
+   part of the app, and follows the theme into dark mode. */
+.tlos-panel {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: 4px;
+	padding: 2px 4px 2px 8px;
+	background: var(--tl-color-panel);
+	border-radius: var(--tl-radius-3, 8px);
+	box-shadow: var(--tl-shadow-2, 0 1px 3px rgba(0, 0, 0, 0.2));
+	pointer-events: all;
+	max-width: 260px;
+}
+
+.tlos-panel__note {
+	font-size: 12px;
+	color: var(--tl-color-text-1, var(--tl-color-text));
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-family: var(--tl-font-sans);
+}
+
+/* File/folder icon hover affordance — a faint tldraw "low" highlight, matching
+   how the SDK's own hoverable surfaces feel. Selection is drawn by tldraw's
+   indicator (getIndicatorPath), so this only needs to cover hover. */
+.tlos-file {
+	transition: background-color 0.12s ease;
+}
+
+.tlos-file:hover {
+	background: var(--tl-color-muted-2, rgba(144, 144, 144, 0.1));
+}
