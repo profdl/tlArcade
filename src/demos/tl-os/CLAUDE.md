@@ -63,8 +63,14 @@ POSIX-style, and is the join key back to disk.
   opens in a new tab (`openFilePath`, shared by icon + browser row). Shares
   state with the tldraw-native UI via `TlosUiProvider`.
 - [ui.tsx](ui.tsx) — the **tldraw-native UI**. `BindPanel` is injected as
-  tldraw's `SharePanel` (top-right) so the folder-bind control reads as app
-  chrome, not a floating overlay. The import-vs-reference prompt is a real
+  tldraw's `SharePanel` (top-right) so the control reads as app chrome, not a
+  floating overlay. It's a single **Finder View** button whose `onFinderView`
+  action is routed by bind `status` in App: a bound folder just (re)opens its
+  window, a lapsed one re-grants, and a fresh session opens the folder picker
+  **rooted at Documents** (`showDirectoryPicker({ startIn: 'documents' })`) —
+  the browser sandbox still requires the user to confirm the folder (it can't
+  silently grant one), so this makes the common case a single confirming click.
+  The import-vs-reference prompt is a real
   tldraw dialog (`useDialogs().addDialog` + `TldrawUiDialog*` + `TldrawUiButton`)
   — inherits the SDK's theming, dark mode, focus trap, and esc/backdrop close.
 

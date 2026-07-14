@@ -29,8 +29,10 @@ export interface TlosUi {
 	status: 'loading' | 'unsupported' | 'none' | 'reconnect' | 'bound'
 	rootName: string | null
 	busy: boolean
-	onGrant(): void
-	onReconnect(): void
+	/** Open the Finder view. Reopens the bound folder if one is remembered;
+	 *  re-grants a lapsed permission; otherwise opens the (Documents-rooted)
+	 *  folder picker. One button, routed by `status`. */
+	onFinderView(): void
 	/** Import a dragged-out file's bytes into the tldraw document. */
 	onImport(shape: FileShape): void
 }
@@ -90,38 +92,28 @@ export function useOpenImportDialog() {
 }
 
 /**
- * The folder-binding control, injected as tldraw's SharePanel (top-right). It's
- * a native tldraw panel so it reads as app chrome, not a floating overlay. Shows
- * the bound folder name + a change/reconnect/bind action depending on state.
+ * The Finder-view control, injected as tldraw's SharePanel (top-right). It's a
+ * native tldraw panel so it reads as app chrome, not a floating overlay. A
+ * single **Finder View** button opens the Finder window: it reopens the
+ * remembered folder when one is bound, re-grants a lapsed permission, or
+ * (first run) opens the folder picker rooted at Documents. `onFinderView`
+ * routes on `status`, so the button's job is the same regardless of state.
  */
 export function BindPanel() {
-	const { status, rootName, busy, onGrant, onReconnect } = useTlosUi()
+	const { status, busy, onFinderView } = useTlosUi()
 	if (status === 'loading') return null
+	if (status === 'unsupported') {
+		return (
+			<div className="tlos-panel">
+				<span className="tlos-panel__note">Finder View needs Chrome or Edge</span>
+			</div>
+		)
+	}
 	return (
 		<div className="tlos-panel">
-			{status === 'unsupported' ? (
-				<span className="tlos-panel__note">Folder binding needs Chrome or Edge</span>
-			) : status === 'bound' ? (
-				<>
-					<span className="tlos-panel__note" title={rootName ?? ''}>
-						📁 {rootName}
-					</span>
-					<TldrawUiButton type="normal" disabled={busy} onClick={onGrant}>
-						<TldrawUiButtonLabel>Change…</TldrawUiButtonLabel>
-					</TldrawUiButton>
-				</>
-			) : status === 'reconnect' ? (
-				<>
-					<span className="tlos-panel__note">📁 {rootName} — reconnect</span>
-					<TldrawUiButton type="primary" disabled={busy} onClick={onReconnect}>
-						<TldrawUiButtonLabel>Reconnect</TldrawUiButtonLabel>
-					</TldrawUiButton>
-				</>
-			) : (
-				<TldrawUiButton type="primary" disabled={busy} onClick={onGrant}>
-					<TldrawUiButtonLabel>Bind a folder…</TldrawUiButtonLabel>
-				</TldrawUiButton>
-			)}
+			<TldrawUiButton type="primary" disabled={busy} onClick={onFinderView}>
+				<TldrawUiButtonLabel>Finder View</TldrawUiButtonLabel>
+			</TldrawUiButton>
 		</div>
 	)
 }

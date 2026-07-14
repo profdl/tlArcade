@@ -78,6 +78,8 @@ declare global {
 		showDirectoryPicker?(options?: {
 			id?: string
 			mode?: 'read' | 'readwrite'
+			/** A well-known dir to open the picker in ('documents', 'desktop', …). */
+			startIn?: 'desktop' | 'documents' | 'downloads' | 'music' | 'pictures' | 'videos'
 		}): Promise<DirHandle>
 	}
 }
@@ -97,11 +99,18 @@ const ROOT_KEY = 'tl-os:root-dir-handle'
 
 /** Prompt the user to grant a directory; persist the handle. Returns null if
  *  they cancel. Requests readwrite up front so later moves/renames don't
- *  re-prompt (v1 only reads, but the grant is the natural place to ask). */
+ *  re-prompt (v1 only reads, but the grant is the natural place to ask).
+ *  Opens the picker *in* the user's Documents folder so the common case
+ *  ("Finder View" → my documents) is a single confirming click — the browser
+ *  sandbox still requires that confirmation; it can't silently grant a folder. */
 export async function pickRootDirectory(): Promise<DirHandle | null> {
 	if (!window.showDirectoryPicker) return null
 	try {
-		const handle = await window.showDirectoryPicker({ id: 'tl-os-root', mode: 'readwrite' })
+		const handle = await window.showDirectoryPicker({
+			id: 'tl-os-root',
+			mode: 'readwrite',
+			startIn: 'documents',
+		})
 		await set(ROOT_KEY, handle)
 		return handle
 	} catch (err) {

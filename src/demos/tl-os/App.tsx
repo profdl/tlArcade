@@ -156,6 +156,22 @@ export default function App() {
 		}
 	}, [bindRoot])
 
+	// The single "Finder View" button, routed by bind status: an already-bound
+	// folder just (re)opens its window (no picker); a remembered-but-lapsed one
+	// re-grants permission; a fresh session opens the Documents-rooted picker.
+	const handleFinderView = useCallback(() => {
+		if (status === 'bound') {
+			const editor = editorRef.current
+			if (editor) openBrowser(editor, '', 0, 0, true)
+			return
+		}
+		if (status === 'reconnect') {
+			void handleReconnect()
+			return
+		}
+		void handleGrant()
+	}, [status, handleGrant, handleReconnect])
+
 	// On mount: register the open handler, then (if supported) try to silently
 	// re-bind a remembered folder. Support is already reflected in initial state.
 	useEffect(() => {
@@ -228,11 +244,10 @@ export default function App() {
 			status,
 			rootName,
 			busy,
-			onGrant: () => void handleGrant(),
-			onReconnect: () => void handleReconnect(),
+			onFinderView: handleFinderView,
 			onImport: (shape) => void importDrop(shape),
 		}),
-		[status, rootName, busy, handleGrant, handleReconnect, importDrop],
+		[status, rootName, busy, handleFinderView, importDrop],
 	)
 
 	// A file was dragged out of a browser window and dropped on the canvas: drop a
