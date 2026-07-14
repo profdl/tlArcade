@@ -2,4 +2,4 @@
 // here so the (long) key lives in a single place — pass it as the `licenseKey`
 // prop wherever a demo mounts <Tldraw>.
 export const TLDRAW_LICENSE_KEY =
-	'tldraw-daniel-lefcourt-r-d-2026-09-30/WyJVcnBLUDQ0RSIsWyIqLmRsZWZjb3VydC53b3JrZXJzLmRldiJdLDE5MywiMjAyNi0wOS0zMCJd.IWG61i+ciw4uR7oOpjDKuOcQkIeNakkk6Bc59DPRl41LgVzGv9e5LBtjENKTX8B8ExUHgoXj/i3kMUGtIT8R5w'
+  "tldraw-tldraw-2027-07-10/WyJEV1o3cmtLdyIsWyIqLnRsZHJhdy5jb20iLCIqLnRsZHJhdy5kZXYiLCIqLnRsZHJhdy5jbHViIiwiKi50bGRyYXcud29ya2Vycy5kZXYiXSw5LCIyMDI3LTA3LTEwIl0.ZzwGFKezZsraAJwHVjQcBCxEVB5ZvzmCBY9XwKbqdgYv4fjSLt2GKJCZYsqkkQW6f1zQR/09jMAR6nHNqIFZEw";
