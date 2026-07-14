@@ -155,6 +155,91 @@ function tryMerge(p: P[], q: P[], maxVerts: number, eps = 1e-6): P[] | null {
 }
 
 /**
+ * Convex hull (Andrew's monotone chain) of an arbitrary point set — the smallest
+ * convex polygon containing every point, returned CCW. Used as the ROBUST
+ * fallback when an outline can't be decomposed as a simple polygon (a hand-drawn
+ * stroke that self-intersects when closed, or is too thin to enclose area): the
+ * hull is always a valid convex solid, so the object always gets a usable body.
+ * Returns [] for fewer than 3 non-degenerate points.
+ */
+export function convexHull(input: P[]): P[] {
+	const pts = input
+		.slice()
+		.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x))
+		.filter((p, i, arr) => i === 0 || p.x !== arr[i - 1].x || p.y !== arr[i - 1].y)
+	if (pts.length < 3) return []
+	const half = (src: P[]): P[] => {
+		const h: P[] = []
+		for (const p of src) {
+			while (h.length >= 2 && cross(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop()
+			h.push(p)
+		}
+		h.pop() // drop the last point; it's the first of the other half
+		return h
+	}
+	const lower = half(pts)
+	const upper = half(pts.slice().reverse())
+	const hull = lower.concat(upper)
+	return hull.length >= 3 ? hull : []
+}
+
+/**
+ * The min-area-ish "thick bar" around a point set: its convex hull swept out to
+ * at least `thickness` on its short axis. For a near-straight stroke (which
+ * encloses no area, so neither fill nor hull gives a usable solid) this is the
+ * last-resort body — a thin rectangle along the stroke's long axis. We use the
+ * hull's bounding box in its dominant direction; a floor on the short side
+ * guarantees real area. Returns a single CCW quad, or [] if the points have no
+ * extent at all (a single dot).
+ */
+export function thickBar(input: P[], thickness: number): P[] {
+	const hull = convexHull(input)
+	const pts = hull.length >= 2 ? hull : input
+	if (pts.length < 2) return []
+	// Dominant axis = the segment between the two farthest-apart points.
+	let a = pts[0]
+	let b = pts[1]
+	let best = -1
+	for (let i = 0; i < pts.length; i++) {
+		for (let j = i + 1; j < pts.length; j++) {
+			const d = (pts[i].x - pts[j].x) ** 2 + (pts[i].y - pts[j].y) ** 2
+			if (d > best) {
+				best = d
+				a = pts[i]
+				b = pts[j]
+			}
+		}
+	}
+	const len = Math.hypot(b.x - a.x, b.y - a.y)
+	if (len < 1e-6) return []
+	// Unit along the axis, and its perpendicular (the thickness direction).
+	const ux = (b.x - a.x) / len
+	const uy = (b.y - a.y) / len
+	const px = -uy
+	const py = ux
+	// Project every point onto the perpendicular; take the widest span, floored
+	// at `thickness`, so a curved-but-thin stroke keeps a little of its real width.
+	let lo = Infinity
+	let hi = -Infinity
+	for (const p of pts) {
+		const t = (p.x - a.x) * px + (p.y - a.y) * py
+		if (t < lo) lo = t
+		if (t > hi) hi = t
+	}
+	const mid = (lo + hi) / 2
+	const half = Math.max((hi - lo) / 2, thickness / 2)
+	const off = { x: px * half, y: py * half }
+	const cA = { x: a.x + px * mid, y: a.y + py * mid }
+	const cB = { x: b.x + px * mid, y: b.y + py * mid }
+	return [
+		{ x: cA.x - off.x, y: cA.y - off.y },
+		{ x: cB.x - off.x, y: cB.y - off.y },
+		{ x: cB.x + off.x, y: cB.y + off.y },
+		{ x: cA.x + off.x, y: cA.y + off.y },
+	]
+}
+
+/**
  * Decompose a simple polygon outline into convex pieces (each ≤ maxVerts
  * vertices), suitable one-per-planck-fixture. Ear-clips to triangles, then
  * greedily merges adjacent triangles that stay convex. Returns [] for

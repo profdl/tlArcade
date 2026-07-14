@@ -14,7 +14,7 @@
 
 import { World, Vec2 as PlanckVec2, Polygon, Chain, type Body } from 'planck'
 import { PX_PER_M, type Vec2 } from './geometry'
-import { decomposeConvex, type P } from './decompose'
+import { decomposeConvex, convexHull, thickBar, type P } from './decompose'
 import type { WorldSpec, ShapeOutlines } from './shapes'
 
 /** Page pixels → planck meters (also flips y: page +y down → planck +y up). */
@@ -79,33 +79,109 @@ function centroid(pts: Vec2[]): Vec2 {
 	return { x: cx / (6 * a), y: cy / (6 * a) }
 }
 
-/** Add one static maze body from a shape's outlines. Each outline becomes a
- * Chain fixture (open polyline or closed loop) — Chains take ARBITRARY concave
- * polylines with no decomposition, which is exactly right for walls (they need
- * collidable surfaces, not solid fill). */
+/** Add one static maze body from a shape's outlines.
+ *
+ * A CLOSED outline (a geo box, a closed drawing) becomes SOLID Polygon fixtures
+ * (convex-decomposed, same as the object) — a body physically cannot enter a
+ * filled wall, so it can't tunnel INTO a thick box the way it can slip across a
+ * zero-thickness Chain edge. This is the main structural anti-tunneling fix for
+ * the maze (bullet CCD + the velocity clamp back it up).
+ *
+ * An OPEN outline (a hand-drawn line/arrow that isn't a closed loop) has no
+ * interior to fill, so it becomes a Chain fixture — a one-sided collidable
+ * surface, which is the right model for a drawn barrier. */
 function addWalls(world: World, wall: ShapeOutlines): void {
 	const body = world.createBody({ type: 'static' })
 	for (const outline of wall.outlines) {
 		if (outline.points.length < 2) continue
-		const verts = outline.points.map((p) => pxToM(p.x, p.y))
-		// A closed loop with ≥3 pts uses a looped Chain; otherwise an open chain.
-		const chain =
-			outline.closed && verts.length >= 3 ? new Chain(verts, true) : new Chain(verts, false)
-		body.createFixture(chain, { density: 0, friction: 0.4 })
+		if (outline.closed && outline.points.length >= 3) {
+			// Solid: decompose the closed outline (page px) into convex pieces →
+			// Polygon fixtures. Decompose in px then convert each piece to meters.
+			const pieces = decomposeConvex(outline.points.map((p) => ({ x: p.x, y: p.y })))
+			for (const piece of pieces) {
+				const verts = piece.map((p) => pxToM(p.x, p.y))
+				body.createFixture(new Polygon(verts), { density: 0, friction: 0.4 })
+			}
+		} else {
+			// Open polyline: a one-sided Chain surface.
+			const verts = outline.points.map((p) => pxToM(p.x, p.y))
+			body.createFixture(new Chain(verts, false), { density: 0, friction: 0.4 })
+		}
 	}
 }
 
+/** Min filled area (page px²) an object body must have; below this the outline
+ * is treated as a degenerate line and inflated to a thick bar. */
+const MIN_OBJECT_AREA = 400
+/** Thickness (page px) given to a near-straight stroke's fallback bar body — a
+ * drawn line becomes a thin solid this wide so it's still grabbable. */
+const OBJECT_MIN_THICKNESS = 24
+
+/** Total absolute area of a set of convex pieces (page px²). */
+function piecesArea(pieces: P[][]): number {
+	let total = 0
+	for (const poly of pieces) {
+		let a = 0
+		for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+			a += poly[j].x * poly[i].y - poly[i].x * poly[j].y
+		}
+		total += Math.abs(a) / 2
+	}
+	return total
+}
+
 /** Build the ObjectShape (local convex pieces + spawn) from the object's page
- * outline. We decompose the FIRST closed outline (a draw shape may have several
- * strokes; the load is a single closed figure — take the first usable one). */
+ * outline.
+ *
+ * ANY drawn shape can be the object — a closed loop OR an open pen stroke. An
+ * open stroke has no interior, so we FILL it: treat its point list as a closed
+ * polygon (endpoint→start implied) and decompose that into a solid. This is the
+ * "fill/close it" model — the object is the region the stroke encloses.
+ *
+ * A hand-drawn stroke frequently SELF-INTERSECTS when closed (a scribble, a
+ * figure-8) or is too thin to enclose real area (a near-straight line). Ear-clip
+ * decomposition assumes a *simple* polygon, so on those inputs it drops
+ * triangles and yields a broken/near-massless body. We guard against that: if
+ * the decomposed area is a small fraction of the outline's own bounding-box
+ * area, we fall back to the CONVEX HULL — always a valid solid, so the object
+ * never spawns invisible or degenerate. */
 function buildObjectShape(spec: ShapeOutlines): ObjectShape | null {
-	// Prefer a closed outline; fall back to the first with ≥3 points.
-	const outline = spec.outlines.find((o) => o.closed && o.points.length >= 3) ?? spec.outlines.find((o) => o.points.length >= 3)
+	// The load is a single figure. Pick the richest stroke (most points); a draw
+	// shape may hold several pen-lifts but the object is one of them.
+	const outline = spec.outlines
+		.filter((o) => o.points.length >= 3)
+		.sort((a, b) => b.points.length - a.points.length)[0]
 	if (!outline) return null
 	const spawn = centroid(outline.points)
-	// Recentre to the body origin (page px), then decompose into convex pieces.
+	// Recentre to the body origin (page px), then fill (close) + decompose.
 	const local: P[] = outline.points.map((p) => ({ x: p.x - spawn.x, y: p.y - spawn.y }))
-	const pieces = decomposeConvex(local)
+
+	// Bounding-box area of the local outline — the "footprint" the fill should
+	// roughly cover. Used to detect a decomposition that lost most of the shape.
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+	for (const p of local) {
+		if (p.x < minX) minX = p.x
+		if (p.x > maxX) maxX = p.x
+		if (p.y < minY) minY = p.y
+		if (p.y > maxY) maxY = p.y
+	}
+	const bboxArea = (maxX - minX) * (maxY - minY)
+
+	let pieces = decomposeConvex(local)
+	// Fall back to the hull if decomposition failed (self-intersecting close) or
+	// recovered less than a quarter of the footprint (thin/degenerate fill).
+	if (pieces.length === 0 || (bboxArea > 0 && piecesArea(pieces) < bboxArea * 0.25)) {
+		const hull = convexHull(local)
+		const hullPieces = decomposeConvex(hull)
+		if (hullPieces.length > 0) pieces = hullPieces
+	}
+	// Last resort: a near-straight stroke encloses no area, so both fill and hull
+	// are degenerate slivers (near-massless flap). Give it a min-thickness bar
+	// along its long axis so a drawn line is still a solid you can grab and drag.
+	if (piecesArea(pieces) < MIN_OBJECT_AREA) {
+		const bar = thickBar(local, OBJECT_MIN_THICKNESS)
+		if (bar.length >= 3) pieces = [bar]
+	}
 	if (pieces.length === 0) return null
 	return { pieces: pieces.map((pc) => pc.map((p) => ({ x: p.x, y: p.y }))), spawn }
 }
@@ -115,6 +191,12 @@ function buildObjectShape(spec: ShapeOutlines): ObjectShape | null {
  * the body collides as the true (possibly concave) outline, not a bounding box. */
 function addObject(world: World, shape: ObjectShape): Body {
 	const body = world.createBody({ type: 'dynamic', position: pxToM(shape.spawn.x, shape.spawn.y) })
+	// CCD ("bullet"): planck sweeps this body's motion against STATIC geometry
+	// within a step instead of only testing its end position, so a fast drag can't
+	// pass THROUGH a thin wall between ticks. This is the primary anti-tunneling
+	// guard (the velocity clamp below is the belt-and-suspenders backstop). Only
+	// dynamic-vs-static is swept, which is exactly the maze case.
+	body.setBullet(true)
 	for (const piece of shape.pieces) {
 		// Piece verts are LOCAL page px (relative to spawn); convert to local meters
 		// (y-flip so the body draws right-side-up: local +y down → planck +y up).
@@ -133,6 +215,32 @@ function addObject(world: World, shape: ObjectShape): Body {
  * Tune to make the piece settle sooner/later on release. */
 const LINEAR_DAMPING = 4
 const ANGULAR_DAMPING = 4
+
+/** Anti-tunneling velocity ceiling (planck m/s). Bullet CCD (above) is the
+ * primary guard; this clamp is the backstop, keeping travel-per-tick under a
+ * wall thickness even if CCD is defeated by a corner or a pile-up of contacts.
+ * At FIXED_DT=1/30 and PX_PER_M=30, 25 m/s ≈ 25px of travel per tick — well under
+ * the 60px seed walls. */
+const MAX_SPEED = 25
+/** Angular-velocity ceiling (rad/s). A spin fast enough to fling a far vertex
+ * across a wall in one tick tunnels the same way; cap it too. */
+const MAX_ANGULAR_SPEED = 12
+
+/** Clamp the object's linear + angular velocity after a step so a single tick
+ * can never move it more than roughly a wall thickness (the anti-tunneling
+ * backstop; see the constants above and the planck-rigid-body-sim skill). */
+function clampVelocity(body: Body): void {
+	const v = body.getLinearVelocity()
+	const speed = Math.hypot(v.x, v.y)
+	if (speed > MAX_SPEED && speed > 1e-9) {
+		const k = MAX_SPEED / speed
+		body.setLinearVelocity(new PlanckVec2(v.x * k, v.y * k))
+	}
+	const w = body.getAngularVelocity()
+	if (Math.abs(w) > MAX_ANGULAR_SPEED) {
+		body.setAngularVelocity(Math.sign(w) * MAX_ANGULAR_SPEED)
+	}
+}
 
 /**
  * Construct a fresh sim from a WorldSpec (authored shapes, page px): the static
@@ -237,8 +345,11 @@ function applyGrabs(sim: Sim, grabs: Iterable<Grab>): void {
  * Never a variable dt (see the skill). */
 export const FIXED_DT = 1 / 30
 
-/** Advance the sim one fixed step, applying all active grabs first. */
+/** Advance the sim one fixed step: apply grabs, step the world (bullet CCD sweeps
+ * the object against the static maze), then clamp velocity as the anti-tunneling
+ * backstop. */
 export function step(sim: Sim, grabs: Iterable<Grab> = []): void {
 	applyGrabs(sim, grabs)
 	sim.world.step(FIXED_DT, 8, 3)
+	clampVelocity(sim.obj)
 }

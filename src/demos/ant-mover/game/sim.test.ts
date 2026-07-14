@@ -54,6 +54,85 @@ describe('sim.createWorld from a WorldSpec', () => {
 		expect(Math.abs(p.y - 400)).toBeLessThan(120)
 	})
 
+	it('does not tunnel through a solid wall under a hard drag', () => {
+		// A small box object to the LEFT of a thick solid wall spanning x∈[300,360].
+		// Grab it and yank hard toward a cursor on the FAR side; it must stop at the
+		// wall, not pass through. (Bullet CCD + solid Polygon walls + velocity clamp.)
+		const box = [
+			{ x: 120, y: 380 },
+			{ x: 160, y: 380 },
+			{ x: 160, y: 420 },
+			{ x: 120, y: 420 },
+		]
+		const wall = [
+			{ x: 300, y: 200 },
+			{ x: 360, y: 200 },
+			{ x: 360, y: 600 },
+			{ x: 300, y: 600 },
+		]
+		const spec: WorldSpec = {
+			object: { id: id('o'), outlines: [{ points: box, closed: true }] },
+			walls: [{ id: id('w'), outlines: [{ points: wall, closed: true }] }],
+		}
+		const sim = createWorld(spec)!
+		const anchor = hitTestObject(sim, { x: 140, y: 400 })!
+		// Cursor far past the wall — maximal pull straight into it.
+		const grab: Grab = { anchorLocal: anchor, cursor: { x: 900, y: 400 } }
+		for (let i = 0; i < 120; i++) step(sim, [grab])
+		// The object's CENTER must remain on the near (left) side of the wall's near
+		// face (x=300), minus roughly its half-width (~20px).
+		expect(objPose(sim).x).toBeLessThan(300)
+	})
+
+	it('builds a solid body from an OPEN pen stroke (fills the drawn region)', () => {
+		// A wiggly open stroke (closed:false) — no interior, so the sim must fill it.
+		const squiggle = [
+			{ x: 100, y: 400 }, { x: 140, y: 360 }, { x: 180, y: 440 },
+			{ x: 220, y: 360 }, { x: 260, y: 440 }, { x: 300, y: 400 },
+		]
+		const spec: WorldSpec = {
+			object: { id: id('o'), outlines: [{ points: squiggle, closed: false }] },
+			walls: [],
+		}
+		const sim = createWorld(spec)
+		expect(sim).not.toBeNull()
+		expect(sim!.obj.getMass()).toBeGreaterThan(1)
+	})
+
+	it('builds a solid body from a self-intersecting drawn loop (hull fallback)', () => {
+		// A figure-8: closed but NOT simple. Ear-clip can't fill it, so it falls
+		// back to the convex hull — still a grabbable solid.
+		const fig8 = [
+			{ x: 100, y: 380 }, { x: 200, y: 420 }, { x: 300, y: 380 },
+			{ x: 200, y: 380 }, { x: 100, y: 420 }, { x: 300, y: 420 },
+		]
+		const spec: WorldSpec = {
+			object: { id: id('o'), outlines: [{ points: fig8, closed: true }] },
+			walls: [],
+		}
+		const sim = createWorld(spec)
+		expect(sim).not.toBeNull()
+		expect(sim!.obj.getMass()).toBeGreaterThan(1)
+	})
+
+	it('gives a near-straight stroke a min-thickness bar body (not a massless flap)', () => {
+		// A drawn line encloses no area; it must still become a grabbable solid.
+		const line = [
+			{ x: 100, y: 400 }, { x: 160, y: 401 }, { x: 220, y: 399 },
+			{ x: 280, y: 400 }, { x: 340, y: 400 },
+		]
+		const spec: WorldSpec = {
+			object: { id: id('o'), outlines: [{ points: line, closed: false }] },
+			walls: [],
+		}
+		const sim = createWorld(spec)
+		expect(sim).not.toBeNull()
+		// A ~240px line × 24px thick bar has real mass — well above a sliver.
+		expect(sim!.obj.getMass()).toBeGreaterThan(1)
+		// Grabbing its center point hits the filled bar.
+		expect(hitTestObject(sim!, sim!.shape.spawn)).not.toBeNull()
+	})
+
 	it('sums many grabs on one body (co-op/conflict mechanic)', () => {
 		const spec: WorldSpec = {
 			object: { id: id('s1'), outlines: [{ points: star(200, 400, 100, 45, 5), closed: true }] },

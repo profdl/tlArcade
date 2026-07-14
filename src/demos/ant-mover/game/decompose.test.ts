@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decomposeConvex, type P } from './decompose'
+import { decomposeConvex, convexHull, thickBar, type P } from './decompose'
 
 /** Signed area ×2 (CCW positive). */
 function area2(poly: P[]): number {
@@ -114,5 +114,76 @@ describe('decomposeConvex', () => {
 				{ x: 1, y: 0 },
 			])
 		).toEqual([])
+	})
+})
+
+describe('convexHull', () => {
+	it('wraps a self-intersecting figure-8 into one convex solid', () => {
+		// A figure-8 is NOT simple, so decomposeConvex can't fill it correctly; the
+		// hull gives a valid convex solid to fall back on.
+		const fig8: P[] = [
+			{ x: 0, y: 0 },
+			{ x: 4, y: 2 },
+			{ x: 0, y: 4 },
+			{ x: 4, y: 0 },
+			{ x: 8, y: 4 },
+			{ x: 4, y: 2 },
+		]
+		const hull = convexHull(fig8)
+		expect(isConvexCCW(hull)).toBe(true)
+		expect(areaOf(hull)).toBeGreaterThan(0)
+	})
+
+	it('ignores interior points', () => {
+		const pts: P[] = [
+			{ x: 0, y: 0 },
+			{ x: 4, y: 0 },
+			{ x: 4, y: 4 },
+			{ x: 0, y: 4 },
+			{ x: 2, y: 2 }, // interior — must not appear on the hull
+		]
+		const hull = convexHull(pts)
+		expect(areaOf(hull)).toBeCloseTo(16)
+		expect(hull.some((p) => p.x === 2 && p.y === 2)).toBe(false)
+	})
+
+	it('returns [] for collinear points (no area to hull)', () => {
+		expect(
+			convexHull([
+				{ x: 0, y: 0 },
+				{ x: 1, y: 0 },
+				{ x: 2, y: 0 },
+			])
+		).toEqual([])
+	})
+})
+
+describe('thickBar', () => {
+	it('inflates a straight line into a min-thickness rectangle', () => {
+		// A horizontal segment (zero area) → a 10-long × 4-thick bar (area 40).
+		const line: P[] = [
+			{ x: 0, y: 0 },
+			{ x: 5, y: 0 },
+			{ x: 10, y: 0 },
+		]
+		const bar = thickBar(line, 4)
+		expect(bar).toHaveLength(4)
+		expect(isConvexCCW(bar)).toBe(true)
+		expect(areaOf(bar)).toBeCloseTo(40)
+	})
+
+	it('keeps a stroke that is already wider than the floor', () => {
+		// A stroke 10 long that already bows 6 wide keeps its 6, not the 2 floor.
+		const bowed: P[] = [
+			{ x: 0, y: 0 },
+			{ x: 5, y: 6 },
+			{ x: 10, y: 0 },
+		]
+		const bar = thickBar(bowed, 2)
+		expect(areaOf(bar)).toBeCloseTo(60)
+	})
+
+	it('returns [] for a single point (no extent)', () => {
+		expect(thickBar([{ x: 3, y: 3 }], 4)).toEqual([])
 	})
 })
