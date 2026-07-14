@@ -64,6 +64,10 @@ export const demos: DemoEntry[] = [
 		title: 'Ant-Mover',
 		blurb:
 			'A multiplayer piano-movers game: many players each grab anywhere on one rigid T-piece and drag it through a tight maze, with a server-authoritative planck.js physics sim. Coordinate and it glides; fight and it jams.',
+		// Nested sub-routes: a lobby (/demos/ant-mover) redirects to a per-room game
+		// (/demos/ant-mover/:roomId), mirroring the Toolkit — the room id in the URL
+		// is the invite link. See ant-mover/App.tsx.
+		path: '/demos/ant-mover/*',
 		Component: lazy(() => import('./ant-mover/App')),
 	},
 	{
