@@ -131,8 +131,14 @@ UI feature-detects and shows an "unsupported" note rather than breaking.
   reparent), the two paths never double-fire — they're independent. Both share
   the one dialog: *Import into tldraw* → `putExternalContent({type:'files'})`
   runs tldraw's own file→asset→shape pipeline at the pointer's spot and deletes
-  the pointer (content now lives in the doc, survives without the disk binding);
-  *Keep as reference* → the `tlos-file` pointer just stays where it was dropped.
+  the pointer (content now lives in the doc, survives without the disk binding).
+  The imported content lands where it was dropped but **must not cover the Finder
+  window**: an image can be far bigger than the little pointer icon and expand
+  back over the window it was dropped beside, so `importDrop` calls
+  `nudgeClearOfBrowsers` on the newly-created (selected) shapes — it slides the
+  block the shorter horizontal distance until it clears every `tlos-browser`
+  window, keeping it near the drop point but off the chrome. *Keep as reference* →
+  the `tlos-file` pointer just stays where it was dropped.
 
 ## Gotcha: blob: URLs crash the default bookmark handler
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Tldraw, createShapeId, type Editor, type TLComponents } from 'tldraw'
+import { Box, Tldraw, createShapeId, type Editor, type TLComponents, type TLShapeId } from 'tldraw'
 import { isShapeId } from '@tldraw/tlschema'
 import 'tldraw/tldraw.css'
 import './App.css'
@@ -123,6 +123,10 @@ export default function App() {
 		const point = bounds ? { x: bounds.x, y: bounds.y } : { x: shape.x, y: shape.y }
 		await editor.putExternalContent({ type: 'files', files: [file], point })
 		editor.deleteShapes([shape.id])
+		// tldraw's files handler selects the shapes it just created; an imported
+		// image can be far bigger than the pointer icon and expand back over the
+		// Finder window it was dropped beside — shove the new shapes clear of it.
+		nudgeClearOfBrowsers(editor, editor.getSelectedShapeIds())
 	}, [])
 
 	// --- bind / reconnect ---------------------------------------------------
@@ -399,4 +403,49 @@ function avoidOverlap(editor: Editor, x: number, y: number, w: number, h: number
 		}
 	}
 	return y
+}
+
+/**
+ * After importing dropped content, shove the freshly-created shapes clear of any
+ * `tlos-browser` window they overlap. The pointer was dropped *beside* a window,
+ * but the imported content (e.g. a full-res image) can be far larger than the
+ * little pointer icon and expand back over the window. We move all new shapes as
+ * one block, horizontally, in whichever direction takes them out with the least
+ * travel — so the content stays near where it was dropped, just not covering the
+ * Finder window. Iterates because clearing one window can reveal another.
+ */
+function nudgeClearOfBrowsers(editor: Editor, ids: TLShapeId[]): void {
+	if (ids.length === 0) return
+	const windows = editor
+		.getCurrentPageShapes()
+		.filter((s) => s.type === 'tlos-browser')
+		.map((s) => editor.getShapePageBounds(s.id))
+		.filter((b): b is NonNullable<typeof b> => b != null)
+	if (windows.length === 0) return
+
+	let guard = 0
+	while (guard++ < 100) {
+		const boxes = ids
+			.map((id) => editor.getShapePageBounds(id))
+			.filter((b): b is Box => b != null)
+		if (boxes.length === 0) return
+		const bounds = Box.Common(boxes)
+		const hit = windows.find(
+			(w) => bounds.x < w.maxX && bounds.maxX > w.x && bounds.y < w.maxY && bounds.maxY > w.y,
+		)
+		if (!hit) return
+		// Push left or right off `hit`, whichever edge is nearer the content's centre.
+		const overlapRight = hit.maxX - bounds.x + FRAME_GAP // move right by this to clear
+		const overlapLeft = bounds.maxX - hit.x + FRAME_GAP // move left by this to clear
+		const dx = overlapRight <= overlapLeft ? overlapRight : -overlapLeft
+		// Cast per the repo CLAUDE.md note: a `type: shape.type` (non-literal)
+		// partial stops type-checking once the global custom-shape union is large
+		// enough. This is a compile-time-only annotation, not a behaviour change.
+		editor.updateShapes(
+			ids.map((id) => {
+				const s = editor.getShape(id)!
+				return { id, type: s.type, x: s.x + dx } as { id: TLShapeId; type: string; x: number }
+			}) as Parameters<typeof editor.updateShapes>[0],
+		)
+	}
 }
