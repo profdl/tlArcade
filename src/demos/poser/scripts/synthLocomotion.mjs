@@ -39,85 +39,121 @@ function makeClip({ name, fps, pose }) {
 	return { name, category: 'locomotion', angles: mid.angles, pelvis: mid.pelvis, frames, fps }
 }
 
-// Shorthands. A limb angle is built from a base (rest direction, deg) plus a swing.
+// Shorthands.
 const sin = (t, phase = 0) => Math.sin((t + phase) * 2 * Math.PI)
+const TAU = 2 * Math.PI
+// Smooth 0→1→0 pulse peaking at the centre of [lo,hi] within a [0,1) phase, 0 outside —
+// used to place a knee fold or foot-lift inside a specific slice of the gait cycle. `wrap`
+// handles a window that straddles the 0/1 seam (e.g. swing spanning 0.9→0.15).
+function pulse(phase, lo, hi) {
+	let p = phase
+	if (hi < lo) {
+		// window wraps the seam: shift into a contiguous range
+		if (p < lo) p += 1
+		hi += 1
+	}
+	if (p < lo || p > hi) return 0
+	return 0.5 - 0.5 * Math.cos(((p - lo) / (hi - lo)) * TAU) // 0 at edges, 1 at centre
+}
 
-// One striding leg for a SIDE-READ 2D gait. `swing` is the thigh's fore/aft position
-// this frame (−1 = fully back, +1 = fully forward); the whole figure faces one way, so
-// BOTH legs' knees must bend the SAME screen direction — never mirrored (that reads as a
-// front-view jumping-jack, not a walk). We enforce that here: the shin is always the
-// thigh angle plus a NON-NEGATIVE bend (knee only ever folds one way), and it folds most
-// as the leg lifts/passes under the body (mid-swing), least when planted and extended.
-//   thigh: +90° = straight down; more forward = smaller angle, more back = larger.
-//   shin:  thigh + bend, bend ≥ 0, so the lower leg always trails to the same side.
-function strideLeg(swing, thighAmp, kneeAmp) {
-	const thigh = 90 - thighAmp * swing // forward (swing>0) lifts the thigh toward front
-	// Knee folds through the lift: peak bend near mid-swing (|swing|→0 as it passes under),
-	// straightening at the extremes of the stride where the foot reaches out/plants.
-	const bend = kneeAmp * (0.5 + 0.5 * Math.cos(swing * Math.PI)) // 0..kneeAmp, max at swing=0
+// One leg of a SIDE-READ 2D walk/run, driven by the leg's own cycle PHASE φ∈[0,1):
+//   φ=0    contact — foot forward, knee ~straight (heel strike)
+//   φ=0.25 mid-stance — foot under body, knee slightly bent under load
+//   φ=0.5  push-off — foot back, knee straight (toe-off)
+//   φ~0.75 swing — foot lifts and travels forward, KNEE FOLDS HARD to clear the ground
+// The thigh sweeps forward→back across stance (φ 0→0.5) then whips back to front across
+// swing (φ 0.5→1). The knee fold lives in the swing window, which is the fix: previously
+// it peaked at mid-stance, reading as a limp. Both legs use this same model (just half a
+// cycle apart), so both knees fold the same screen direction — never mirrored.
+//   thigh: 90° = straight down; forward = smaller angle, back = larger.
+//   shin:  thigh + bend, bend ≥ 0 (knee only folds one way).
+function gaitLeg(phase, { reach, swingBend, stanceBend = swingBend * 0.18 }) {
+	const p = ((phase % 1) + 1) % 1
+	// Thigh fore/aft: +reach forward at contact, −reach back at push-off, smooth between.
+	// cos(2πφ): +1 at φ=0 (forward contact), −1 at φ=0.5 (back push-off). Good.
+	const thigh = 90 - reach * Math.cos(p * TAU)
+	// Knee: a big fold through swing (centred ~φ=0.72, so the leg clears as it comes
+	// forward) plus a small load-absorbing bend through mid-stance (centred ~φ=0.18).
+	const bend = swingBend * pulse(p, 0.52, 0.95) + stanceBend * pulse(p, 0.05, 0.32)
 	return { thigh: round(thigh), shin: round(thigh + bend) }
 }
 
+// The arm swings WITH its same-side leg (arm forward when that leg is forward). `phase` is
+// the leg's phase. Like the knees, the elbow bends ONE consistent screen direction — and
+// like the knee (which juts forward with the shin trailing), the forearm folds to the
+// NEGATIVE side of the upper arm (`upper - bend`), so the elbow leads and the forearm
+// hangs back/down rather than swinging up in front. `bend` stays ≥ 0 (one-way fold). The
+// fold is largest as the arm swings FORWARD, least when it's back.
+function gaitArm(phase, { rest, swing, elbow }) {
+	const p = ((phase % 1) + 1) % 1
+	const s = Math.cos(p * TAU) // +1 when same-side leg is forward → arm goes FORWARD too
+	const upper = rest - swing * s // matches the leg: forward (smaller angle) when leg forward
+	// s = +1 (arm fully forward) → max fold; s = −1 (arm back) → the resting fold only.
+	const bend = elbow.rest + elbow.amp * (0.5 + 0.5 * s) // rest..rest+amp, ≥ 0
+	return { upper: round(upper), fore: round(upper - bend) }
+}
+
 // ── Walk ──────────────────────────────────────────────────────────────────────
-// Legs alternate (half-cycle out of phase); arms counter-swing to the legs; a gentle
-// two-per-cycle vertical bob on the pelvis. Down-pointing rest ≈ +90°; we swing the
-// thighs ±swing around vertical and bend the shins on the back-swing.
+// A standard 2-beat walk. Right leg leads; left is half a cycle behind. Knee folds in
+// swing, arms oppose their same-side leg, pelvis bobs down at each foot-plant (twice per
+// cycle) and eases a hair forward.
 const walk = makeClip({
 	name: 'Walk (loop)',
 	fps: 12,
 	pose: (t) => {
-		const s = sin(t) // right side leads
-		const s2 = sin(t, 0.5) // left side (opposite half of the stride)
-		const armSwing = 18
-		// Right and left legs are half a cycle apart; each uses the SAME strideLeg model,
-		// so both knees fold the same screen direction (side-read gait, not a jack).
-		const legR = strideLeg(s, 24, 34)
-		const legL = strideLeg(s2, 24, 34)
+		const legR = gaitLeg(t, { reach: 30, swingBend: 46 })
+		const legL = gaitLeg(t + 0.5, { reach: 30, swingBend: 46 })
+		// elbow fold is RELATIVE to the upper arm: ~12° resting, +18° as the arm swings front.
+		const armR = gaitArm(t, { rest: 95, swing: 20, elbow: { rest: 12, amp: 18 } })
+		const armL = gaitArm(t + 0.5, { rest: 95, swing: 20, elbow: { rest: 12, amp: 18 } })
 		return {
 			angles: {
 				spine: -90,
 				neck: -90,
 				head: -90,
-				// Arms hang ~ +90° (down); counter-swing to opposite legs.
-				'upper-arm-r': round(95 + armSwing * s2),
-				'forearm-r': round(100 + 8 * Math.max(0, s2)),
-				'upper-arm-l': round(95 + armSwing * s),
-				'forearm-l': round(100 + 8 * Math.max(0, s)),
+				'upper-arm-r': armR.upper,
+				'forearm-r': armR.fore,
+				'upper-arm-l': armL.upper,
+				'forearm-l': armL.fore,
 				'thigh-r': legR.thigh,
 				'shin-r': legR.shin,
 				'thigh-l': legL.thigh,
 				'shin-l': legL.shin,
 			},
-			// Bob down twice per stride (once per foot-plant); small.
-			pelvis: { drop: round(6 + 6 * Math.abs(sin(t, 0.25))), lean: -88 },
+			// Pelvis dips at each foot-plant: two dips per cycle (|sin| at 2×), small.
+			pelvis: { drop: round(4 + 7 * Math.abs(sin(t, 0.25))), lean: -89 },
 		}
 	},
 })
 
 // ── Run ─────────────────────────────────────────────────────────────────────
-// Like walk but bigger swings, forward torso lean, deeper knee bend, more airborne bob.
+// Bigger reach, deeper swing-knee fold, forward torso lean, harder bent arms, and a real
+// airborne bob. Same phase model as walk — only the amplitudes and lean change.
 const run = makeClip({
 	name: 'Run (loop)',
 	fps: 16,
 	pose: (t) => {
-		const s = sin(t)
-		const s2 = sin(t, 0.5)
+		const legR = gaitLeg(t, { reach: 46, swingBend: 78, stanceBend: 22 })
+		const legL = gaitLeg(t + 0.5, { reach: 46, swingBend: 78, stanceBend: 22 })
+		// Runners hold elbows hard-bent (~75°) throughout, tucking a touch more up front.
+		const armR = gaitArm(t, { rest: 68, swing: 40, elbow: { rest: 75, amp: 15 } })
+		const armL = gaitArm(t + 0.5, { rest: 68, swing: 40, elbow: { rest: 75, amp: 15 } })
 		return {
 			angles: {
-				spine: -78, // leaning forward into the run
-				neck: -82,
-				head: -82,
-				'upper-arm-r': round(70 + 45 * s2), // arms pump hard, bent
-				'forearm-r': round(55),
-				'upper-arm-l': round(70 + 45 * s),
-				'forearm-l': round(55),
-				// Bigger stride + deeper knee fold than walk, same one-way-bend model.
-				'thigh-r': strideLeg(s, 42, 62).thigh,
-				'shin-r': strideLeg(s, 42, 62).shin,
-				'thigh-l': strideLeg(s2, 42, 62).thigh,
-				'shin-l': strideLeg(s2, 42, 62).shin,
+				spine: -76, // leaning forward into the run
+				neck: -80,
+				head: -80,
+				'upper-arm-r': armR.upper,
+				'forearm-r': armR.fore,
+				'upper-arm-l': armL.upper,
+				'forearm-l': armL.fore,
+				'thigh-r': legR.thigh,
+				'shin-r': legR.shin,
+				'thigh-l': legL.thigh,
+				'shin-l': legL.shin,
 			},
-			pelvis: { drop: round(10 * Math.abs(sin(t, 0.25))), lean: -78 },
+			// One airborne push per stride → bob dips deeper, twice per cycle.
+			pelvis: { drop: round(2 + 12 * Math.abs(sin(t, 0.25))), lean: -76 },
 		}
 	},
 })
