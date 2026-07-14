@@ -81,6 +81,13 @@ export const demos: DemoEntry[] = [
 		Component: lazy(() => import('./scale-rooms/App')),
 	},
 	{
+		slug: 'poser',
+		title: 'Poser',
+		blurb:
+			'Pose an articulated stick figure built from native tldraw shapes — drag any bone and the connected limbs follow their parent joint (forward kinematics).',
+		Component: lazy(() => import('./poser/App')),
+	},
+	{
 		slug: 'toolkit',
 		title: 'Toolkit',
 		blurb:
