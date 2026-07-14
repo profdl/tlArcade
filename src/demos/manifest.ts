@@ -74,6 +74,13 @@ export const demos: DemoEntry[] = [
 		Component: lazy(() => import('./scale-portals/App')),
 	},
 	{
+		slug: 'scale-rooms',
+		title: 'Scale Rooms',
+		blurb:
+			'A telescope of square rooms nested 16 scales deep — smaller rooms overlap larger ones, no hallways. Step onto a room’s orange doorway and the camera dives into it.',
+		Component: lazy(() => import('./scale-rooms/App')),
+	},
+	{
 		slug: 'toolkit',
 		title: 'Toolkit',
 		blurb:
