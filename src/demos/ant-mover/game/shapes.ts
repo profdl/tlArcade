@@ -18,7 +18,6 @@ import {
 	type Editor,
 	type TLShape,
 	type TLShapeId,
-	type TLShapePartial,
 	type TLDrawShape,
 } from 'tldraw'
 import type { Vec2 } from './geometry'
@@ -32,6 +31,14 @@ const COLLIDABLE_TYPES = new Set(['draw', 'line', 'geo', 'arrow'])
 /** The meta key/marker that tags the one shape the sim treats as the movable
  * object (the load). Stored in shape.meta so it syncs to all players. */
 export const OBJECT_ROLE = 'object'
+/** Tags the goal FLAG in the last room. It's a real tldraw shape (so it draws +
+ * syncs), but it's NOT a physics body — decorative/scoring only, so readWorldSpec
+ * skips it (see below). Reaching it wins the run. */
+export const FLAG_ROLE = 'flag'
+/** Tags a purely-DECORATIVE annotation (e.g. the "Drag" hint arrow) — a real shape
+ * that draws + syncs but is neither a wall nor a scoring zone, so readWorldSpec
+ * skips it and win detection ignores it. */
+export const DECOR_ROLE = 'decor'
 interface AmMeta {
 	amRole?: string
 }
@@ -57,6 +64,18 @@ export interface WorldSpec {
 /** True if this shape is the designated movable object. */
 export function isObjectShape(shape: TLShape): boolean {
 	return (shape.meta as AmMeta)?.amRole === OBJECT_ROLE
+}
+
+/** True if this shape is the goal flag (decorative/scoring, never a physics body). */
+export function isFlagShape(shape: TLShape): boolean {
+	return (shape.meta as AmMeta)?.amRole === FLAG_ROLE
+}
+
+/** True if this collidable-typed shape should NOT become a physics body — the goal
+ * flag or a decorative annotation. Keeps these real shapes out of the maze. */
+function isNonCollidable(shape: TLShape): boolean {
+	const role = (shape.meta as AmMeta)?.amRole
+	return role === FLAG_ROLE || role === DECOR_ROLE
 }
 
 /** Read one shape's page-space outline(s). Uses shape.id (not the snapshot
@@ -136,6 +155,9 @@ export function readWorldSpec(editor: Editor): WorldSpec {
 
 	for (const shape of editor.getCurrentPageShapes()) {
 		if (!COLLIDABLE_TYPES.has(shape.type)) continue
+		// The goal flag + decorative annotations are real shapes but NOT walls — skip
+		// them so they never become obstacles the object collides with.
+		if (isNonCollidable(shape)) continue
 		const read = readOutlines(editor, shape)
 		if (!read) continue
 		if (isObjectShape(shape)) {
@@ -157,31 +179,24 @@ export function getObjectShapeId(editor: Editor): TLShapeId | null {
 	return null
 }
 
-/** Designate a shape as THE movable object, clearing the tag from any previous
- * one (there is exactly one load). Runs in a history-ignored transaction so it
- * isn't an undo step. Syncs to all players via the store. */
-export function designateObject(editor: Editor, id: TLShapeId): void {
-	editor.run(
-		() => {
-			for (const shape of editor.getCurrentPageShapes()) {
-				const tagged = isObjectShape(shape)
-				// Building a TLShapePartial from a NON-LITERAL `type` breaks TS's
-				// discriminated-union check once the global shape union is large enough
-				// (see the repo CLAUDE.md gotcha) — cast at the call site.
-				if (shape.id === id && !tagged) {
-					editor.updateShape({
-						id: shape.id,
-						type: shape.type,
-						meta: { ...shape.meta, amRole: OBJECT_ROLE },
-					} as TLShapePartial)
-				} else if (shape.id !== id && tagged) {
-					// Clear the tag from the previous object (copy meta minus amRole).
-					const meta: Record<string, unknown> = { ...shape.meta }
-					delete meta.amRole
-					editor.updateShape({ id: shape.id, type: shape.type, meta } as TLShapePartial)
+/** The goal flag's page-space bounds (for win detection), or null if no flag is on
+ * the page. The flag is authored as a few shapes (banner + pole), all tagged
+ * FLAG_ROLE, so we UNION every flag shape's bounds into one goal zone. Read live so
+ * a moved/edited flag still scores at its real spot. */
+export function getFlagBounds(editor: Editor): { minX: number; minY: number; maxX: number; maxY: number } | null {
+	let bounds: { minX: number; minY: number; maxX: number; maxY: number } | null = null
+	for (const shape of editor.getCurrentPageShapes()) {
+		if (!isFlagShape(shape)) continue
+		const b = editor.getShapePageBounds(shape.id)
+		if (!b) continue
+		bounds = bounds
+			? {
+					minX: Math.min(bounds.minX, b.minX),
+					minY: Math.min(bounds.minY, b.minY),
+					maxX: Math.max(bounds.maxX, b.maxX),
+					maxY: Math.max(bounds.maxY, b.maxY),
 				}
-			}
-		},
-		{ history: 'ignore' }
-	)
+			: { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY }
+	}
+	return bounds
 }

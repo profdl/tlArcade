@@ -6,13 +6,28 @@
 // a source of truth the sim reads.
 
 import { compressLegacySegments } from '@tldraw/tlschema'
-import { createShapeId, type Editor, type TLShapeId } from 'tldraw'
-import { FIELD, type Vec2 } from './geometry'
-import { OBJECT_ROLE } from './shapes'
+import { createShapeId, toRichText, type Editor, type TLShapeId, type IndexKey } from 'tldraw'
+import { FIELD, EXIT, type Vec2 } from './geometry'
+import { OBJECT_ROLE, FLAG_ROLE, DECOR_ROLE } from './shapes'
+import { autoStartAtom, playIntentAtom } from './state'
 
 /** Where the object seeds (page-space top-left of its bounding box). Placed in
  * the left chamber, before the corridor, matching the reference drawing. */
 const OBJECT_SPAWN: Vec2 = { x: 140, y: 230 }
+
+/** Top-left of the "Drag" hint label — OUTSIDE the field, past the left wall (the
+ * left wall's left edge is at FIELD.minX - WALL_T = -60), up and to the left of the
+ * object so the arrow curves in toward it (see the reference drawing). */
+const DRAG_LABEL: Vec2 = { x: -210, y: 150 }
+
+/** The goal flag: a green rectangular banner reading "GOAL" flown from a pole (a
+ * line down its left side), in the LAST room (the right chamber, past the corridor
+ * gap), centred on the EXIT scoring zone. Both parts are real tldraw shapes (draw +
+ * sync) tagged FLAG_ROLE so the sim treats them as decorative, not walls (see
+ * shapes.ts). Reaching it wins the run. */
+const FLAG_BANNER_W = 130 // banner (rectangle) width
+const FLAG_BANNER_H = 80 // banner height
+const FLAG_POLE_H = 200 // pole (line) height — taller than the banner
 
 /** The load: a T with a small perpendicular FOOT at the base of its stem — the
  * exact shape and proportions from the reference drawing (crossbar + centred
@@ -150,6 +165,82 @@ function createDefaultLayout(editor: Editor): void {
 					),
 				},
 			})
+			// The goal flag in the last room, centred on EXIT: a pole (vertical line)
+			// with a green "GOAL" banner (rectangle) flown from its top. Both tagged
+			// FLAG_ROLE so they're decorative (readWorldSpec skips them — not walls).
+			// Pole left edge = banner left edge; banner top aligned to the pole top.
+			const poleX = EXIT.cx - FLAG_BANNER_W / 2
+			const poleTop = EXIT.cy - FLAG_POLE_H / 2
+			editor.createShape({
+				type: 'line',
+				x: poleX,
+				y: poleTop,
+				meta: { amRole: FLAG_ROLE },
+				props: {
+					color: 'black',
+					dash: 'solid',
+					size: 'm',
+					spline: 'line',
+					points: {
+						a1: { id: 'a1', index: 'a1' as IndexKey, x: 0, y: 0 },
+						a2: { id: 'a2', index: 'a2' as IndexKey, x: 0, y: FLAG_POLE_H },
+					},
+					scale: 1,
+				},
+			})
+			editor.createShape({
+				type: 'geo',
+				x: poleX,
+				y: poleTop,
+				meta: { amRole: FLAG_ROLE },
+				props: {
+					geo: 'rectangle',
+					w: FLAG_BANNER_W,
+					h: FLAG_BANNER_H,
+					fill: 'solid',
+					color: 'green',
+					richText: toRichText('GOAL'),
+				},
+			})
+			// "Drag" hint: a text label OUTSIDE the left wall (walls start at x=0; the
+			// left wall spans x∈[-WALL_T,0]) with a curved arrow pointing at the object's
+			// spawn (the T's crossbar). Both tagged DECOR_ROLE so they're decorative —
+			// not walls, not scoring (readWorldSpec + win detection skip them).
+			editor.createShape({
+				type: 'text',
+				x: DRAG_LABEL.x,
+				y: DRAG_LABEL.y,
+				meta: { amRole: DECOR_ROLE },
+				props: { richText: toRichText('Drag'), color: 'black', size: 'l', font: 'draw' },
+			})
+			editor.createShape({
+				type: 'arrow',
+				x: 0,
+				y: 0,
+				meta: { amRole: DECOR_ROLE },
+				props: {
+					kind: 'arc',
+					// Page-space endpoints (shape origin is 0,0): from just right of the
+					// label, curving over to the T's crossbar top-left corner.
+					start: { x: DRAG_LABEL.x + 95, y: DRAG_LABEL.y + 35 },
+					// Stop the tip SHORT of the T (up and to the left of the crossbar's
+					// top-left corner) so the arrowhead stays clear of the shape.
+					end: { x: OBJECT_SPAWN.x - 45, y: OBJECT_SPAWN.y - 25 },
+					bend: -55, // curve up-and-over, matching the reference drawing
+					color: 'black',
+					fill: 'none',
+					dash: 'solid',
+					size: 'm',
+					arrowheadStart: 'none',
+					arrowheadEnd: 'arrow',
+					font: 'draw',
+					richText: toRichText(''),
+					labelPosition: 0.5,
+					labelColor: 'black',
+					scale: 1,
+					elbowMidPoint: 0.5,
+				},
+			})
 		},
 		{ history: 'ignore' }
 	)
@@ -165,11 +256,9 @@ export function seedDefaultLayout(editor: Editor): void {
 }
 
 /** Reset the page to the default puzzle: delete EVERY current shape, then
- * re-author the starter maze + T. Unlike seedDefaultLayout this always rebuilds,
- * so it clobbers any edits — that's the point of a reset. The store is synced, so
- * the wipe + reseed propagates to all players. The caller must ensure the run is
- * STOPPED first (author mode); the canvas is read-only while playing, so
- * delete/create are no-ops mid-run. */
+ * re-author the starter maze + T + flag. Unlike seedDefaultLayout this always
+ * rebuilds, so it clobbers any edits — that's the point of a reset. The store is
+ * synced, so the wipe + reseed propagates to all players. */
 export function resetToDefaultLayout(editor: Editor): void {
 	const existing = editor.getCurrentPageShapes().map((s) => s.id)
 	editor.run(
@@ -179,4 +268,15 @@ export function resetToDefaultLayout(editor: Editor): void {
 		{ history: 'ignore' }
 	)
 	createDefaultLayout(editor)
+}
+
+/** Full game reset: stop the current DO run so it rebuilds from the fresh spec,
+ * re-arm auto-start so RunController immediately restarts the sim on the new
+ * layout, then wipe + reseed. Shared by the panel's reset button and the win
+ * dialog's reset. The canvas isn't read-only (the sync layer keeps it readwrite;
+ * play mode is gated at the pointer), so the reseed applies even mid-run. */
+export function resetGame(editor: Editor): void {
+	autoStartAtom.set(true) // re-arm so the sim auto-restarts on the fresh layout
+	playIntentAtom.set('stop')
+	resetToDefaultLayout(editor)
 }

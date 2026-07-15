@@ -14,19 +14,13 @@
 import { useSync } from '@tldraw/sync'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import {
-	Tldraw,
-	type TLComponents,
-	type Editor,
-	useValue,
-	Box as TLBox,
-} from 'tldraw'
+import { Tldraw, type TLComponents, type Editor, useValue } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { Field } from '../game/Field'
 import { RunController } from '../game/RunController'
+import { WinWatcher } from '../game/WinWatcher'
 import { FIELD } from '../game/geometry'
-import { designateObject } from '../game/shapes'
-import { resetToDefaultLayout } from '../game/seed'
+import { resetGame } from '../game/seed'
 import { playingAtom, playIntentAtom, autoStartAtom } from '../game/state'
 import { onAmServerMessage, startPoseInterpolation } from '../game/netPose'
 import { multiplayerAssetStore } from '../multiplayerAssetStore'
@@ -42,8 +36,15 @@ const components: TLComponents = {
 		<>
 			<RunController />
 			<Field />
+			<WinWatcher />
 		</>
 	),
+	// Ant-mover is a GAME, not an editor: hide the native tldraw editing UI. The
+	// game's own controls live in the .am-panel. `null` hides a slot (see the
+	// tldraw component-slots docs).
+	Toolbar: null, // bottom tool selector (select/draw/shapes/…)
+	StylePanel: null, // top-right style/settings panel for the selection
+	MenuPanel: null, // top-left menu cluster (main menu + page menu)
 }
 
 export function Room() {
@@ -66,33 +67,26 @@ export function Room() {
 	const handleMount = useCallback((editor: Editor) => {
 		editorRef.current = editor
 		editor.user.updateUserPreferences({ colorScheme: 'light' })
-		editor.zoomToBounds(
-			new TLBox(FIELD.minX, FIELD.minY, FIELD.maxX - FIELD.minX, FIELD.maxY - FIELD.minY),
-			{ inset: 40, animation: { duration: 0 } }
+		// Default zoom = 50%, centred on the field (shifted left to keep the off-field
+		// "Drag" hint in frame). tldraw's camera maps screen = (page + camera) * z, so
+		// to centre page point (cx,cy) in the viewport at zoom z:
+		// camera = viewportCenterScreen / z - (cx,cy).
+		const z = 0.5
+		const cx = (FIELD.minX + FIELD.maxX) / 2 - 130 // bias left for the Drag hint
+		const cy = (FIELD.minY + FIELD.maxY) / 2
+		const vsb = editor.getViewportScreenBounds()
+		editor.setCamera(
+			{ x: vsb.w / 2 / z - cx, y: vsb.h / 2 / z - cy, z },
+			{ animation: { duration: 0 } }
 		)
 	}, [])
 
-	// Author-mode action: tag the single selected shape as the movable object. Syncs
-	// to all players through the store (meta.amRole).
-	const handleSetObject = useCallback(() => {
-		const editor = editorRef.current
-		if (!editor) return
-		const selected = editor.getSelectedShapeIds()
-		if (selected.length === 1) designateObject(editor, selected[0])
-	}, [])
-
-	// Wipe the page and rebuild the default puzzle (maze + T), then auto-restart.
-	// Stop the current DO run first so it rebuilds from the fresh spec, re-arm
-	// auto-start so RunController immediately restarts the sim on the new layout,
-	// and reseed. The canvas isn't read-only (the sync layer keeps it readwrite; play
-	// mode is gated at the pointer, not via isReadonly), so the reseed applies even
-	// mid-run. The synced store propagates the reset + restart to every player.
+	// Wipe the page and rebuild the default puzzle (maze + T + flag), then
+	// auto-restart the sim on the fresh layout. Shared with the win dialog's reset.
 	const handleReset = useCallback(() => {
 		const editor = editorRef.current
 		if (!editor) return
-		autoStartAtom.set(true) // re-arm so the sim auto-restarts on the fresh layout
-		playIntentAtom.set('stop')
-		resetToDefaultLayout(editor)
+		resetGame(editor)
 	}, [])
 
 	return (
@@ -120,25 +114,13 @@ export function Room() {
 				</button>
 				<button
 					className="am-btn"
-					disabled={playing}
-					title="Designate the selected shape as the object to move (author mode)"
-					onClick={handleSetObject}
-				>
-					★ set object
-				</button>
-				<button
-					className="am-btn"
 					title="Reset the scene to the default puzzle and restart the sim (clears all edits)"
 					onClick={handleReset}
 				>
-					↺ reset
+					↺ Play Again
 				</button>
 				<CopyLinkButton />
-				<small className="am-hint">
-					{playing
-						? 'grab the object anywhere and drag it through the gap'
-						: 'paused — edit the walls, then press play'}
-				</small>
+				{!playing && <small className="am-hint">paused — edit the walls, then press play</small>}
 			</div>
 		</div>
 	)
