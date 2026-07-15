@@ -12,7 +12,7 @@
 // latest broadcast pose+shape to get the body-local anchor; while held we send
 // coalesced {grab} frames; on up we send {release}.
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useEditor } from 'tldraw'
 import { AM_SESSION_ID } from './netPose'
 import { objPoseAtom, objShapeAtom, playingAtom } from './state'
@@ -92,6 +92,14 @@ export function useAmInput(roomId: string | undefined): AmInput {
 
 		const onDown = (e: PointerEvent) => {
 			if (!playingAtom.get()) return
+			// While playing the canvas is a GAME, not an editor: claim EVERY pointerdown
+			// in the capture phase so tldraw never starts a brush-select / move / resize.
+			// This is what locks the walls during play — `isReadonly` can't be used here
+			// because @tldraw/sync's collaboration mode reactively forces it back to
+			// false (Editor's "update collaboration mode" react effect), so we gate at
+			// the pointer instead. A hit on the object additionally becomes a grab.
+			e.stopPropagation()
+			e.preventDefault()
 			const shape = objShapeAtom.get()
 			if (!shape) return
 			const p = pagePointFromEvent(e)
@@ -99,10 +107,6 @@ export function useAmInput(roomId: string | undefined): AmInput {
 			if (anchor) {
 				anchorRef.current = anchor
 				sendGrab({ x: p.x, y: p.y }, true)
-				// This drag is a GRAB, not a canvas gesture — claim it so tldraw never
-				// starts a brush-select / shape drag.
-				e.stopPropagation()
-				e.preventDefault()
 			}
 		}
 		const onMove = (e: PointerEvent) => {
@@ -144,5 +148,9 @@ export function useAmInput(roomId: string | undefined): AmInput {
 		return () => clearInterval(id)
 	}, [send])
 
-	return { send, isOpen: () => openRef.current }
+	// Stable identity: `send` is memoized and `isOpen` reads a ref, so the returned
+	// object never needs to change. Consumers (RunController's auto-start effect)
+	// depend on `input` — a fresh object literal each render would retrigger their
+	// effects every render and loop (Maximum update depth exceeded).
+	return useMemo(() => ({ send, isOpen: () => openRef.current }), [send])
 }

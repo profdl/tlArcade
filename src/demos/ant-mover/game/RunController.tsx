@@ -23,7 +23,7 @@ import { useEditor, useValue, type TLShapePartial } from 'tldraw'
 import { readWorldSpec, getObjectShapeId } from './shapes'
 import { seedDefaultLayout } from './seed'
 import { useAmInput } from './useInput'
-import { playingAtom, playIntentAtom } from './state'
+import { playingAtom, playIntentAtom, autoStartAtom } from './state'
 
 export function RunController() {
 	const editor = useEditor()
@@ -49,50 +49,65 @@ export function RunController() {
 		if (!intent) return
 		if (intent === 'start') {
 			const spec = readWorldSpec(editor)
-			// No designated object → nothing to simulate; ignore the request.
-			if (spec.object) input.send({ type: 'start', spec })
+			// No designated object → nothing to simulate; ignore the request (the
+			// auto-start retry stays armed and tries again once the object exists).
+			if (spec.object) {
+				input.send({ type: 'start', spec })
+				// A start actually shipped — disarm auto-start so the retry loop stops
+				// and a later pause isn't overridden. Reset re-arms it.
+				autoStartAtom.set(false)
+			}
 		} else {
+			// A stop request. The panel's pause button also disarms auto-start (so a
+			// pause STAYS paused); reset leaves it armed so the sim auto-restarts on the
+			// fresh layout. Disarming is the caller's job, not this shared handler's.
 			input.send({ type: 'stop' })
 		}
 		playIntentAtom.set(null) // consume the request
 	}, [intent, editor, input])
 
+	// Auto-start: the sim runs by DEFAULT on first load and after a reset. This
+	// fires ONLY while the auto-start latch is armed (autoStartAtom) — a deliberate
+	// pause from the panel disarms it, so pausing STAYS paused instead of being
+	// re-started here. We retry on an interval because the input socket may not be
+	// open on the first pass; once we've kicked off a start we disarm the latch so
+	// the retry stops fighting a later pause. Reset re-arms it. (A late joiner into
+	// an already-running room gets playing=true from the DO and never enters here.)
+	const autoStart = useValue('am-autoStart', () => autoStartAtom.get(), [])
+	useEffect(() => {
+		if (playing || !autoStart) return
+		const tryStart = () => {
+			if (!input.isOpen()) return
+			playIntentAtom.set('start')
+		}
+		tryStart()
+		const id = setInterval(tryStart, 250)
+		return () => clearInterval(id)
+	}, [playing, autoStart, input])
+
 	// React to the NETWORK play-state. Hide the authored object shape while playing
-	// (the overlay draws the posed body); unhide it on stop. Also lock the canvas
-	// read-only while playing so a drag becomes a grab, not a brush-select/move.
+	// (the overlay draws the posed body); unhide it on stop.
+	//
+	// NOTE: locking the canvas is NOT done here via `isReadonly` — the store comes
+	// from @tldraw/sync, whose collaboration mode runs a reactive effect that forces
+	// instanceState.isReadonly back to match the sync mode (readwrite), so any
+	// `updateInstanceState({ isReadonly: true })` here is immediately overwritten.
+	// The walls are locked at the POINTER instead (capture-phase pointerdown in
+	// useInput.ts claims every event while playing). So updateShape works normally
+	// regardless of play-state — no readonly ordering to dance around.
 	useEffect(() => {
 		const objId = getObjectShapeId(editor)
-		if (playing) {
-			editor.run(
-				() => {
-					// Hide the authored source shape BEFORE going read-only — the overlay
-					// draws the posed clone while playing. updateShape is a no-op once the
-					// canvas is readonly (same gotcha the unhide path calls out), so the
-					// opacity=0 must land first, then we lock the canvas.
-					const objType = objId && editor.getShape(objId)?.type
-					if (objId && objType) {
-						// Non-literal `type` → cast the partial (repo CLAUDE.md union gotcha).
-						editor.updateShape({ id: objId, type: objType, opacity: 0 } as TLShapePartial)
-					}
-					editor.updateInstanceState({ isReadonly: true })
-					editor.selectNone()
-				},
-				{ history: 'ignore' }
-			)
-		} else {
-			// Leaving play: clear read-only FIRST (updateShape is a no-op while
-			// readonly), then unhide the authored object at its resting spot.
-			editor.run(
-				() => {
-					editor.updateInstanceState({ isReadonly: false })
-					const s = objId && editor.getShape(objId)
-					if (objId && s) {
-						editor.updateShape({ id: objId, type: s.type, opacity: 1 } as TLShapePartial)
-					}
-				},
-				{ history: 'ignore' }
-			)
-		}
+		if (!objId) return
+		editor.run(
+			() => {
+				const s = editor.getShape(objId)
+				if (!s) return
+				// Non-literal `type` → cast the partial (repo CLAUDE.md union gotcha).
+				editor.updateShape({ id: objId, type: s.type, opacity: playing ? 0 : 1 } as TLShapePartial)
+				if (playing) editor.selectNone()
+			},
+			{ history: 'ignore' }
+		)
 	}, [editor, playing])
 
 	return null

@@ -27,7 +27,7 @@ import { RunController } from '../game/RunController'
 import { FIELD } from '../game/geometry'
 import { designateObject } from '../game/shapes'
 import { resetToDefaultLayout } from '../game/seed'
-import { playingAtom, playIntentAtom } from '../game/state'
+import { playingAtom, playIntentAtom, autoStartAtom } from '../game/state'
 import { onAmServerMessage, startPoseInterpolation } from '../game/netPose'
 import { multiplayerAssetStore } from '../multiplayerAssetStore'
 import { TLDRAW_LICENSE_KEY } from '../../licenseKey'
@@ -81,12 +81,17 @@ export function Room() {
 		if (selected.length === 1) designateObject(editor, selected[0])
 	}, [])
 
-	// Author-mode action: wipe the page and rebuild the default puzzle (maze + T).
-	// Disabled while playing (author-mode only), matching the stop→edit→restart
-	// lifecycle. The synced store propagates the reset to every player.
+	// Wipe the page and rebuild the default puzzle (maze + T), then auto-restart.
+	// Stop the current DO run first so it rebuilds from the fresh spec, re-arm
+	// auto-start so RunController immediately restarts the sim on the new layout,
+	// and reseed. The canvas isn't read-only (the sync layer keeps it readwrite; play
+	// mode is gated at the pointer, not via isReadonly), so the reseed applies even
+	// mid-run. The synced store propagates the reset + restart to every player.
 	const handleReset = useCallback(() => {
 		const editor = editorRef.current
 		if (!editor) return
+		autoStartAtom.set(true) // re-arm so the sim auto-restarts on the fresh layout
+		playIntentAtom.set('stop')
 		resetToDefaultLayout(editor)
 	}, [])
 
@@ -103,7 +108,12 @@ export function Room() {
 				<button
 					className={playing ? 'am-btn am-stop' : 'am-btn am-play'}
 					// Request play/stop; the server flips playingAtom back over the network.
-					onClick={() => playIntentAtom.set(playing ? 'stop' : 'start')}
+					// Pausing DISARMS auto-start so it stays paused; playing re-arms it so
+					// the retry loop can start the run once the input socket is open.
+					onClick={() => {
+						autoStartAtom.set(!playing)
+						playIntentAtom.set(playing ? 'stop' : 'start')
+					}}
 					title={playing ? 'Stop' : 'Play'}
 				>
 					{playing ? '❚❚' : '▶'}
@@ -118,8 +128,7 @@ export function Room() {
 				</button>
 				<button
 					className="am-btn"
-					disabled={playing}
-					title="Reset the scene to the default puzzle (clears all edits — author mode)"
+					title="Reset the scene to the default puzzle and restart the sim (clears all edits)"
 					onClick={handleReset}
 				>
 					↺ reset
@@ -128,7 +137,7 @@ export function Room() {
 				<small className="am-hint">
 					{playing
 						? 'grab the object anywhere and drag it through the gap'
-						: 'draw a maze + object, ★ set the object, then press play'}
+						: 'paused — edit the walls, then press play'}
 				</small>
 			</div>
 		</div>

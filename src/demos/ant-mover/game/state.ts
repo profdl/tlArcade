@@ -19,6 +19,12 @@ export const playingAtom = atom<boolean>('am-playing', false)
  * request. */
 export const playIntentAtom = atom<'start' | 'stop' | null>('am-playIntent', null)
 
+/** Whether the sim should AUTO-START when it isn't running. True on first load and
+ * after a reset (so the game is playing by default); flipped false once we've
+ * kicked off a start, so a deliberate PAUSE from the panel stays paused instead of
+ * being immediately re-started. Reset re-arms it to true. Local-only (per client). */
+export const autoStartAtom = atom<boolean>('am-autoStart', true)
+
 /** The latest object pose the overlay should draw (page space). The local sim
  * writes it each frame (step 3a); from step 5 the network broadcast writes it.
  * Single choke point for "where is the object". */
