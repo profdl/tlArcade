@@ -17,8 +17,6 @@ import {
 	useEditor,
 	useValue,
 	useDialogs,
-	TldrawUiDialogHeader,
-	TldrawUiDialogTitle,
 	TldrawUiDialogBody,
 	TldrawUiDialogFooter,
 	TldrawUiButton,
@@ -29,16 +27,26 @@ import { objPoseAtom, playingAtom } from './state'
 import { getFlagBounds } from './shapes'
 import { resetGame } from './seed'
 
-/** The native "You Win!" dialog: a title + a single Reset button. `onClose` is
- * injected by useDialogs; Reset resets the game and dismisses. */
+/** The native "You Win!" dialog: a big centered title in tldraw's handwriting font
+ * + a single Reset button. `onClose` is injected by useDialogs; Reset resets the
+ * game and dismisses. */
 function WinDialog({ onClose, editor }: { onClose(): void; editor: Editor }) {
 	return (
 		<>
-			<TldrawUiDialogHeader>
-				<TldrawUiDialogTitle>You Win! 🎉</TldrawUiDialogTitle>
-			</TldrawUiDialogHeader>
-			<TldrawUiDialogBody style={{ maxWidth: 320 }}>
-				You threaded the load through the maze and reached the flag.
+			<TldrawUiDialogBody
+				style={{
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+					textAlign: 'center',
+					minWidth: 280,
+					minHeight: 160,
+					// tldraw's native handwriting font (the "draw" style font).
+					fontFamily: 'var(--tl-font-draw)',
+					fontSize: 32,
+				}}
+			>
+				You Win! 🎉
 			</TldrawUiDialogBody>
 			<TldrawUiDialogFooter className="tlui-dialog__footer__actions">
 				<TldrawUiButton

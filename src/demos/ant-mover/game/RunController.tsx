@@ -85,6 +85,22 @@ export function RunController() {
 		return () => clearInterval(id)
 	}, [playing, autoStart, input])
 
+	// Suppress the blue hover/selection indicator while playing. The authored object
+	// is hidden (opacity 0) but its geometry is still hit-tested, so moving the pointer
+	// over it makes tldraw set `hoveredShapeId` and draw the hover outline over the
+	// posed body. We block that at the source: a before-change handler on the page
+	// state strips `hoveredShapeId` whenever the sim is playing (checking the live
+	// atom, not a stale closure) so the indicator never gets written. Registered once;
+	// returns tldraw's cleanup.
+	useEffect(() => {
+		return editor.sideEffects.registerBeforeChangeHandler('instance_page_state', (_prev, next) => {
+			if (playingAtom.get() && next.hoveredShapeId) {
+				return { ...next, hoveredShapeId: null }
+			}
+			return next
+		})
+	}, [editor])
+
 	// React to the NETWORK play-state. Hide the authored object shape while playing
 	// (the overlay draws the posed body); unhide it on stop.
 	//
