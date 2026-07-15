@@ -11,6 +11,7 @@ running out of one app. `/` lists them; each one lazy-loads at its own route.
 | Busytown | `/demos/busytown` | An ambient ECS town sim — characters, jobs, whims | [`simtown-busytown`](../../tree/simtown-busytown)\* |
 | Face Mask | `/demos/face-mask` | Pin native tldraw shapes to webcam-tracked face landmarks | [`simtown-face-mask`](../../tree/simtown-face-mask)\* |
 | Toolkit | `/demos/toolkit/*` | Multiplayer tabletop toolkit — synced tokens/dice/cards/creatures, server-authoritative referee | [`toolkit-master`](../../tree/toolkit-master)\* |
+| Rig Play | `/demos/rig-play` | Rig playground: drop/draw a figure, draw bones, then drive it with WASD (walk/jump/crouch/wave) via a procedural state machine — the Engine rig without the platformer | authored in-repo |
 
 \* Local-only branch (not pushed to `origin`) — kept for history/reference.
 

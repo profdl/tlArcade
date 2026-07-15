@@ -1,0 +1,69 @@
+/* Unique .rigplay-* prefix — see repo CLAUDE.md on cross-demo CSS collisions. */
+.rigplay-root {
+	position: fixed;
+	inset: 0;
+}
+
+.rigplay-toolbar {
+	position: absolute;
+	bottom: 44px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 400;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.rigplay-btn {
+	padding: 8px 12px;
+	border-radius: 8px;
+	border: 1px solid var(--tl-color-panel-contrast, #d3d3d3);
+	background: var(--tl-color-panel, white);
+	box-shadow: var(--tl-shadow-2);
+	cursor: pointer;
+	font: inherit;
+	white-space: nowrap;
+	color: inherit;
+}
+
+.rigplay-btn:hover {
+	background: var(--tl-color-muted-2, #f0f0f0);
+}
+
+.rigplay-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.rigplay-btn--play {
+	font-weight: 600;
+}
+
+.rigplay-hint {
+	font: 12px/1.4 system-ui, sans-serif;
+	padding: 6px 10px;
+	border-radius: 8px;
+	background: var(--tl-color-panel, rgba(255, 255, 255, 0.9));
+	box-shadow: var(--tl-shadow-2);
+	opacity: 0.85;
+	white-space: nowrap;
+}
+
+/* The rig-authoring panel (draw-the-skeleton), bottom-center above the draw toolbar. */
+.rigplay-rig-panel {
+	position: absolute;
+	left: 50%;
+	bottom: 76px;
+	transform: translateX(-50%);
+	z-index: 400;
+	pointer-events: all;
+	max-width: 460px;
+	background: var(--tl-color-panel, #fff);
+	border: 1px solid var(--tl-color-divider, #ddd);
+	border-radius: 8px;
+	padding: 10px 12px;
+	font: 12px/1.5 system-ui, sans-serif;
+	box-shadow: var(--tl-shadow-2);
+	color: inherit;
+}

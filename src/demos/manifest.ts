@@ -85,6 +85,13 @@ export const demos: DemoEntry[] = [
 		Component: lazy(() => import('./scale-rooms/App')),
 	},
 	{
+		slug: 'rig-play',
+		title: 'Rig Play',
+		blurb:
+			'A focused rig playground: drop a pre-rigged figure (or draw your own and draw bones on it), then hit Play and drive it with the keyboard — A/D walk, W/Space jump, S crouch, E wave — as a pure procedural state machine animates the whole body. The Engine demo’s rig, lifted out of the platformer.',
+		Component: lazy(() => import('./rig-play/App')),
+	},
+	{
 		slug: 'poser',
 		title: 'Poser',
 		blurb:
