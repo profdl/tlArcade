@@ -26,6 +26,7 @@ import { Field } from '../game/Field'
 import { RunController } from '../game/RunController'
 import { FIELD } from '../game/geometry'
 import { designateObject } from '../game/shapes'
+import { resetToDefaultLayout } from '../game/seed'
 import { playingAtom, playIntentAtom } from '../game/state'
 import { onAmServerMessage, startPoseInterpolation } from '../game/netPose'
 import { multiplayerAssetStore } from '../multiplayerAssetStore'
@@ -80,6 +81,15 @@ export function Room() {
 		if (selected.length === 1) designateObject(editor, selected[0])
 	}, [])
 
+	// Author-mode action: wipe the page and rebuild the default puzzle (maze + T).
+	// Disabled while playing (author-mode only), matching the stop→edit→restart
+	// lifecycle. The synced store propagates the reset to every player.
+	const handleReset = useCallback(() => {
+		const editor = editorRef.current
+		if (!editor) return
+		resetToDefaultLayout(editor)
+	}, [])
+
 	return (
 		<div className="am-root">
 			<Tldraw
@@ -105,6 +115,14 @@ export function Room() {
 					onClick={handleSetObject}
 				>
 					★ set object
+				</button>
+				<button
+					className="am-btn"
+					disabled={playing}
+					title="Reset the scene to the default puzzle (clears all edits — author mode)"
+					onClick={handleReset}
+				>
+					↺ reset
 				</button>
 				<CopyLinkButton />
 				<small className="am-hint">

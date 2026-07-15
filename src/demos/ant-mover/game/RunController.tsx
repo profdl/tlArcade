@@ -65,13 +65,17 @@ export function RunController() {
 		if (playing) {
 			editor.run(
 				() => {
-					editor.updateInstanceState({ isReadonly: true })
-					editor.selectNone()
+					// Hide the authored source shape BEFORE going read-only — the overlay
+					// draws the posed clone while playing. updateShape is a no-op once the
+					// canvas is readonly (same gotcha the unhide path calls out), so the
+					// opacity=0 must land first, then we lock the canvas.
 					const objType = objId && editor.getShape(objId)?.type
 					if (objId && objType) {
 						// Non-literal `type` → cast the partial (repo CLAUDE.md union gotcha).
 						editor.updateShape({ id: objId, type: objType, opacity: 0 } as TLShapePartial)
 					}
+					editor.updateInstanceState({ isReadonly: true })
+					editor.selectNone()
 				},
 				{ history: 'ignore' }
 			)

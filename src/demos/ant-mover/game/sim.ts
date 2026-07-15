@@ -130,6 +130,18 @@ function piecesArea(pieces: P[][]): number {
 	return total
 }
 
+/** Absolute area of a single simple polygon (shoelace, page px²). This is the
+ * area the outline ACTUALLY encloses — the right yardstick for "did
+ * decomposition keep the shape?", unlike the bounding box, which overstates a
+ * thin/sparse concave shape (a T is mostly empty bbox). */
+function polygonArea(poly: P[]): number {
+	let a = 0
+	for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+		a += poly[j].x * poly[i].y - poly[i].x * poly[j].y
+	}
+	return Math.abs(a) / 2
+}
+
 /** Build the ObjectShape (local convex pieces + spawn) from the object's page
  * outline.
  *
@@ -142,9 +154,16 @@ function piecesArea(pieces: P[][]): number {
  * figure-8) or is too thin to enclose real area (a near-straight line). Ear-clip
  * decomposition assumes a *simple* polygon, so on those inputs it drops
  * triangles and yields a broken/near-massless body. We guard against that: if
- * the decomposed area is a small fraction of the outline's own bounding-box
- * area, we fall back to the CONVEX HULL — always a valid solid, so the object
- * never spawns invisible or degenerate. */
+ * the decomposed area is a small fraction of the outline's OWN ENCLOSED area
+ * (shoelace, not bounding box), decomposition genuinely failed and we fall back
+ * to the CONVEX HULL — always a valid solid, so the object never spawns
+ * invisible or degenerate.
+ *
+ * The yardstick MUST be the polygon's own area, not its bounding box: a
+ * legitimately thin/sparse CONCAVE shape (a T fills only ~20% of its bbox) would
+ * trip a bbox-ratio test and get wrongly convex-hulled — which fills in the
+ * notches and breaks a puzzle that depends on the concavity. Against its own
+ * area, a cleanly-decomposed T recovers ~100% and keeps its true concave body. */
 function buildObjectShape(spec: ShapeOutlines): ObjectShape | null {
 	// The load is a single figure. Pick the richest stroke (most points); a draw
 	// shape may hold several pen-lifts but the object is one of them.
@@ -156,21 +175,19 @@ function buildObjectShape(spec: ShapeOutlines): ObjectShape | null {
 	// Recentre to the body origin (page px), then fill (close) + decompose.
 	const local: P[] = outline.points.map((p) => ({ x: p.x - spawn.x, y: p.y - spawn.y }))
 
-	// Bounding-box area of the local outline — the "footprint" the fill should
-	// roughly cover. Used to detect a decomposition that lost most of the shape.
-	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-	for (const p of local) {
-		if (p.x < minX) minX = p.x
-		if (p.x > maxX) maxX = p.x
-		if (p.y < minY) minY = p.y
-		if (p.y > maxY) maxY = p.y
-	}
-	const bboxArea = (maxX - minX) * (maxY - minY)
+	// The area the outline itself encloses (shoelace). This is what a good
+	// decomposition should reproduce — a concave shape recovers ~all of it. (The
+	// bounding box is the WRONG reference: a thin concave shape fills little of its
+	// bbox, so a bbox-ratio test would false-positive and convex-hull it, erasing
+	// the concavity the puzzle needs.)
+	const outlineArea = polygonArea(local)
 
 	let pieces = decomposeConvex(local)
-	// Fall back to the hull if decomposition failed (self-intersecting close) or
-	// recovered less than a quarter of the footprint (thin/degenerate fill).
-	if (pieces.length === 0 || (bboxArea > 0 && piecesArea(pieces) < bboxArea * 0.25)) {
+	// Fall back to the hull ONLY when decomposition genuinely failed: it returned
+	// nothing, or it recovered less than a quarter of the area the outline actually
+	// encloses (a self-intersecting close drops triangles). A cleanly-decomposed
+	// concave shape recovers ~100% of its own area and is kept as-is.
+	if (pieces.length === 0 || (outlineArea > 0 && piecesArea(pieces) < outlineArea * 0.25)) {
 		const hull = convexHull(local)
 		const hullPieces = decomposeConvex(hull)
 		if (hullPieces.length > 0) pieces = hullPieces

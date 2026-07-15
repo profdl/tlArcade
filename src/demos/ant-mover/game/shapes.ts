@@ -67,22 +67,48 @@ function readOutlines(editor: Editor, shape: TLShape): ShapeOutlines | null {
 	const transform = editor.getShapePageTransform(shape.id)
 	if (!transform) return null
 
-	// Draw (pencil) shapes hold multiple strokes separated by pen-lifts. Decode
-	// each stroke separately so we never bridge a gap with a phantom edge (Sonic
-	// hits the same issue).
+	// Draw shapes hold a list of segments. Two authoring styles produce them:
+	//  - freehand pen-lifts: each 'free' segment is a SEPARATE stroke; bridging two
+	//    with a phantom edge would be wrong (Sonic hits the same issue), so each
+	//    becomes its own outline.
+	//  - connected straight edges (how the seed authors the T): consecutive
+	//    'straight' segments where each segment's end IS the next segment's start
+	//    describe ONE continuous polyline. Concatenating them reconstructs the
+	//    authored path — exactly what the sim should read (splitting a T into 8
+	//    one-edge fragments would leave buildObjectShape only a single edge).
+	// So: run consecutive 'straight' segments together into one outline; keep each
+	// 'free' stroke separate.
 	if (shape.type === 'draw') {
 		const draw = shape as TLDrawShape
 		const scale = draw.props.scale
 		const outlines: { points: Vec2[]; closed: boolean }[] = []
+		const closed = !!draw.props.isClosed
+		const eps = 1e-3
+		let run: Vec2[] = [] // the current straight-segment run being merged
+
+		const flushRun = () => {
+			if (run.length >= 2) outlines.push({ points: run, closed })
+			run = []
+		}
+
 		for (const stroke of draw.props.segments) {
 			const localPts = getPointsFromDrawSegment(stroke, scale, scale)
-			const pts = transform.applyToPoints(localPts)
+			const pts = transform.applyToPoints(localPts).map((p) => ({ x: p.x, y: p.y }))
 			if (pts.length < 2) continue
-			outlines.push({
-				points: pts.map((p) => ({ x: p.x, y: p.y })),
-				closed: !!draw.props.isClosed,
-			})
+			if (stroke.type === 'straight') {
+				// Append to the run, dropping a duplicated shared endpoint so the corner
+				// isn't listed twice (segment N's end == segment N+1's start).
+				const first = pts[0]
+				const last = run[run.length - 1]
+				const joins = last && Math.hypot(first.x - last.x, first.y - last.y) < eps
+				run.push(...(joins ? pts.slice(1) : pts))
+			} else {
+				// A freehand stroke: close off any straight run, then emit it alone.
+				flushRun()
+				outlines.push({ points: pts, closed })
+			}
 		}
+		flushRun()
 		return outlines.length ? { id: shape.id, outlines } : null
 	}
 

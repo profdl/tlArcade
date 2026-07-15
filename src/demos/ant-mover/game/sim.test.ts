@@ -15,6 +15,20 @@ function star(cx: number, cy: number, R: number, r: number, n: number) {
 	return pts
 }
 
+/** A thin concave T outline (page px), like the default load: a wide crossbar,
+ * a thin centred stem, a short foot. Its true area is only ~20% of its bounding
+ * box, so it's the case that a bbox-ratio fallback test wrongly convex-hulls. */
+function tShape(x: number, y: number) {
+	const ARM = 24.7, W = 197.8, H = 382.5, STEM = 24.7, FOOT = 85.1
+	const sL = (W - STEM) / 2, sR = sL + STEM
+	const fL = (W - FOOT) / 2, fR = fL + FOOT, fT = H - ARM
+	return [
+		{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: ARM }, { x: sR, y: ARM },
+		{ x: sR, y: fT }, { x: fR, y: fT }, { x: fR, y: H }, { x: fL, y: H },
+		{ x: fL, y: fT }, { x: sL, y: fT }, { x: sL, y: ARM }, { x: 0, y: ARM },
+	].map((p) => ({ x: p.x + x, y: p.y + y }))
+}
+
 const id = (s: string) => s as TLShapeId
 
 describe('sim.createWorld from a WorldSpec', () => {
@@ -30,6 +44,33 @@ describe('sim.createWorld from a WorldSpec', () => {
 		// Body spawns near the star's centroid.
 		expect(sim!.shape.spawn.x).toBeCloseTo(200, 0)
 		expect(sim!.shape.spawn.y).toBeCloseTo(400, 0)
+	})
+
+	it('keeps a thin concave T concave (does NOT collapse to a convex hull)', () => {
+		// Regression: the fallback that convex-hulls a failed decomposition must key
+		// off the outline's OWN area, not its bounding box. A T fills only ~20% of
+		// its bbox, so a bbox-ratio test would false-trigger and hull it — filling
+		// the notches and breaking the puzzle. It must stay a multi-piece concave
+		// body whose area is the T's true (small) area, not the fat hull's.
+		const spec: WorldSpec = {
+			object: { id: id('t1'), outlines: [{ points: tShape(140, 230), closed: true }] },
+			walls: [],
+		}
+		const sim = createWorld(spec)!
+		expect(sim).not.toBeNull()
+		// The concave T decomposes into several convex pieces; a hull would be ~1.
+		expect(sim.shape.pieces.length).toBeGreaterThan(1)
+		// Total body area ≈ the T's true area (~15200 px²), FAR below the convex
+		// hull's (~55000). If the hull had been used this would be way higher.
+		const area = sim.shape.pieces.reduce((s, poly) => {
+			let a = 0
+			for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+				a += poly[j].x * poly[i].y - poly[i].x * poly[j].y
+			}
+			return s + Math.abs(a) / 2
+		}, 0)
+		expect(area).toBeLessThan(25000) // hull would be ~55k
+		expect(area).toBeGreaterThan(10000) // real fill, not a sliver
 	})
 
 	it('returns null when no object is designated', () => {
